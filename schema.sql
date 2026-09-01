@@ -1,10 +1,10 @@
 -- AI 프록시 — 앱 레지스트리 · 호출 로그 (Cloudflare D1)
--- 적용: wrangler d1 execute hamzzi-stats --remote --file=schema.sql
+-- 적용: wrangler d1 execute <DB이름 또는 database_id> --remote --file=schema.sql
 -- (worker 코드도 기동 시 CREATE/ALTER로 보강하지만, 이 파일로 한 번 적용해 두면 확실함)
 
 -- 앱 레지스트리 — 토큰 1개 = 앱 1개. 관리 화면(/admin/apps)에서 추가·수정한다.
 CREATE TABLE IF NOT EXISTS apps (
-  id         TEXT PRIMARY KEY,            -- 앱 식별자 (예: hamzzi-diet)
+  id         TEXT PRIMARY KEY,            -- 앱 식별자 (예: my-app)
   name       TEXT NOT NULL,               -- 표시 이름
   token      TEXT NOT NULL UNIQUE,        -- 앱 전용 프록시 토큰(Bearer)
   models     TEXT NOT NULL DEFAULT '{}',  -- JSON: {"weight":"openai/...","default":"google/..."}

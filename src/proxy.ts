@@ -1,13 +1,13 @@
 /**
- * AI 인식 프록시 — 앱이 만든 요청을 받아 서버에만 있는 키를 주입해 모델로 전달한다.
+ * AI 프록시 — 앱이 만든 요청을 받아 서버에만 있는 키를 주입해 모델로 전달한다.
  * 목적: AI API 키를 앱 번들에서 제거(키 유출·과금 남용 차단) + 앱별 사용량 추적.
  *
  * 경유: OpenRouter 한 곳(키 1개 관리 + 모델 교체 자유).
  *
- * 요청: POST /v1/ai          채팅·비전 (구버전 호환: POST /v1/recognize)
+ * 요청: POST /v1/ai          채팅·비전
  *       POST /v1/embeddings  임베딩 (OpenRouter는 엔드포인트가 달라 라우트를 나눈다)
  *   헤더: Authorization: Bearer <앱 토큰>
- *         X-Ai-Kind: <용도>        ← 앱 설정의 모델 맵 키(예전 X-Hamzzi-Kind도 받는다).
+ *         X-Ai-Kind: <용도>        ← 앱 설정의 모델 맵 키. 없으면 default.
  *   바디: OpenAI 형식 { messages, ... }  또는  Gemini 형식 { contents, generationConfig }
  *         선택: "model"   ← 모델명을 직접 지정(그대로 OpenRouter로 넘어간다). :online 접미사 가능.
  *         선택: "plugins" ← 웹검색 등. [{"id":"web"}]는 :online과 같다.
@@ -17,8 +17,7 @@
  * 모델: 화이트리스트를 두지 않는다. 앱이 보낸 이름을 그대로 OpenRouter로 넘긴다
  *       (OpenRouter 카탈로그 전체 사용 가능). 비용은 단가표 추정이 아니라
  *       OpenRouter가 응답에 실어주는 usage.cost(웹검색 요금 포함)를 그대로 기록한다.
- *
- * 호환: 예전 경로(/v1/recognize)와 예전 헤더(X-Hamzzi-Kind)도 그대로 받는다.
+
  */
 
 import {
@@ -163,7 +162,7 @@ async function gate(request: Request, env: ProxyEnv, ctx: ExecutionContext): Pro
 
 	const ip = clientIP(request);
 	const geo = geoOf(request);
-	const kind = (request.headers.get("X-Ai-Kind") || request.headers.get("X-Hamzzi-Kind") || "default")
+	const kind = (request.headers.get("X-Ai-Kind") || "default")
 		.toLowerCase()
 		.slice(0, 32);
 
@@ -174,7 +173,7 @@ async function gate(request: Request, env: ProxyEnv, ctx: ExecutionContext): Pro
 	return { ok: true, app, ip, kind, geo, now };
 }
 
-export async function handleRecognize(request: Request, env: ProxyEnv, ctx: ExecutionContext): Promise<Response> {
+export async function handleChat(request: Request, env: ProxyEnv, ctx: ExecutionContext): Promise<Response> {
 	const g = await gate(request, env, ctx);
 	if (!g.ok) return g.res;
 	const { app, ip, kind, geo, now } = g;
@@ -256,7 +255,7 @@ export async function handleRecognize(request: Request, env: ProxyEnv, ctx: Exec
 	// 상류 오류는 사유를 그대로 전달한다(모델 오타·없는 모델을 앱이 바로 알 수 있게).
 	if (http !== 200) {
 		ctx.waitUntil(logCall(env, { ts: now, app: app.id, kind, model, status: "error", http, latency_ms: latency, ip, in_tokens: 0, out_tokens: 0, cost: null, err: outText.slice(0, 160), meta, ...geo }));
-		return new Response(outText || JSON.stringify({ error: "인식에 실패했어요." }), {
+		return new Response(outText || JSON.stringify({ error: "모델 호출에 실패했어요." }), {
 			status: http,
 			headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
 		});
@@ -270,7 +269,7 @@ export async function handleRecognize(request: Request, env: ProxyEnv, ctx: Exec
 		parsed = JSON.parse(outText);
 	} catch {
 		ctx.waitUntil(logCall(env, { ts: now, app: app.id, kind, model, status: "error", http: 502, latency_ms: latency, ip, in_tokens: 0, out_tokens: 0, cost: null, err: "parse", meta, ...geo }));
-		return err(502, "인식 결과를 해석하지 못했어요.");
+		return err(502, "모델 응답을 해석하지 못했어요.");
 	}
 
 	const inTok = parsed.usage?.prompt_tokens ?? 0;

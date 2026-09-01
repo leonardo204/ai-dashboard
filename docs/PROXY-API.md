@@ -109,8 +109,6 @@ curl -sS -H "Authorization: Bearer $ADMIN_API_KEY" \
 | 타임아웃 | 채팅 120초 · 임베딩 60초 |
 | 호출 상한 | 앱별 `perMin` / `perDay`, **(앱 + 클라이언트 IP)** 기준 (초과 429) |
 
-`X-Hamzzi-Kind`는 예전 앱 호환용으로 아직 받습니다. 새 앱은 `X-Ai-Kind`를 쓰십시오.
-
 ### 3-2. `POST /v1/ai` — 채팅·비전·웹검색
 
 요청 본문은 **OpenAI 형식(`messages`)** 또는 **Gemini 형식(`contents`)** 둘 다 받습니다.
@@ -463,7 +461,7 @@ curl -sS -X POST https://ai.zerolive.co.kr/admin/api/apps/my-app/token \
 
 **로그 보관**: 호출 기록은 180일이 지나면 정리됩니다.
 
-**예전 방식 호환**: 예전 경로 `/v1/recognize`와 예전 헤더 `X-Hamzzi-Kind`를 아직 받습니다. Gemini 형식(`contents`)으로 보내면 응답도 Gemini 형식으로 돌려줍니다. 이미 붙여 쓰던 앱을 고치지 않아도 되게 남겨둔 것입니다.
+**요청 형식 호환**: Gemini 형식(`contents`)으로 보내면 응답도 Gemini 형식으로 돌려줍니다. 이미 Gemini SDK 형태로 짜둔 앱이 파싱 코드를 고치지 않아도 되게 한 것입니다.
 
 **시크릿 교체**:
 

@@ -7,7 +7,7 @@
  *  - 모델은 제한하지 않는다. 앱이 보낸 이름을 그대로 OpenRouter에 넘긴다.
  *
  * 라우트:
- *  POST /v1/ai            채팅·비전·웹검색 (구버전 호환: /v1/recognize)
+ *  POST /v1/ai            채팅·비전·웹검색
  *  POST /v1/embeddings    임베딩
  *  GET  /admin            통계 대시보드 (세션 로그인)
  *  GET  /admin/apps       앱 관리 화면
@@ -16,7 +16,7 @@
  * 도메인: ai.zerolive.co.kr   ·   문서: docs/PROXY-API.md
  */
 
-import { handleRecognize, handleEmbeddings, type ProxyEnv } from "./proxy";
+import { handleChat, handleEmbeddings, type ProxyEnv } from "./proxy";
 import {
 	collectStats, renderDashboard, renderApps, listApps, getApp, upsertApp, deleteApp,
 	newToken, renderLogin, pulse, PERIODS, type AppConfig,
@@ -363,9 +363,9 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 		const url = new URL(request.url);
 		const path = url.pathname;
 
-		// ── AI 프록시 (앱 전용) — 키는 서버에만. /v1/recognize는 구버전 앱 호환용으로 유지한다.
-		if (path === "/v1/ai" || path === "/v1/recognize") {
-			return handleRecognize(request, env, ctx);
+		// ── AI 프록시 (앱 전용) — 실제 AI 키는 서버에만 둔다.
+		if (path === "/v1/ai") {
+			return handleChat(request, env, ctx);
 		}
 		// ── 임베딩 프록시 — OpenRouter는 엔드포인트가 달라 라우트를 나눈다.
 		if (path === "/v1/embeddings") {
