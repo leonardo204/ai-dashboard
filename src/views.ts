@@ -470,65 +470,95 @@ export function renderLogs(l: LogsData, opts: AdminOpts = {}): string {
 		{ ...opts, tab: "logs" },
 	);
 }
-export function renderApps(apps: AppConfig[], opts: AdminOpts = {}): string {
-	const rows = apps.length
-		? apps.map((a) => `
-<tr>
-  <td><b>${escapeHtml(a.name)}</b><br><span class="mono">${escapeHtml(a.id)}</span>
-      ${a.active ? "" : '<br><span class="chip" style="background:#ffecec;color:#c0392b">중지됨</span>'}
-      ${a.note ? `<br><span style="font-size:11px;color:#6b7280">${escapeHtml(a.note)}</span>` : ""}</td>
-  <td class="mono" style="word-break:break-all;max-width:230px">${escapeHtml(a.token)}<button type="button" class="copy" data-copy="${escapeHtml(a.token)}">복사</button></td>
-  <td class="mono" style="max-width:260px;word-break:break-all">${escapeHtml(JSON.stringify(a.models))}</td>
-  <td class="n">${a.perMin} / ${a.perDay}</td>
-  <td>
-    <form class="inline" method="post" action="/admin/apps">
-      <input type="hidden" name="action" value="toggle"><input type="hidden" name="id" value="${escapeHtml(a.id)}">
-      <button class="btn" type="submit">${a.active ? "중지" : "재개"}</button>
-    </form>
-    <form class="inline" method="post" action="/admin/apps"
-          data-confirm-title="${escapeHtml(a.name)} 토큰을 새로 발급할까요?"
-          data-confirm="지금 토큰은 즉시 막혀요. 앱에 새 토큰을 넣기 전까지 호출이 실패해요."
-          data-confirm-ok="재발급" data-danger="1">
-      <input type="hidden" name="action" value="regen"><input type="hidden" name="id" value="${escapeHtml(a.id)}">
-      <button class="btn" type="submit">토큰 재발급</button>
-    </form>
-    <form class="inline" method="post" action="/admin/apps"
-          data-confirm-title="${escapeHtml(a.name)} 앱을 삭제할까요?"
-          data-confirm="토큰이 즉시 무효가 되고 이 앱은 더 이상 호출할 수 없어요. 지난 호출 기록은 통계에 그대로 남아요."
-          data-confirm-ok="삭제" data-danger="1">
-      <input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="${escapeHtml(a.id)}">
-      <button class="btn d" type="submit">삭제</button>
-    </form>
-  </td>
-</tr>
-<tr><td colspan="5" style="background:#fafbfc">
-  <form method="post" action="/admin/apps">
-    <input type="hidden" name="action" value="save"><input type="hidden" name="id" value="${escapeHtml(a.id)}">
-    <div class="grid2">
-      <div class="fld"><label>이름</label><input name="name" value="${escapeHtml(a.name)}"></div>
-      <div class="fld"><label>메모</label><input name="note" value="${escapeHtml(a.note ?? "")}"></div>
-    </div>
-    <div class="fld"><label>용도별 모델 (JSON) — 키는 앱이 보내는 X-Ai-Kind 값, default는 기본값</label>
-      <textarea name="models" rows="3">${escapeHtml(JSON.stringify(a.models, null, 0))}</textarea></div>
-    <div class="grid2">
-      <div class="fld"><label>분당 상한 (IP 기준)</label><input class="n" name="per_min" value="${a.perMin}"></div>
-      <div class="fld"><label>일일 상한 (IP 기준)</label><input class="n" name="per_day" value="${a.perDay}"></div>
-    </div>
-    <button class="btn p" type="submit">저장</button>
-  </form>
-</td></tr>`).join("")
-		: `<tr><td colspan="5">등록된 앱이 없어요. 아래에서 추가하세요.</td></tr>`;
+/** 토큰 가운데를 가린다. 어깨너머로 보이는 것도 막고 줄바꿈도 줄어든다. */
+const maskToken = (t: string) => (t.length > 16 ? `${t.slice(0, 8)}······${t.slice(-4)}` : t);
 
-	const known = Object.keys(MODEL_PRICES).map((m) => `<span class="chip">${escapeHtml(m)}</span>`).join(" ");
+/** 모델 맵 — JSON 원문 대신 "용도 → 모델" 칩으로 보여준다. */
+function modelChips(models: Record<string, string>): string {
+	const keys = Object.keys(models);
+	if (!keys.length) return `<span class="sm">비어 있어요. 기본 모델로 호출돼요.</span>`;
+	return keys
+		.map(
+			(k) =>
+				`<span class="mc" title="${escapeHtml(models[k])}"><i>${escapeHtml(k)}</i>${escapeHtml(shortModel(models[k]))}</span>`,
+		)
+		.join("");
+}
+
+/** 앱 1개 카드 — 평소엔 요약만 보여주고, 편집은 눌렀을 때만 펼친다. */
+function appCard(a: AppConfig): string {
+	const ed = `ed-${a.id}`;
+	const post = (action: string) =>
+		`<input type="hidden" name="action" value="${action}"><input type="hidden" name="id" value="${escapeHtml(a.id)}">`;
+
+	return `<div class="app${a.active ? "" : " off"}">
+  <div class="ah">
+    <div class="nm"><b>${escapeHtml(a.name)}</b><span class="st ${a.active ? "on" : "off"}">${a.active ? "사용 중" : "중지됨"}</span>
+      <div class="id mono">${escapeHtml(a.id)}</div></div>
+    <div class="acts">
+      <button type="button" class="btn" data-toggle="${escapeHtml(ed)}" data-on="편집 닫기" data-off="편집">편집</button>
+      <form class="inline" method="post" action="/admin/apps">${post("toggle")}
+        <button class="btn" type="submit">${a.active ? "중지" : "재개"}</button></form>
+      <form class="inline" method="post" action="/admin/apps"
+            data-confirm-title="${escapeHtml(a.name)} 토큰을 새로 발급할까요?"
+            data-confirm="지금 토큰은 즉시 막혀요. 앱에 새 토큰을 넣기 전까지 호출이 실패해요."
+            data-confirm-ok="재발급" data-danger="1">${post("regen")}
+        <button class="btn" type="submit">토큰 재발급</button></form>
+      <form class="inline" method="post" action="/admin/apps"
+            data-confirm-title="${escapeHtml(a.name)} 앱을 삭제할까요?"
+            data-confirm="토큰이 즉시 무효가 되고 이 앱은 더 이상 호출할 수 없어요. 지난 호출 기록은 통계에 그대로 남아요."
+            data-confirm-ok="삭제" data-danger="1">${post("delete")}
+        <button class="btn d" type="submit">삭제</button></form>
+    </div>
+  </div>
+  <div class="ab">
+    <div class="af"><div class="k">토큰</div>
+      <div class="v tok"><span class="mono mask">${escapeHtml(maskToken(a.token))}</span><span class="mono full">${escapeHtml(a.token)}</span>
+        <button type="button" class="copy" data-reveal="1">보기</button><button type="button" class="copy" data-copy="${escapeHtml(a.token)}">복사</button></div></div>
+    <div class="af"><div class="k">호출 상한 (IP 기준)</div>
+      <div class="v">분당 <b>${a.perMin.toLocaleString()}</b>회 · 하루 <b>${a.perDay.toLocaleString()}</b>회</div></div>
+    <div class="af wide"><div class="k">용도별 모델</div><div class="v">${modelChips(a.models)}</div></div>
+    ${a.note ? `<div class="af wide"><div class="k">메모</div><div class="v">${escapeHtml(a.note)}</div></div>` : ""}
+  </div>
+  <div class="aedit" id="${escapeHtml(ed)}" hidden>
+    <form method="post" action="/admin/apps">${post("save")}
+      <div class="grid2">
+        <div class="fld"><label>이름</label><input name="name" value="${escapeHtml(a.name)}"></div>
+        <div class="fld"><label>메모</label><input name="note" value="${escapeHtml(a.note ?? "")}"></div>
+      </div>
+      <div class="fld"><label>용도별 모델 (JSON) — 키는 앱이 보내는 X-Ai-Kind 값, default는 기본값</label>
+        <textarea name="models" rows="3">${escapeHtml(JSON.stringify(a.models))}</textarea></div>
+      <div class="grid2">
+        <div class="fld"><label>분당 상한 (IP 기준)</label><input class="n" name="per_min" value="${a.perMin}"></div>
+        <div class="fld"><label>일일 상한 (IP 기준)</label><input class="n" name="per_day" value="${a.perDay}"></div>
+      </div>
+      <div class="eacts"><button class="btn p" type="submit">저장</button>
+        <button type="button" class="btn" data-toggle="${escapeHtml(ed)}">취소</button></div>
+    </form>
+  </div>
+</div>`;
+}
+
+export function renderApps(apps: AppConfig[], opts: AdminOpts = {}): string {
+	const activeN = apps.filter((a) => a.active).length;
+	const list = apps.length
+		? `<div class="apps">${apps.map(appCard).join("")}</div>`
+		: `<div class="empty">등록된 앱이 없어요. 위 <b>새 앱 추가</b>를 눌러 만드세요.</div>`;
+	const known = Object.keys(MODEL_PRICES)
+		.map((m) => `<span class="chip">${escapeHtml(m)}</span>`)
+		.join(" ");
 
 	return shellAdmin(
 		"앱 관리",
 		`<h1>앱 관리</h1>
-<p class="sub">앱 1개 = 토큰 1개. 앱은 이 토큰으로 <span class="mono">POST /v1/ai</span>를 호출하고, 통계는 자동으로 앱별로 쌓여요.<br>새로 추가하거나 재발급한 토큰은 몇 초 뒤부터 동작해요.</p>
-<table><tr><th>앱</th><th>토큰</th><th>모델 맵</th><th class="n">분/일 상한</th><th>동작</th></tr>${rows}</table>
+<p class="sub">앱 1개 = 토큰 1개. 앱은 이 토큰으로 <span class="mono">POST /v1/ai</span>를 호출하고, 통계는 앱별로 자동으로 쌓여요.<br>새로 추가하거나 재발급한 토큰은 몇 초 뒤부터 동작해요.</p>
 
-<h2>새 앱 추가</h2>
-<div class="panel">
+<div class="lh">
+  <div class="t">등록된 앱 <b>${apps.length}</b>개<span class="sm"> · 사용 중 ${activeN}개</span></div>
+  <button type="button" class="btn p" data-toggle="new-app" data-on="닫기" data-off="새 앱 추가">새 앱 추가</button>
+</div>
+
+<div class="panel" id="new-app" hidden>
   <form method="post" action="/admin/apps">
     <input type="hidden" name="action" value="create">
     <div class="grid2">
@@ -536,18 +566,21 @@ export function renderApps(apps: AppConfig[], opts: AdminOpts = {}): string {
       <div class="fld"><label>이름</label><input name="name" placeholder="내 앱" required></div>
     </div>
     <div class="fld"><label>용도별 모델 (JSON)</label>
-      <textarea name="models" rows="3">{"default":"${DEFAULT_MODEL}"}</textarea></div>
+      <textarea name="models" rows="2">{"default":"${DEFAULT_MODEL}"}</textarea></div>
     <div class="grid2">
       <div class="fld"><label>분당 상한</label><input class="n" name="per_min" value="20"></div>
       <div class="fld"><label>일일 상한</label><input class="n" name="per_day" value="300"></div>
     </div>
     <div class="fld"><label>메모</label><input name="note" placeholder="용도·비고"></div>
-    <button class="btn p" type="submit">추가 (토큰 자동 발급)</button>
+    <div class="eacts"><button class="btn p" type="submit">추가 (토큰 자동 발급)</button>
+      <button type="button" class="btn" data-toggle="new-app" data-on="닫기" data-off="새 앱 추가">취소</button></div>
   </form>
 </div>
 
-<h2>앱이 호출하는 방법</h2>
-<div class="panel mono" style="font-size:12px;white-space:pre-wrap;line-height:1.7">POST https://ai.zerolive.co.kr/v1/ai          ← 채팅 · 비전 · 웹검색
+${list}
+
+<details class="dt"><summary>앱이 호출하는 방법</summary>
+<div class="in code">POST https://ai.zerolive.co.kr/v1/ai          ← 채팅 · 비전 · 웹검색
 POST https://ai.zerolive.co.kr/v1/embeddings  ← 임베딩(엔드포인트가 다름)
 
 Authorization: Bearer &lt;앱 토큰&gt;
@@ -559,8 +592,13 @@ Content-Type: application/json
   "model": "google/gemini-2.5-pro",        ← 선택. 모델 제한 없음(카탈로그 전체)
   "plugins": [{"id":"web"}],               ← 선택. 웹검색(모델명 :online 과 같음)
   "meta": { "ver":"1.2.0", "screen":"scan" }   ← 선택. 통계에 그대로 쌓여요.
-}</div>
-<p class="foot">모델은 제한하지 않아요 — <a href="https://openrouter.ai/models" target="_blank" rel="noopener">OpenRouter 카탈로그</a>의 이름을 그대로 쓰면 돼요(목록: <span class="mono">GET /admin/api/models</span>).<br>비용은 OpenRouter가 응답에 실어주는 실제 청구액(웹검색 요금 포함)으로 기록해요. 값이 없는 과거 기록만 단가표로 추정해요: ${known}</p>`,
+}</div></details>
+
+<details class="dt"><summary>단가를 등록해 둔 모델 ${Object.keys(MODEL_PRICES).length}개</summary>
+<div class="in">${known}
+<p class="sm" style="margin:9px 0 0">비용은 OpenRouter가 응답에 실어주는 실제 청구액(웹검색 요금 포함)으로 기록해요. 이 단가표는 청구액이 없는 과거 기록을 추정할 때만 써요.</p></div></details>
+
+<p class="foot">모델은 제한하지 않아요 — <a href="https://openrouter.ai/models" target="_blank" rel="noopener">OpenRouter 카탈로그</a>의 이름을 그대로 쓰면 돼요(목록: <span class="mono">GET /admin/api/models</span>).</p>`,
 		{ ...opts, tab: "apps" },
 	);
 }

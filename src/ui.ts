@@ -504,6 +504,52 @@ a.btn{text-decoration:none;display:inline-block;color:var(--ink);}
 /* 표가 길 때 가로 스크롤 */
 .scroll{overflow-x:auto;border-radius:14px;}
 .scroll table{min-width:640px;}
+
+/* ── 앱 관리 — 앱 1개 = 카드 1장. 표에 편집 폼까지 넣으면 세로로 한없이 길어진다. */
+.lh{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:22px 0 11px;}
+.lh .t{font-size:13px;font-weight:700;color:var(--muted);}
+.lh .t b{color:var(--ink);font-size:14px;}
+.lh .btn{padding:7px 14px;}
+.apps{display:flex;flex-direction:column;gap:12px;}
+.app{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:15px 17px;}
+.app.off{background:#fcfcfd;}
+.ah{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;}
+.ah .nm{min-width:170px;}
+.ah .nm b{font-size:15.5px;font-weight:800;letter-spacing:-.2px;}
+.ah .nm .id{font-size:11.5px;color:var(--muted);margin-top:2px;}
+.ah .acts{display:flex;gap:6px;flex-wrap:wrap;align-items:center;}
+.ah .acts .btn{padding:6px 11px;font-size:12px;}
+.st{display:inline-block;font-size:11px;font-weight:800;border-radius:999px;padding:2px 9px;margin-left:8px;
+ position:relative;top:-1px;}
+.st.on{background:#eaf7ee;color:var(--g);}
+.st.off{background:#ffecec;color:var(--r);}
+.ab{display:grid;grid-template-columns:1fr 1fr;gap:11px 20px;margin-top:13px;
+ border-top:1px solid var(--line);padding-top:12px;}
+.ab .k{font-size:11px;font-weight:700;color:var(--muted);margin-bottom:4px;}
+.ab .v{font-size:12.5px;word-break:break-all;}
+.ab .wide{grid-column:1/-1;}
+.tok .full{display:none;}
+.tok.open .full{display:inline;}
+.tok.open .mask{display:none;}
+.tok .copy{margin-left:6px;}
+.mc{display:inline-flex;align-items:center;gap:7px;background:#f7f5fd;border:1px solid #ece6fb;
+ border-radius:8px;padding:3px 9px;margin:0 6px 6px 0;font-size:11.5px;
+ font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}
+.mc i{font-style:normal;font-weight:800;color:#5E3A9E;}
+.aedit{margin-top:13px;border-top:1px solid var(--line);padding-top:14px;}
+.eacts{display:flex;gap:8px;align-items:center;}
+@media(max-width:700px){.ab{grid-template-columns:1fr}.lh{flex-wrap:wrap}}
+
+/* 접었다 펴는 안내 상자 */
+.dt{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:13px 17px;margin-top:12px;}
+.dt>summary{cursor:pointer;font-size:13px;font-weight:700;color:var(--muted);list-style:none;}
+.dt>summary::-webkit-details-marker{display:none;}
+.dt>summary::before{content:'▸';margin-right:8px;color:var(--accent);font-weight:900;}
+.dt[open]>summary::before{content:'▾';}
+.dt>summary:hover{color:var(--ink);}
+.dt .in{margin-top:12px;}
+.dt .in.code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;
+ white-space:pre-wrap;line-height:1.7;}
 `;
 
 /* ── 새 화면에서 쓰는 스크립트 — 로그 행 펼치기 ── */
@@ -534,6 +580,34 @@ document.addEventListener('input', function(e){
   }
   var c = document.getElementById(i.getAttribute('data-filter') + '-cnt');
   if (c) c.textContent = n.toLocaleString() + '개';
+});
+
+// 접었다 펴기 — 앱 편집 폼, 새 앱 추가 폼. data-on/data-off가 있으면 버튼 글자도 바꾼다.
+document.addEventListener('click', function(e){
+  var b = e.target && e.target.closest ? e.target.closest('[data-toggle]') : null;
+  if (!b) return;
+  var el = document.getElementById(b.getAttribute('data-toggle'));
+  if (!el) return;
+  var open = el.hidden;
+  el.hidden = !open;
+  var all = document.querySelectorAll('[data-toggle="' + b.getAttribute('data-toggle') + '"]');
+  for (var k = 0; k < all.length; k++) {
+    var lb = all[k].getAttribute(open ? 'data-on' : 'data-off');
+    if (lb) all[k].textContent = lb;
+  }
+  if (open) {
+    var f = el.querySelector('input:not([type=hidden]),textarea');
+    if (f) f.focus();
+  }
+});
+
+// 토큰 보기/가리기 — 평소엔 가운데를 가려 둔다.
+document.addEventListener('click', function(e){
+  var b = e.target && e.target.closest ? e.target.closest('[data-reveal]') : null;
+  if (!b) return;
+  var w = b.closest('.tok');
+  if (!w) return;
+  b.textContent = w.classList.toggle('open') ? '가리기' : '보기';
 });
 `;
 
