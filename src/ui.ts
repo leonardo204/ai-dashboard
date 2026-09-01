@@ -19,7 +19,7 @@ const ADMIN_CSS = `
 .wrap{max-width:1120px;margin:0 auto;padding:22px 18px 70px;}
 h1{font-size:20px;margin:0 0 4px;}h2{font-size:14px;margin:26px 0 9px;color:var(--muted);}
 .sub{color:var(--muted);font-size:13px;margin:0 0 16px;}
-.tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px;}
 .tab{font-size:13px;font-weight:700;padding:7px 13px;border-radius:999px;border:1px solid var(--line);
  background:var(--panel);color:var(--ink);text-decoration:none;}
 .tab.on{background:var(--accent);border-color:var(--accent);color:#fff;}
@@ -439,6 +439,8 @@ const EXTRA_CSS = `
 
 /* 요약 화면 알림 줄 */
 .alerts{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;}
+/* 탭 줄 안에 들어간 알림 — 위 JSON 뱃지와 오른쪽 끝을 맞춘다. 자리가 좁으면 아랫줄로 접힌다. */
+.tabs .alerts{margin:0;justify-content:flex-end;}
 .al{display:flex;align-items:center;gap:7px;background:#fff6f6;border:1px solid #f6cfcf;color:#a9313a;
  border-radius:11px;padding:8px 12px;font-size:12.5px;font-weight:700;}
 .al.ok{background:#f2fbf4;border-color:#cfe8d4;color:#0a7d33;}
@@ -640,7 +642,11 @@ export function pageHead(title: string, sub: string, appFilter: string, live = t
 </div>`;
 }
 
-/** 기간·앱 고르는 두 줄 탭. 탭을 옮겨도 조건이 그대로 따라간다. */
+/**
+ * 기간·앱 고르는 두 줄 탭.
+ * rightLink는 첫 줄 오른쪽(JSON 뱃지), rightBelow는 둘째 줄 오른쪽에 붙는다.
+ * 둘을 세로로 맞춰 두면 알림 줄이 따로 한 줄을 차지하지 않는다.
+ */
 export function filterTabs(
 	path: string,
 	period: string,
@@ -648,6 +654,7 @@ export function filterTabs(
 	apps: { id: string; name: string; active: boolean }[],
 	periods: Record<string, { label: string }>,
 	rightLink = "",
+	rightBelow = "",
 ): string {
 	const q = (p: string, a: string) => `${path}?period=${p}${a ? `&app=${encodeURIComponent(a)}` : ""}`;
 	const periodTabs = Object.entries(periods)
@@ -661,7 +668,10 @@ export function filterTabs(
 					`<a class="tab${appFilter === a.id ? " on" : ""}" href="${q(period, a.id)}">${escapeHtml(a.name)}${a.active ? "" : " (중지)"}</a>`,
 			)
 			.join("");
-	return `<div class="tabs">${periodTabs}<span style="flex:1"></span>${rightLink}</div><div class="tabs">${appTabs}</div>`;
+	return (
+		`<div class="tabs">${periodTabs}<span style="flex:1"></span>${rightLink}</div>` +
+		`<div class="tabs">${appTabs}${rightBelow ? `<span style="flex:1"></span>${rightBelow}` : ""}</div>`
+	);
 }
 
 /** 소제목 + 오른쪽 "자세히" 링크. */

@@ -63,7 +63,7 @@ export function renderSummary(s: SummaryData, opts: AdminOpts = {}): string {
 			`</svg>`
 		: "";
 
-	// 눈여겨볼 것만 맨 위에 한 줄로. 평소에는 아무것도 뜨지 않는다.
+	// 눈여겨볼 것만 앱 탭 줄 오른쪽에. 평소에는 아무것도 뜨지 않는다.
 	const alerts: string[] = [];
 	if (s.error && errRate >= 5) {
 		alerts.push(
@@ -119,8 +119,15 @@ export function renderSummary(s: SummaryData, opts: AdminOpts = {}): string {
 		"AI 호출 요약",
 		pageHead("AI 호출 요약", `앱별 AI 프록시 사용량 · ${sinceLabel(s.since)}`, s.appFilter) +
 			`<div id="hz-body">
-${filterTabs("/admin", s.period, s.appFilter, s.apps, PERIODS, `<a class="tab alt" href="/admin/stats.json${q}">JSON</a>`)}
-${alerts.length ? `<div class="alerts">${alerts.join("")}</div>` : ""}
+${filterTabs(
+	"/admin",
+	s.period,
+	s.appFilter,
+	s.apps,
+	PERIODS,
+	`<a class="tab alt" href="/admin/stats.json${q}">JSON</a>`,
+	alerts.length ? `<div class="alerts">${alerts.join("")}</div>` : "",
+)}
 <div class="kpi">
   <div class="k1">
     <div class="l">호출 수</div>
