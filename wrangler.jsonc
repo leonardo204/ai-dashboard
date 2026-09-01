@@ -16,8 +16,7 @@
 			"database_id": "866a64c0-2f9a-4580-a6ae-14a66435c0a8"
 		}
 	],
-	// ⚠️ ai.zerolive.co.kr 은 아직 분리 전 worker에 붙어 있다.
-	//    떼어내기 전에 배포하면 도메인 충돌로 실패한다. README의 "도메인 전환" 참고.
+	// 운영 도메인. hamzzi-diet worker에서 이쪽으로 옮겨왔다.
 	"routes": [
 		{
 			"pattern": "ai.zerolive.co.kr",
