@@ -547,8 +547,6 @@ export interface AdminOpts {
 	session?: boolean;
 	/** 상단바에서 강조할 메뉴 */
 	tab?: TabKey;
-	/** 메뉴 링크에 붙일 기간·앱 조건 (예: "?period=week&app=my-app") */
-	q?: string;
 	/** 상단바·본문 여백 없이 그리는 화면(로그인 등) */
 	bare?: boolean;
 	/** 화면을 열자마자 토스트로 띄울 결과 메시지 */
@@ -557,19 +555,22 @@ export interface AdminOpts {
 	token?: string | null;
 }
 
-const NAV: { key: TabKey; href: string; label: string; keepQuery: boolean }[] = [
-	{ key: "summary", href: "/admin", label: "요약", keepQuery: true },
-	{ key: "usage", href: "/admin/usage", label: "사용량", keepQuery: true },
-	{ key: "trend", href: "/admin/trend", label: "추이", keepQuery: true },
-	{ key: "geo", href: "/admin/geo", label: "지역", keepQuery: true },
-	{ key: "logs", href: "/admin/logs", label: "로그", keepQuery: true },
-	{ key: "apps", href: "/admin/apps", label: "앱 관리", keepQuery: false },
+// 상단 메뉴는 조건 없는 주소로만 간다.
+// 화면마다 기간·앱을 따로 고르는데, 메뉴에 조건을 얹으면 한 화면에서 고른 값이
+// 나머지 화면까지 따라가 버린다. 화면을 옮기면 기본값(최근 30일·전체 앱)에서 다시 시작한다.
+// 화면 안의 "자세히 →"·도넛 조각·"로그 →"는 눌러서 파고드는 링크라 조건을 그대로 넘긴다.
+const NAV: { key: TabKey; href: string; label: string }[] = [
+	{ key: "summary", href: "/admin", label: "요약" },
+	{ key: "usage", href: "/admin/usage", label: "사용량" },
+	{ key: "trend", href: "/admin/trend", label: "추이" },
+	{ key: "geo", href: "/admin/geo", label: "지역" },
+	{ key: "logs", href: "/admin/logs", label: "로그" },
+	{ key: "apps", href: "/admin/apps", label: "앱 관리" },
 ];
 
 export function shellAdmin(title: string, body: string, opts: AdminOpts = {}): string {
-	const q = opts.q ?? "";
 	const nav = NAV.map(
-		(n) => `<a href="${n.href}${n.keepQuery ? q : ""}"${opts.tab === n.key ? ' class="on"' : ""}>${n.label}</a>`,
+		(n) => `<a href="${n.href}"${opts.tab === n.key ? ' class="on"' : ""}>${n.label}</a>`,
 	).join("");
 	const topbar = opts.bare
 		? ""

@@ -169,7 +169,7 @@ ${svgTrend(s.buckets)}
 
 <p class="foot">숫자 옆 ▲▼는 직전 같은 기간과 비교한 값이에요.<br>${FOOT_COST}<br>${FOOT_GEO}</p>
 </div>`,
-		{ ...opts, tab: "summary", q },
+		{ ...opts, tab: "summary" },
 	);
 }
 
@@ -247,7 +247,7 @@ ${filterTabs("/admin/usage", u.period, u.appFilter, u.apps, PERIODS)}
 
 <p class="foot">용도는 앱이 보낸 <span class="mono">X-Ai-Kind</span> 값이에요.<br>${FOOT_COST}</p>
 </div>`,
-		{ ...opts, tab: "usage", q },
+		{ ...opts, tab: "usage" },
 	);
 }
 
@@ -290,7 +290,7 @@ ${svgHeat(t.heat)}
 
 <p class="foot">구간은 한국 시간(KST) 기준으로 끊어요.<br>${FOOT_COST}</p>
 </div>`,
-		{ ...opts, tab: "trend", q },
+		{ ...opts, tab: "trend" },
 	);
 }
 
@@ -345,7 +345,7 @@ ${svgMap(g.points, g.geoUnknown)}
 
 <p class="foot">${FOOT_GEO}</p>
 </div>`,
-		{ ...opts, tab: "geo", q },
+		{ ...opts, tab: "geo" },
 	);
 }
 
@@ -372,7 +372,6 @@ const todayKst = () => new Date(Date.now() + 9 * 3600_000).toISOString().slice(0
 
 export function renderLogs(l: LogsData, opts: AdminOpts = {}): string {
 	const f = l.filter;
-	const q = navQuery(f.period, f.app);
 	const sel = (v: string, cur: string, label: string) =>
 		`<option value="${escapeHtml(v)}"${v === cur ? " selected" : ""}>${escapeHtml(label)}</option>`;
 
@@ -461,7 +460,7 @@ export function renderLogs(l: LogsData, opts: AdminOpts = {}): string {
 
 <p class="foot">이 화면은 자동으로 다시 그리지 않아요. 보던 목록이 바뀌면 읽기 어려워서예요.<br>CSV는 조건에 맞는 최근 5000건까지 내려받아요.<br>${FOOT_COST}</p>
 </div>`,
-		{ ...opts, tab: "logs", q },
+		{ ...opts, tab: "logs" },
 	);
 }
 export function renderApps(apps: AppConfig[], opts: AdminOpts = {}): string {
