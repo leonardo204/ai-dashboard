@@ -530,7 +530,9 @@ a.btn{text-decoration:none;display:inline-block;color:var(--ink);}
 .ab .wide{grid-column:1/-1;}
 .tok .full{display:none;}
 .tok.open .full{display:inline;}
-.tok.open .mask{display:none;}
+/* 토큰 가림 — 클래스 이름은 모달 배경막(.mask)과 겹치지 않게 둔다.
+   겹치면 화면 전체를 덮는 고정 막 스타일이 이 span에 걸려 모든 클릭이 막힌다. */
+.tok.open .hid{display:none;}
 .tok .copy{margin-left:6px;}
 .mc{display:inline-flex;align-items:center;gap:7px;background:#f7f5fd;border:1px solid #ece6fb;
  border-radius:8px;padding:3px 9px;margin:0 6px 6px 0;font-size:11.5px;

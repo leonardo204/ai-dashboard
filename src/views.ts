@@ -513,7 +513,7 @@ function appCard(a: AppConfig): string {
   </div>
   <div class="ab">
     <div class="af"><div class="k">토큰</div>
-      <div class="v tok"><span class="mono mask">${escapeHtml(maskToken(a.token))}</span><span class="mono full">${escapeHtml(a.token)}</span>
+      <div class="v tok"><span class="mono hid">${escapeHtml(maskToken(a.token))}</span><span class="mono full">${escapeHtml(a.token)}</span>
         <button type="button" class="copy" data-reveal="1">보기</button><button type="button" class="copy" data-copy="${escapeHtml(a.token)}">복사</button></div></div>
     <div class="af"><div class="k">호출 상한 (IP 기준)</div>
       <div class="v">분당 <b>${a.perMin.toLocaleString()}</b>회 · 하루 <b>${a.perDay.toLocaleString()}</b>회</div></div>
