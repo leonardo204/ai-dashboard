@@ -15,12 +15,14 @@
  *  GET  /admin/geo        국가·도시별 호출 분포
  *  GET  /admin/logs       호출 로그 검색 (/admin/logs.csv 내려받기)
  *  GET  /admin/apps       앱 관리 화면
+ *  GET  /admin/guide      연결 가이드 (원문: /admin/guide.md)
  *       /admin/api/*      앱 관리·통계·모델 카탈로그 API
  *
  * 도메인: ai.zerolive.co.kr   ·   문서: docs/PROXY-API.md
  */
 
 import { handleChat, handleEmbeddings, type ProxyEnv } from "./proxy";
+import { renderGuide, GUIDE_MD, GUIDE_FILENAME } from "./guide";
 import {
 	collectStats, collectSummary, collectUsage, collectTrend, collectGeo, queryLogs, logsCsv,
 	listApps, getApp, upsertApp, deleteApp, newToken, pulse, PERIODS, LOG_PAGE,
@@ -492,6 +494,23 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 		// ── 앱 관리 API (/admin/api/apps) — 화면 없이 스크립트로
 		if (path === "/admin/api/apps" || path.startsWith("/admin/api/apps/")) {
 			return handleAppsApi(request, env, url);
+		}
+
+		// ── 연결 가이드 (/admin/guide) · 원문 내려받기 (/admin/guide.md)
+		//    다른 프로젝트에 건네줄 문서다. 관리자용 내용은 담지 않는다.
+		if (path === "/admin/guide" || path === "/admin/guide/" || path === "/admin/guide.md") {
+			const unauth = await requireAdmin(request, env, url);
+			if (unauth) return unauth;
+			if (path === "/admin/guide.md") {
+				return new Response(GUIDE_MD, {
+					headers: {
+						"Content-Type": "text/markdown;charset=UTF-8",
+						"Content-Disposition": `attachment; filename="${GUIDE_FILENAME}"`,
+						"Cache-Control": "no-store",
+					},
+				});
+			}
+			return html(renderGuide({ session: true }), { cache: false });
 		}
 
 		// ── 앱 관리 (/admin/apps) — 등록·모델 맵·상한·토큰 재발급

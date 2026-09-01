@@ -554,6 +554,36 @@ a.btn{text-decoration:none;display:inline-block;color:var(--ink);}
 .dt .in{margin-top:12px;}
 .dt .in.code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;
  white-space:pre-wrap;line-height:1.7;}
+
+/* ── 연결 가이드 — 마크다운 원문을 그대로 그린다 */
+.gacts{flex:0 0 auto;display:flex;gap:8px;align-items:center;}
+.gnote{background:#f7f5fd;border:1px solid #ece6fb;border-radius:12px;padding:11px 14px;
+ font-size:12.5px;color:#5E3A9E;font-weight:600;margin-bottom:14px;}
+.gnote a{color:inherit;}
+.mdx{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:26px 30px 30px;
+ font-size:14px;line-height:1.75;}
+.mdx h2{font-size:19px;font-weight:800;color:var(--ink);margin:30px 0 10px;padding-top:4px;letter-spacing:-.3px;}
+.mdx h3{font-size:15.5px;font-weight:800;color:var(--ink);margin:22px 0 8px;}
+.mdx h4{font-size:14px;font-weight:800;color:var(--muted);margin:18px 0 6px;}
+.mdx > h2:first-child,.mdx > h3:first-child{margin-top:0;}
+.mdx p{margin:0 0 12px;}
+.mdx ul,.mdx ol{margin:0 0 13px;padding-left:22px;}
+.mdx li{margin-bottom:5px;}
+.mdx hr{border:0;border-top:1px solid var(--line);margin:26px 0;}
+.mdx code{background:#f4f2fa;border:1px solid #ece6fb;border-radius:5px;padding:1px 5px;
+ font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;word-break:break-all;}
+.mdx pre.cb{background:#1f2430;color:#e8eaf2;border-radius:12px;padding:15px 17px;overflow-x:auto;
+ margin:0 0 14px;line-height:1.65;}
+.mdx pre.cb code{background:none;border:0;padding:0;color:inherit;font-size:12.5px;white-space:pre;word-break:normal;}
+.mdx blockquote{margin:0 0 14px;padding:12px 16px;background:#fffaf2;border:1px solid #f2e2c6;
+ border-left:3px solid #E0A33B;border-radius:10px;}
+.mdx blockquote p{margin:0 0 8px;font-size:13px;}
+.mdx blockquote p:last-child{margin:0;}
+.mdx table{font-size:13px;margin-bottom:14px;}
+.mdx .scroll{margin-bottom:14px;}
+.mdx td,.mdx th{vertical-align:top;}
+.mdx a{color:var(--accent);}
+@media(max-width:640px){.mdx{padding:18px 16px 22px;}.gacts{width:100%;}}
 `;
 
 /* ── 새 화면에서 쓰는 스크립트 — 로그 행 펼치기 ── */
@@ -606,6 +636,22 @@ document.addEventListener('click', function(e){
   }
 });
 
+// 가이드 원문 전체 복사 — 파일로 받지 않고 채팅에 바로 붙여넣을 때 쓴다.
+document.addEventListener("click", function(e){
+  var b = e.target && e.target.closest ? e.target.closest("#g-copy") : null;
+  if (!b) return;
+  var ta = document.getElementById("g-src");
+  if (!ta) return;
+  var done = function(){ b.textContent = "복사했어요"; setTimeout(function(){ b.textContent = "전체 복사"; }, 1800); };
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(ta.value).then(done, function(){ ta.hidden = false; ta.select(); });
+  } else {
+    ta.hidden = false; ta.select();
+    try { document.execCommand("copy"); done(); } catch (err) {}
+    ta.hidden = true;
+  }
+});
+
 // 토큰 보기/가리기 — 평소엔 가운데를 가려 둔다.
 document.addEventListener('click', function(e){
   var b = e.target && e.target.closest ? e.target.closest('[data-reveal]') : null;
@@ -621,7 +667,7 @@ document.addEventListener('click', function(e){
 // ─────────────────────────────────────────────────────────────
 
 /** 상단바 메뉴 키. */
-export type TabKey = "summary" | "usage" | "trend" | "geo" | "logs" | "apps";
+export type TabKey = "summary" | "usage" | "trend" | "geo" | "logs" | "apps" | "guide";
 
 export interface AdminOpts {
 	/** 세션 로그인으로 들어온 화면인지(= 로그아웃 버튼 노출). */
@@ -647,6 +693,7 @@ const NAV: { key: TabKey; href: string; label: string }[] = [
 	{ key: "geo", href: "/admin/geo", label: "지역" },
 	{ key: "logs", href: "/admin/logs", label: "로그" },
 	{ key: "apps", href: "/admin/apps", label: "앱 관리" },
+	{ key: "guide", href: "/admin/guide", label: "가이드" },
 ];
 
 export function shellAdmin(title: string, body: string, opts: AdminOpts = {}): string {
