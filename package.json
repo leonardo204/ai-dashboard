@@ -1,0 +1,19 @@
+{
+	"name": "ai-dashboard",
+	"version": "1.0.0",
+	"private": true,
+	"description": "OpenRouter 앞단 AI 프록시 · 앱별 사용량 대시보드 (Cloudflare Workers)",
+	"scripts": {
+		"dev": "wrangler dev",
+		"start": "wrangler dev",
+		"deploy": "wrangler deploy",
+		"dry-run": "wrangler deploy --dry-run --outdir dist",
+		"typecheck": "tsc --noEmit",
+		"cf-typegen": "wrangler types"
+	},
+	"devDependencies": {
+		"@cloudflare/workers-types": "^5.20260828.1",
+		"typescript": "^5.5.2",
+		"wrangler": "^4.64.0"
+	}
+}

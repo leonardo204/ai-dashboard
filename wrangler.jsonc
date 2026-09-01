@@ -1,0 +1,28 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "ai-dashboard",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-08-24",
+	"compatibility_flags": ["nodejs_compat"],
+	"observability": {
+		"enabled": true
+	},
+	// 앱 레지스트리 · 호출 로그 저장소.
+	// 기존 프록시가 쓰던 D1을 그대로 재사용한다(데이터 이전 불필요).
+	// 새 계정·새 환경에 올릴 때만: wrangler d1 create ai-stats → 나온 id로 교체 후 schema.sql 적용.
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "hamzzi-stats",
+			"database_id": "866a64c0-2f9a-4580-a6ae-14a66435c0a8"
+		}
+	],
+	// ⚠️ ai.zerolive.co.kr 은 아직 기존 hamzzi-diet worker에 붙어 있다.
+	//    떼어내기 전에 배포하면 도메인 충돌로 실패한다. README의 "도메인 전환" 참고.
+	"routes": [
+		{
+			"pattern": "ai.zerolive.co.kr",
+			"custom_domain": true
+		}
+	]
+}
