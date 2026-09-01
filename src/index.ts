@@ -9,7 +9,11 @@
  * 라우트:
  *  POST /v1/ai            채팅·비전·웹검색
  *  POST /v1/embeddings    임베딩
- *  GET  /admin            통계 대시보드 (세션 로그인)
+ *  GET  /admin            요약 대시보드 (세션 로그인)
+ *  GET  /admin/usage      앱·모델·용도별 사용량
+ *  GET  /admin/trend      기간별 추이 · 요일×시각 히트맵
+ *  GET  /admin/geo        국가·도시별 호출 분포
+ *  GET  /admin/logs       호출 로그 검색 (/admin/logs.csv 내려받기)
  *  GET  /admin/apps       앱 관리 화면
  *       /admin/api/*      앱 관리·통계·모델 카탈로그 API
  *
@@ -18,9 +22,14 @@
 
 import { handleChat, handleEmbeddings, type ProxyEnv } from "./proxy";
 import {
-	collectStats, renderDashboard, renderApps, listApps, getApp, upsertApp, deleteApp,
-	newToken, renderLogin, pulse, PERIODS, type AppConfig,
+	collectStats, collectSummary, collectUsage, collectTrend, collectGeo, queryLogs, logsCsv,
+	listApps, getApp, upsertApp, deleteApp, newToken, pulse, PERIODS, LOG_PAGE,
+	type AppConfig, type LogFilter,
 } from "./stats";
+import { renderLogin } from "./ui";
+import {
+	renderSummary, renderUsage, renderTrend, renderGeo, renderLogs, renderApps,
+} from "./views";
 
 interface Env extends ProxyEnv {
 	// ProxyEnv: DB(D1) · OPENROUTER_API_KEY(secret)
@@ -225,6 +234,57 @@ function apiJson(obj: unknown, status = 200): Response {
 	});
 }
 const apiErr = (status: number, message: string) => apiJson({ error: message }, status);
+
+// ─────────────────────────────────────────────────────────────
+// 통계 화면 — 기간·앱 조건 읽기, 화면별 조회·렌더 짝
+// ─────────────────────────────────────────────────────────────
+
+/** 주소에서 기간·앱 조건을 읽는다. 모르는 값은 기본값(월·전체 앱)으로 떨어진다. */
+function statScope(url: URL): { period: string; appFilter: string } {
+	const raw = url.searchParams.get("period") || "month";
+	return {
+		period: PERIODS[raw] ? raw : "month",
+		appFilter: url.searchParams.get("app") || "",
+	};
+}
+
+/**
+ * 경로 → (조회 + 렌더). 화면마다 자기 집계만 돈다.
+ * 예전에는 /admin 한 장이 12개 집계를 전부 돌려, 보지도 않는 표 때문에 느렸다.
+ */
+const STAT_PAGES: Record<string, (env: Env, period: string, app: string) => Promise<string>> = {
+	"/admin": async (e, p, a) => renderSummary(await collectSummary(e, p, a), { session: true }),
+	"/admin/": async (e, p, a) => renderSummary(await collectSummary(e, p, a), { session: true }),
+	"/admin/usage": async (e, p, a) => renderUsage(await collectUsage(e, p, a), { session: true }),
+	"/admin/trend": async (e, p, a) => renderTrend(await collectTrend(e, p, a), { session: true }),
+	"/admin/geo": async (e, p, a) => renderGeo(await collectGeo(e, p, a), { session: true }),
+};
+
+/** 주소에서 로그 검색 조건을 읽는다. */
+function logFilterOf(url: URL): LogFilter {
+	const g = (k: string) => (url.searchParams.get(k) || "").trim();
+	const n = (k: string) => {
+		const v = Number(g(k));
+		return isFinite(v) && v > 0 ? Math.floor(v) : 0;
+	};
+	const raw = g("period") || "month";
+	return {
+		period: PERIODS[raw] ? raw : "month",
+		app: g("app"),
+		model: g("model"),
+		kind: g("kind"),
+		status: g("status"),
+		http: g("http"),
+		country: g("country").toUpperCase().slice(0, 2),
+		ip: g("ip"),
+		q: g("q").slice(0, 80),
+		from: g("from"),
+		to: g("to"),
+		slow: n("slow"),
+		before: n("before"),
+		limit: n("limit") || LOG_PAGE,
+	};
+}
 
 /** API 키 또는 관리자 로그인 중 하나면 통과. */
 async function apiAuthorized(request: Request, env: Env, url: URL): Promise<boolean> {
@@ -449,31 +509,41 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 			);
 		}
 
-		// ── AI 호출 통계 대시보드 (/admin, 색인 제외)
-		if (path === "/admin" || path === "/admin/" || path === "/admin/stats.json") {
-			// stats.json은 스크립트·CI에서도 읽을 수 있게 ADMIN_API_KEY를 허용한다.
-			// HTML 대시보드는 브라우저 로그인 흐름(리다이렉트)을 그대로 쓴다.
-			if (path === "/admin/stats.json") {
-				if (!(await apiAuthorized(request, env, url))) {
-					return apiErr(401, "인증이 필요해요. Authorization: Bearer <ADMIN_API_KEY> 헤더를 넣어 주세요.");
-				}
-			} else {
-				const unauth = await requireAdmin(request, env, url);
-				if (unauth) return unauth;
-			}
-			// 레거시 앱 자동 등록은 프록시(/v1)에서 토큰 미스일 때만 한다.
-			// 여기서 매 요청 실행하면 화면 로딩마다 불필요한 D1 왕복이 붙는다.
-			const periodRaw = url.searchParams.get("period") || "month";
-			const period = PERIODS[periodRaw] ? periodRaw : "month";
-			const appFilter = url.searchParams.get("app") || "";
-			const stats = await collectStats(env, period, appFilter);
-			if (path === "/admin/stats.json") {
-				return new Response(JSON.stringify(stats, null, 2), {
-					headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+		// ── 통계 화면 (요약·사용량·추이·지역, 색인 제외)
+		//    화면마다 필요한 집계만 돈다. 예전처럼 한 장에서 전부 계산하지 않는다.
+		if (STAT_PAGES[path]) {
+			const unauth = await requireAdmin(request, env, url);
+			if (unauth) return unauth;
+			const { period, appFilter } = statScope(url);
+			return html(await STAT_PAGES[path](env, period, appFilter), { cache: false });
+		}
+
+		// ── 호출 로그 (/admin/logs · /admin/logs.csv)
+		if (path === "/admin/logs" || path === "/admin/logs/" || path === "/admin/logs.csv") {
+			const unauth = await requireAdmin(request, env, url);
+			if (unauth) return unauth;
+			const filter = logFilterOf(url);
+			if (path === "/admin/logs.csv") {
+				const csv = await logsCsv(env, filter);
+				return new Response(csv, {
+					headers: {
+						"Content-Type": "text/csv;charset=UTF-8",
+						"Content-Disposition": `attachment; filename="ai-calls-${new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10)}.csv"`,
+						"Cache-Control": "no-store",
+					},
 				});
 			}
-			return new Response(renderDashboard(stats, { session: true }), {
-				headers: { "Content-Type": "text/html;charset=UTF-8", "Cache-Control": "no-store" },
+			return html(renderLogs(await queryLogs(env, filter), { session: true }), { cache: false });
+		}
+
+		// ── 통계 JSON (/admin/stats.json) — 스크립트·CI용. 예전 응답 형태를 그대로 둔다.
+		if (path === "/admin/stats.json") {
+			if (!(await apiAuthorized(request, env, url))) {
+				return apiErr(401, "인증이 필요해요. Authorization: Bearer <ADMIN_API_KEY> 헤더를 넣어 주세요.");
+			}
+			const { period, appFilter } = statScope(url);
+			return new Response(JSON.stringify(await collectStats(env, period, appFilter), null, 2), {
+				headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
 			});
 		}
 
