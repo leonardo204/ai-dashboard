@@ -579,8 +579,8 @@ export function renderApps(apps: AppConfig[], opts: AdminOpts = {}): string {
 
 ${list}
 
-<details class="dt"><summary>앱이 호출하는 방법</summary>
-<div class="in code">POST https://ai.zerolive.co.kr/v1/ai          ← 채팅 · 비전 · 웹검색
+<div class="dt"><button type="button" class="dth" data-toggle="dt-howto">앱이 호출하는 방법</button>
+<div class="in code" id="dt-howto" hidden>POST https://ai.zerolive.co.kr/v1/ai          ← 채팅 · 비전 · 웹검색
 POST https://ai.zerolive.co.kr/v1/embeddings  ← 임베딩(엔드포인트가 다름)
 
 Authorization: Bearer &lt;앱 토큰&gt;
@@ -592,11 +592,11 @@ Content-Type: application/json
   "model": "google/gemini-2.5-pro",        ← 선택. 모델 제한 없음(카탈로그 전체)
   "plugins": [{"id":"web"}],               ← 선택. 웹검색(모델명 :online 과 같음)
   "meta": { "ver":"1.2.0", "screen":"scan" }   ← 선택. 통계에 그대로 쌓여요.
-}</div></details>
+}</div></div>
 
-<details class="dt"><summary>단가를 등록해 둔 모델 ${Object.keys(MODEL_PRICES).length}개</summary>
-<div class="in">${known}
-<p class="sm" style="margin:9px 0 0">비용은 OpenRouter가 응답에 실어주는 실제 청구액(웹검색 요금 포함)으로 기록해요. 이 단가표는 청구액이 없는 과거 기록을 추정할 때만 써요.</p></div></details>
+<div class="dt"><button type="button" class="dth" data-toggle="dt-price">단가를 등록해 둔 모델 ${Object.keys(MODEL_PRICES).length}개</button>
+<div class="in" id="dt-price" hidden>${known}
+<p class="sm" style="margin:9px 0 0">비용은 OpenRouter가 응답에 실어주는 실제 청구액(웹검색 요금 포함)으로 기록해요. 이 단가표는 청구액이 없는 과거 기록을 추정할 때만 써요.</p></div></div>
 
 <p class="foot">모델은 제한하지 않아요 — <a href="https://openrouter.ai/models" target="_blank" rel="noopener">OpenRouter 카탈로그</a>의 이름을 그대로 쓰면 돼요(목록: <span class="mono">GET /admin/api/models</span>).</p>`,
 		{ ...opts, tab: "apps" },

@@ -540,13 +540,15 @@ a.btn{text-decoration:none;display:inline-block;color:var(--ink);}
 .eacts{display:flex;gap:8px;align-items:center;}
 @media(max-width:700px){.ab{grid-template-columns:1fr}.lh{flex-wrap:wrap}}
 
-/* 접었다 펴는 안내 상자 */
+/* 접었다 펴는 안내 상자 — 머리 줄 전체가 버튼이라 기호·글자 어디를 눌러도 열린다.
+   (details/summary는 브라우저에 따라 열리지 않는 경우가 있어 쓰지 않는다.) */
 .dt{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:13px 17px;margin-top:12px;}
-.dt>summary{cursor:pointer;font-size:13px;font-weight:700;color:var(--muted);list-style:none;}
-.dt>summary::-webkit-details-marker{display:none;}
-.dt>summary::before{content:'▸';margin-right:8px;color:var(--accent);font-weight:900;}
-.dt[open]>summary::before{content:'▾';}
-.dt>summary:hover{color:var(--ink);}
+.dth{display:flex;align-items:center;gap:8px;width:calc(100% + 34px);margin:-13px -17px;padding:13px 17px;
+ font:inherit;font-size:13px;font-weight:700;color:var(--muted);text-align:left;
+ background:none;border:0;border-radius:14px;cursor:pointer;}
+.dth::before{content:'▸';color:var(--accent);font-weight:900;}
+.dth.on::before{content:'▾';}
+.dth:hover{color:var(--ink);background:#faf8ff;}
 .dt .in{margin-top:12px;}
 .dt .in.code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;
  white-space:pre-wrap;line-height:1.7;}
@@ -594,6 +596,7 @@ document.addEventListener('click', function(e){
   for (var k = 0; k < all.length; k++) {
     var lb = all[k].getAttribute(open ? 'data-on' : 'data-off');
     if (lb) all[k].textContent = lb;
+    all[k].classList.toggle('on', open);
   }
   if (open) {
     var f = el.querySelector('input:not([type=hidden]),textarea');
