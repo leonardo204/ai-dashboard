@@ -642,14 +642,20 @@ document.addEventListener("click", function(e){
   if (!b) return;
   var ta = document.getElementById("g-src");
   if (!ta) return;
-  var done = function(){ b.textContent = "복사했어요"; setTimeout(function(){ b.textContent = "전체 복사"; }, 1800); };
-  if (navigator.clipboard && window.isSecureContext) {
-    navigator.clipboard.writeText(ta.value).then(done, function(){ ta.hidden = false; ta.select(); });
-  } else {
-    ta.hidden = false; ta.select();
-    try { document.execCommand("copy"); done(); } catch (err) {}
-    ta.hidden = true;
-  }
+  var say = function(msg){ b.textContent = msg; setTimeout(function(){ b.textContent = "전체 복사"; }, 1800); };
+  var done = function(){ say("복사했어요"); };
+  var fail = function(){ say("복사하지 못했어요"); };
+  var fallback = function(){
+    var tmp = document.createElement("textarea");
+    tmp.value = ta.value; tmp.style.position = "fixed"; tmp.style.opacity = "0";
+    document.body.appendChild(tmp); tmp.select();
+    var ok = false;
+    try { ok = document.execCommand("copy"); } catch (err) {}
+    tmp.remove();
+    if (ok) done(); else fail();
+  };
+  if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(ta.value).then(done, fallback);
+  else fallback();
 });
 
 // 토큰 보기/가리기 — 평소엔 가운데를 가려 둔다.
