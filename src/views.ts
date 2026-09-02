@@ -88,6 +88,7 @@ export function renderSummary(s: SummaryData, opts: AdminOpts = {}): string {
 		s.byApp.map((r) => ({
 			label: r.name,
 			value: r.total,
+			sub: `비용 ${usd(r.cost)}`,
 			href: `/admin/usage?period=${s.period}&app=${encodeURIComponent(r.key)}`,
 		})),
 		"건",
@@ -96,6 +97,7 @@ export function renderSummary(s: SummaryData, opts: AdminOpts = {}): string {
 		s.byModel.map((r) => ({
 			label: shortModel(r.key),
 			value: r.total,
+			sub: `비용 ${usd(r.cost)}`,
 			href: `/admin/logs${q}&model=${encodeURIComponent(r.key)}`,
 		})),
 		"건",

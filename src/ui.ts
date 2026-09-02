@@ -465,12 +465,27 @@ const EXTRA_CSS = `
 .al.ok{background:#f2fbf4;border-color:#cfe8d4;color:#0a7d33;}
 .al b{font-weight:900;}
 
+/* 마우스를 따라다니는 툴팁 — 차트 공통 */
+.tipbox{position:fixed;z-index:99;pointer-events:none;opacity:0;transform:translateY(3px);
+ transition:opacity .12s ease,transform .12s ease;background:#23262e;color:#f3f4f8;
+ border-radius:10px;padding:8px 11px;font-size:12px;line-height:1.5;font-weight:600;
+ box-shadow:0 8px 24px rgba(20,22,30,.28);max-width:280px;white-space:pre-line;}
+.tipbox.on{opacity:1;transform:translateY(0);}
+.tipbox b{display:block;font-weight:800;font-size:12.5px;margin-bottom:2px;}
+[data-tip]{cursor:default;}
+
 /* 도넛 + 범례 */
 .donut{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px;
  display:flex;gap:18px;align-items:center;}
 .donut svg{width:132px;height:132px;flex:0 0 132px;}
+.donut path{transition:opacity .12s ease;}
+.donut.hi path{opacity:.3;}
+.donut.hi path.on{opacity:1;}
+.dg{border-radius:7px;transition:background .12s ease;}
+.donut.hi .dg{opacity:.45;}
+.donut.hi .dg.on{opacity:1;background:#f5f2fd;}
 .donut .lgd{flex:1;min-width:0;}
-.dg{display:flex;align-items:baseline;gap:8px;font-size:12.5px;padding:3px 0;}
+.dg{display:flex;align-items:baseline;gap:8px;font-size:12.5px;padding:3px 6px;margin-left:-6px;}
 .dg i{width:9px;height:9px;border-radius:3px;flex:0 0 9px;display:block;position:relative;top:1px;}
 .dg .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700;}
 .dg .pc{font-variant-numeric:tabular-nums;font-weight:800;}
@@ -685,6 +700,69 @@ document.addEventListener("click", function(e){
   else fallback();
 });
 
+// 차트 툴팁 — data-tip이 붙은 요소에 마우스를 올리면 커서를 따라다니는 상자를 띄운다.
+// 첫 줄은 제목처럼 굵게 나온다. 브라우저 기본 title은 뜨는 데 1초쯤 걸려서 직접 그린다.
+(function(){
+  var box = null, cur = null;
+  function ensure(){
+    if (!box) { box = document.createElement('div'); box.className = 'tipbox'; document.body.appendChild(box); }
+    return box;
+  }
+  function place(x, y){
+    var b = ensure(), w = b.offsetWidth, h = b.offsetHeight;
+    var left = x + 14, top = y + 16;
+    if (left + w > window.innerWidth - 8) left = x - w - 14;
+    if (left < 8) left = 8;
+    if (top + h > window.innerHeight - 8) top = y - h - 14;
+    if (top < 8) top = 8;
+    b.style.left = left + 'px'; b.style.top = top + 'px';
+  }
+  function hide(){
+    cur = null;
+    if (box) box.classList.remove('on');
+    var d = document.querySelectorAll('.donut.hi');
+    for (var k = 0; k < d.length; k++) d[k].classList.remove('hi');
+    var o = document.querySelectorAll('.on[data-seg]');
+    for (var j = 0; j < o.length; j++) o[j].classList.remove('on');
+  }
+  function mark(el){
+    // 도넛 — 조각이든 범례든, 같은 번호끼리 함께 강조한다.
+    var dn = el.closest ? el.closest('.donut') : null;
+    var seg = el.getAttribute('data-seg');
+    if (!dn || seg === null) return;
+    dn.classList.add('hi');
+    var same = dn.querySelectorAll('[data-seg="' + seg + '"]');
+    for (var k = 0; k < same.length; k++) same[k].classList.add('on');
+  }
+  document.addEventListener('mouseover', function(e){
+    var t = e.target && e.target.closest ? e.target.closest('[data-tip]') : null;
+    if (!t) { if (cur) hide(); return; }
+    if (t === cur) return;
+    hide();
+    cur = t;
+    var txt = t.getAttribute('data-tip') || '';
+    var i = txt.indexOf('\\n');
+    var b = ensure();
+    b.innerHTML = '';
+    var head = document.createElement('b');
+    head.textContent = i < 0 ? txt : txt.slice(0, i);
+    b.appendChild(head);
+    if (i >= 0) b.appendChild(document.createTextNode(txt.slice(i + 1)));
+    b.classList.add('on');
+    place(e.clientX, e.clientY);
+    mark(t);
+  }, true);
+  document.addEventListener('mousemove', function(e){ if (cur) place(e.clientX, e.clientY); }, true);
+  document.addEventListener('mouseout', function(e){
+    if (!cur) return;
+    var to = e.relatedTarget;
+    if (to && to.closest && to.closest('[data-tip]') === cur) return;
+    hide();
+  }, true);
+  window.addEventListener('scroll', hide, true);
+  window.addEventListener('blur', hide);
+})();
+
 // 토큰 보기/가리기 — 평소엔 가운데를 가려 둔다.
 document.addEventListener('click', function(e){
   var b = e.target && e.target.closest ? e.target.closest('[data-reveal]') : null;
@@ -857,6 +935,12 @@ export function delta(cur: number, prev: number, higherIsWorse = false): string 
 // ─────────────────────────────────────────────────────────────
 
 /** 도넛 차트 — 상위 5개 + 나머지는 "기타"로 묶는다. 조각을 누르면 해당 화면으로 간다. */
+/** 도넛 툴팁 문구 — 첫 줄은 이름, 다음 줄에 건수·비중·부가 정보. */
+function donutTip(it: { label: string; value: number; sub?: string }, total: number, unit: string): string {
+	const pct = ((it.value / total) * 100).toFixed(1);
+	return `${it.label}\n${it.value.toLocaleString()}${unit} · 전체의 ${pct}%${it.sub ? `\n${it.sub}` : ""}`;
+}
+
 export function svgDonut(
 	rows: { label: string; value: number; sub?: string; href?: string }[],
 	unit: string,
@@ -875,7 +959,7 @@ export function svgDonut(
 	let acc = -Math.PI / 2;
 	const arcs =
 		items.length === 1
-			? `<circle cx="${C}" cy="${C}" r="${(R + r) / 2}" fill="none" stroke="${SHARE_COLORS[0]}" stroke-width="${R - r}"/>`
+			? `<circle cx="${C}" cy="${C}" r="${(R + r) / 2}" fill="none" stroke="${SHARE_COLORS[0]}" stroke-width="${R - r}" data-seg="0" data-tip="${escapeHtml(donutTip(items[0], total, unit))}"/>`
 			: items
 					.map((it, i) => {
 						const ang = (it.value / total) * Math.PI * 2;
@@ -884,8 +968,8 @@ export function svgDonut(
 						acc = a1;
 						const large = ang > Math.PI ? 1 : 0;
 						const d = `M ${pt(a0, R)} A ${R} ${R} 0 ${large} 1 ${pt(a1, R)} L ${pt(a1, r)} A ${r} ${r} 0 ${large} 0 ${pt(a0, r)} Z`;
-						const title = `${it.label} — ${it.value.toLocaleString()}${unit} (${((it.value / total) * 100).toFixed(1)}%)`;
-						return `<path d="${d}" fill="${SHARE_COLORS[i % SHARE_COLORS.length]}"><title>${escapeHtml(title)}</title></path>`;
+						const tip = donutTip(it, total, unit);
+						return `<path d="${d}" fill="${SHARE_COLORS[i % SHARE_COLORS.length]}" data-seg="${i}" data-tip="${escapeHtml(tip)}"/>`;
 					})
 					.join("");
 
@@ -896,9 +980,10 @@ export function svgDonut(
 				`<i style="background:${SHARE_COLORS[i % SHARE_COLORS.length]}"></i>` +
 				`<span class="nm">${escapeHtml(it.label)}</span>` +
 				`<span class="pc">${pct.toFixed(pct < 10 ? 1 : 0)}%</span>` +
-				`<span class="vl">${it.value.toLocaleString()}${unit}</span>`;
+				`<span class="vl">${it.value.toLocaleString()}${unit}${it.sub ? ` · ${escapeHtml(it.sub)}` : ""}</span>`;
 			const href = (it as { href?: string }).href;
-			return `<div class="dg">${href ? `<a href="${href}" style="display:contents">${inner}</a>` : inner}</div>`;
+			return `<div class="dg" data-seg="${i}" data-tip="${escapeHtml(donutTip(it, total, unit))}">` +
+				`${href ? `<a href="${href}" style="display:contents">${inner}</a>` : inner}</div>`;
 		})
 		.join("");
 
@@ -926,7 +1011,7 @@ export function svgHeat(cells: { w: number; h: number; n: number }[]): string {
 			// 값 차이가 커서 선형으로 칠하면 대부분 흰색이 된다. 제곱근으로 눌러 준다.
 			const f = n ? 0.14 + Math.sqrt(n / max) * 0.86 : 0;
 			const bg = n ? `rgba(146,95,240,${f.toFixed(3)})` : "#f1f2f6";
-			return `<td><span class="c" style="background:${bg}" title="${wd}요일 ${h}시 · ${n.toLocaleString()}건"></span></td>`;
+			return `<td><span class="c" style="background:${bg}" data-tip="${escapeHtml(`${wd}요일 ${h}시\n호출 ${n.toLocaleString()}건`)}"></span></td>`;
 		}).join("");
 		return `<tr><th class="wd">${wd}</th>${tds}</tr>`;
 	}).join("");
@@ -986,8 +1071,8 @@ export function svgTrend(buckets: StatsSummary["buckets"]): string {
 			const erH = ((d.error / maxCall) * ih) || 0;
 			const okY = T + ih - okH;
 			const erY = okY - erH;
-			const title = `${d.b}\n호출 ${d.total.toLocaleString()} · 성공 ${d.ok.toLocaleString()} · 실패 ${d.error.toLocaleString()}\n토큰 ${d.tokens.toLocaleString()} · 비용 ${usd(d.cost)}`;
-			return `<g class="bg"><title>${escapeHtml(title)}</title>` +
+			const title = `${d.b}\n호출 ${d.total.toLocaleString()}건 (성공 ${d.ok.toLocaleString()} · 실패 ${d.error.toLocaleString()})\n토큰 ${d.tokens.toLocaleString()} · 비용 ${usd(d.cost)}`;
+			return `<g class="bg" data-tip="${escapeHtml(title)}">` +
 				`<rect x="${x.toFixed(1)}" y="${T}" width="${bw.toFixed(1)}" height="${ih}" class="hit"/>` +
 				`<rect x="${x.toFixed(1)}" y="${okY.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(okH, d.ok ? 1.5 : 0).toFixed(1)}" rx="2" class="b-ok"/>` +
 				(d.error ? `<rect x="${x.toFixed(1)}" y="${erY.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(erH, 1.5).toFixed(1)}" rx="2" class="b-er"/>` : "") +
@@ -1022,7 +1107,8 @@ export function svgShare(rows: { label: string; value: number; sub: string }[], 
 		.slice(0, 6)
 		.map((r, i) => {
 			const pct = (r.value / total) * 100;
-			return `<div class="sh"><div class="sh-t"><span>${escapeHtml(r.label)}</span>` +
+			const tip = `${r.label}\n${r.value.toLocaleString()}${unitLabel} · 전체의 ${pct.toFixed(1)}%${r.sub ? `\n${r.sub}` : ""}`;
+			return `<div class="sh" data-tip="${escapeHtml(tip)}"><div class="sh-t"><span>${escapeHtml(r.label)}</span>` +
 				`<span class="sh-v">${r.value.toLocaleString()}${unitLabel} <b>${pct.toFixed(pct < 10 ? 1 : 0)}%</b></span></div>` +
 				`<div class="sh-b"><span style="width:${pct.toFixed(1)}%;background:${SHARE_COLORS[i % SHARE_COLORS.length]}"></span></div>` +
 				(r.sub ? `<div class="sh-s">${escapeHtml(r.sub)}</div>` : "") +
@@ -1039,8 +1125,8 @@ export function svgMap(points: StatsSummary["points"], unknown: number): string 
 		.map((p) => {
 			const { x, y } = projectLonLat(p.lon, p.lat);
 			const r = 4 + Math.sqrt(p.total / max) * 16;
-			const title = `${countryName(p.country)}${p.city && p.city !== "-" ? ` · ${p.city}` : ""}\n호출 ${p.total.toLocaleString()} · 고유 IP ${p.ips.toLocaleString()} · 비용 ${usd(p.cost)}`;
-			return `<g class="bub"><title>${escapeHtml(title)}</title>` +
+			const title = `${countryName(p.country)}${p.city && p.city !== "-" ? ` · ${p.city}` : ""}\n호출 ${p.total.toLocaleString()}건 · 고유 IP ${p.ips.toLocaleString()}\n비용 ${usd(p.cost)}`;
+			return `<g class="bub" data-tip="${escapeHtml(title)}">` +
 				`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r.toFixed(1)}" class="bo"/>` +
 				`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${Math.max(1.8, r * 0.26).toFixed(1)}" class="bi"/></g>`;
 		})
