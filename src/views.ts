@@ -12,7 +12,7 @@
  */
 
 import {
-	PERIODS, MODEL_PRICES, DEFAULT_MODEL, countryName, LOG_PAGE,
+	PERIODS, MODEL_PRICES, DEFAULT_MODEL, countryName, LOG_PAGE, SUMMARY_RECENT,
 	type AppConfig, type GroupRow,
 	type SummaryData, type UsageData, type TrendData, type GeoData, type LogsData, type LogFilter,
 } from "./stats";
@@ -115,6 +115,25 @@ export function renderSummary(s: SummaryData, opts: AdminOpts = {}): string {
 		"건",
 	);
 
+	// 맨 아래 최근 호출 — 자동 갱신에 같이 실려서 새 호출이 들어오면 바로 바뀐다.
+	// 자세히 보는 건 로그 화면 몫이라 여기서는 줄을 펼치지 않는다.
+	const recentRows = s.recent.length
+		? s.recent
+				.map((r) => {
+					const geo = r.city && r.city !== "-" ? r.city : r.region && r.region !== "-" ? r.region : r.country;
+					return (
+						`<tr><td class="mono">${kst(r.ts)}</td><td>${escapeHtml(r.app)}</td><td>${escapeHtml(r.kind)}</td>` +
+						`<td class="mono">${escapeHtml(shortModel(r.model ?? "-"))}</td>` +
+						`<td><span class="pill ${r.status === "ok" ? "g" : "r"}">${escapeHtml(r.status)}</span></td>` +
+						`<td class="n">${r.http ?? "-"}</td><td class="n">${r.latency_ms.toLocaleString()}ms</td>` +
+						`<td class="n">${(r.inTok + r.outTok).toLocaleString()}</td><td class="n">${usd(r.cost)}</td>` +
+						`<td>${escapeHtml(geo || "-")}</td>` +
+						`<td class="err">${escapeHtml(r.err ?? r.meta ?? "")}</td></tr>`
+					);
+				})
+				.join("")
+		: `<tr><td colspan="11">아직 호출이 없어요.</td></tr>`;
+
 	return shellAdmin(
 		"AI 호출 요약",
 		pageHead("AI 호출 요약", `앱별 AI 프록시 사용량 · ${sinceLabel(s.since)}`, s.appFilter) +
@@ -174,7 +193,10 @@ ${svgTrend(s.buckets)}
   <section>${sectionHead(`호출 지역 (${s.countryCount}개국)`, `/admin/geo${q}`)}${geoShare}</section>
 </div>
 
-<p class="foot">숫자 옆 ▲▼는 직전 같은 기간과 비교한 값이에요.<br>${FOOT_COST}<br>${FOOT_GEO}</p>
+${sectionHead(`최근 호출 (${SUMMARY_RECENT}건)`, `/admin/logs${q}`, "로그에서 더 보기 →")}
+<div class="scroll"><table class="recent"><tr><th>시각</th><th>앱</th><th>용도</th><th>모델</th><th>상태</th><th class="n">HTTP</th><th class="n">지연</th><th class="n">토큰</th><th class="n">비용</th><th>지역</th><th>오류 · 메타</th></tr>${recentRows}</table></div>
+
+<p class="foot">최근 호출은 자동 갱신이 켜져 있으면 새 호출이 들어올 때마다 다시 그려져요.<br>숫자 옆 ▲▼는 직전 같은 기간과 비교한 값이에요.<br>${FOOT_COST}<br>${FOOT_GEO}</p>
 </div>`,
 		{ ...opts, tab: "summary" },
 	);
@@ -425,7 +447,7 @@ export function renderLogs(l: LogsData, opts: AdminOpts = {}): string {
 
 	return shellAdmin(
 		"호출 로그",
-		pageHead("호출 로그", "조건을 걸어 호출 1건씩 살펴봐요. 줄을 누르면 상세가 펼쳐져요.", f.app, false) +
+		pageHead("호출 로그", "조건을 걸어 호출 1건씩 살펴봐요. 줄을 누르면 상세가 펼쳐져요.", f.app) +
 			`<div id="hz-body">
 <form class="flt" method="get" action="/admin/logs">
   <input type="hidden" name="period" value="${escapeHtml(f.period)}">
@@ -465,7 +487,7 @@ export function renderLogs(l: LogsData, opts: AdminOpts = {}): string {
   </span>
 </div>
 
-<p class="foot">이 화면은 자동으로 다시 그리지 않아요. 보던 목록이 바뀌면 읽기 어려워서예요.<br>CSV는 조건에 맞는 최근 5000건까지 내려받아요.<br>${FOOT_COST}</p>
+<p class="foot">첫 쪽을 보는 동안에는 새 호출이 들어오면 목록이 다시 그려져요. 다음 쪽으로 넘어갔거나, 줄을 펼쳐 뒀거나, 검색칸에 입력하는 중에는 건드리지 않아요.<br>CSV는 조건에 맞는 최근 5000건까지 내려받아요.<br>${FOOT_COST}</p>
 </div>`,
 		{ ...opts, tab: "logs" },
 	);

@@ -700,7 +700,12 @@ export interface SummaryData {
 	countryCount: number;
 	/** 직전 같은 기간(전체 기간을 볼 땐 없다) */
 	prev: { total: number; error: number; cost: number; avgLatency: number } | null;
+	/** 맨 아래에 붙는 최근 호출 몇 건 — 자세히는 로그 화면에서 본다. */
+	recent: LogRow[];
 }
+
+/** 요약 화면 맨 아래에 보여줄 최근 호출 건수. */
+export const SUMMARY_RECENT = 5;
 
 export async function collectSummary(env: StatsEnv, period: string, appFilter: string): Promise<SummaryData> {
 	return withSchema(env, () => collectSummaryInner(env, period, appFilter));
@@ -715,7 +720,7 @@ async function collectSummaryInner(env: StatsEnv, period: string, appFilter: str
 	};
 	const bexpr = bucketExpr(p.bucket);
 
-	const [apps, grouped, bucketRows, ipRow, okRow, errRows, cRows, prevRows] = await Promise.all([
+	const [apps, grouped, bucketRows, ipRow, okRow, errRows, cRows, prevRows, recentRs] = await Promise.all([
 		appBriefs(env),
 
 		bind(
@@ -749,6 +754,12 @@ async function collectSummaryInner(env: StatsEnv, period: string, appFilter: str
 						).bind(prevSince, since)
 				).all<AggRow & { model: string | null }>()
 			: Promise.resolve({ results: [] as (AggRow & { model: string | null })[] }),
+
+		// 맨 아래 "최근 호출" — id 역순 몇 건. 인덱스로 바로 잡혀서 행 수와 무관하게 가볍다.
+		(appFilter
+			? env.DB.prepare(`SELECT ${LOG_COLS} FROM calls WHERE app = ?1 ORDER BY id DESC LIMIT ?2`).bind(appFilter, SUMMARY_RECENT)
+			: env.DB.prepare(`SELECT ${LOG_COLS} FROM calls ORDER BY id DESC LIMIT ?1`).bind(SUMMARY_RECENT)
+		).all<RawLogRow>(),
 	]);
 
 	const nameOf = new Map(apps.map((a) => [a.id, a.name]));
@@ -802,6 +813,7 @@ async function collectSummaryInner(env: StatsEnv, period: string, appFilter: str
 		countries: countries.slice(0, 6),
 		countryCount: countries.filter((c) => c.key !== "(미상)").length,
 		prev,
+		recent: (recentRs.results ?? []).map(toLogRow),
 	};
 }
 
@@ -1107,6 +1119,25 @@ export interface LogsData {
 }
 
 export const LOG_PAGE = 100;
+/** LOG_COLS로 뽑은 그대로의 행. cost는 실제 청구액이라 없을 수 있다. */
+interface RawLogRow {
+	id: number; ts: number; app: string; kind: string; model: string | null; status: string;
+	http: number | null; latency_ms: number; inTok: number; outTok: number; realCost: number | null;
+	err: string | null; meta: string | null; ip: string | null;
+	country: string | null; region: string | null; city: string | null;
+}
+
+/** 청구액이 없는 과거 행만 단가표로 채워 넣는다. */
+function toLogRow(r: RawLogRow): LogRow {
+	return {
+		id: r.id, ts: r.ts, app: r.app, kind: r.kind, model: r.model, status: r.status,
+		http: r.http, latency_ms: r.latency_ms, inTok: r.inTok, outTok: r.outTok,
+		cost: r.realCost ?? costOf(r.model, r.inTok, r.outTok),
+		err: r.err, meta: r.meta, ip: r.ip,
+		country: r.country ?? "", region: r.region ?? "", city: r.city ?? "",
+	};
+}
+
 const LOG_COLS =
 	"id, ts, COALESCE(app,'(미상)') AS app, kind, model, status, http, latency_ms," +
 	" COALESCE(in_tokens,0) AS inTok, COALESCE(out_tokens,0) AS outTok, cost AS realCost," +
@@ -1157,12 +1188,7 @@ async function queryLogsInner(env: StatsEnv, f: LogFilter): Promise<LogsData> {
 	const rowArgs = f.before ? [...args, f.before, limit + 1] : [...args, limit + 1];
 
 	const [rowsRs, cntRow, apps, modelRs, kindRs] = await Promise.all([
-		env.DB.prepare(rowSql).bind(...rowArgs).all<{
-			id: number; ts: number; app: string; kind: string; model: string | null; status: string;
-			http: number | null; latency_ms: number; inTok: number; outTok: number; realCost: number | null;
-			err: string | null; meta: string | null; ip: string | null;
-			country: string | null; region: string | null; city: string | null;
-		}>(),
+		env.DB.prepare(rowSql).bind(...rowArgs).all<RawLogRow>(),
 		env.DB.prepare(`SELECT COUNT(*) AS n FROM calls${sql}`).bind(...args).first<{ n: number }>(),
 		appBriefs(env),
 		env.DB.prepare("SELECT DISTINCT model FROM calls WHERE ts >= ?1 AND model IS NOT NULL ORDER BY model LIMIT 300")
@@ -1175,25 +1201,7 @@ async function queryLogsInner(env: StatsEnv, f: LogFilter): Promise<LogsData> {
 
 	const raw = rowsRs.results ?? [];
 	const hasMore = raw.length > limit;
-	const rows: LogRow[] = raw.slice(0, limit).map((r) => ({
-		id: r.id,
-		ts: r.ts,
-		app: r.app,
-		kind: r.kind,
-		model: r.model,
-		status: r.status,
-		http: r.http,
-		latency_ms: r.latency_ms,
-		inTok: r.inTok,
-		outTok: r.outTok,
-		cost: r.realCost ?? costOf(r.model, r.inTok, r.outTok),
-		err: r.err,
-		meta: r.meta,
-		ip: r.ip,
-		country: r.country ?? "",
-		region: r.region ?? "",
-		city: r.city ?? "",
-	}));
+	const rows: LogRow[] = raw.slice(0, limit).map(toLogRow);
 
 	return {
 		filter: { ...f, limit },

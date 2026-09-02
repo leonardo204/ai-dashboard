@@ -139,6 +139,8 @@ textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;
 .live.on{color:var(--g);border-color:#cfe8d4;background:#f2fbf4;}
 .live.on i{background:#22c55e;animation:beat 1.9s ease-in-out infinite;}
 .live.busy{color:#5E3A9E;border-color:#ddd0fb;background:#f0eaff;}
+.live.wait{color:var(--muted);border-color:var(--line);background:#f7f8fb;}
+.live.wait i{background:#c7ccd6;animation:none;}
 .live.busy i{background:var(--accent);animation:beat .7s ease-in-out infinite;}
 @keyframes beat{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.3;transform:scale(.75)}}
 /* 탭 두 줄(기간·앱)은 한 덩어리로 보이게 간격을 좁힌다 */
@@ -351,9 +353,24 @@ const ADMIN_JS = `
     function paintLive(state){
       var el = document.getElementById('hz-live');
       if (!el) return;
-      el.className = 'live' + (live ? ' on' : '') + (state === 'busy' ? ' busy' : '');
+      el.className = 'live' + (live ? ' on' : '') + (state === 'busy' ? ' busy' : '') + (state === 'wait' ? ' wait' : '');
       var t = document.getElementById('hz-live-t');
-      if (t) t.textContent = state === 'busy' ? '불러오는 중' : (live ? '자동 갱신 켬' : '자동 갱신 끔');
+      if (!t) return;
+      if (state === 'busy') t.textContent = '불러오는 중';
+      else if (state === 'wait') t.textContent = '잠시 멈춤';
+      else t.textContent = live ? '자동 갱신 켬' : '자동 갱신 끔';
+    }
+
+    // 지금 다시 그리면 보던 걸 뺏는 상황이면 이번 주기는 건너뛴다.
+    //  - 검색칸·입력칸에 커서가 있을 때
+    //  - 로그에서 줄을 펼쳐 뒀을 때
+    //  - 로그 다음 쪽으로 넘어갔을 때(첫 쪽에서만 새 호출을 얹는다)
+    function paused(){
+      var a = document.activeElement;
+      if (a && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName)) return true;
+      if (document.querySelector('tr.det:not([hidden])')) return true;
+      if (location.search.indexOf('before=') >= 0) return true;
+      return false;
     }
 
     function appQuery(){
@@ -380,6 +397,8 @@ const ADMIN_JS = `
 
     function poll(){
       if (!live || busy || document.hidden) return;
+      if (paused()) { paintLive('wait'); return; }
+      paintLive();
       fetch('/admin/api/pulse' + appQuery(), { credentials: 'same-origin', headers: { Accept: 'application/json' } })
         .then(function(r){
           if (r.status === 401 || r.status === 403) {
@@ -500,6 +519,14 @@ tr.det td{background:#fafbfc;white-space:normal;}
 .pg .nav{display:flex;gap:8px;}
 .pg .btn.off{opacity:.4;pointer-events:none;}
 a.btn{text-decoration:none;display:inline-block;color:var(--ink);}
+
+/* 요약 맨 아래 최근 호출 — 한 줄이 접히지 않게 가로로 넓게 둔다 */
+table.recent{font-size:12.5px;}
+table.recent td,table.recent th{white-space:nowrap;}
+table.recent td.err{max-width:260px;overflow:hidden;text-overflow:ellipsis;}
+.pill{display:inline-block;font-size:11px;font-weight:800;border-radius:999px;padding:1px 8px;}
+.pill.g{background:#eaf7ee;color:var(--g);}
+.pill.r{background:#ffecec;color:var(--r);}
 
 /* 표가 길 때 가로 스크롤 */
 .scroll{overflow-x:auto;border-radius:14px;}
