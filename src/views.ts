@@ -115,7 +115,7 @@ export function renderSummary(s: SummaryData, opts: AdminOpts = {}): string {
 		"건",
 	);
 
-	// 맨 아래 최근 호출 — 자동 갱신에 같이 실려서 새 호출이 들어오면 바로 바뀐다.
+	// 최근 호출 — 지표 카드 바로 아래에 둔다. 자동 갱신에 같이 실려서 새 호출이 들어오면 바로 바뀐다.
 	// 자세히 보는 건 로그 화면 몫이라 여기서는 줄을 펼치지 않는다.
 	const recentRows = s.recent.length
 		? s.recent
@@ -178,6 +178,9 @@ ${mini("고유 IP", s.uniqueIPs.toLocaleString())}
 ${mini("사용 모델", `${s.modelCount}종`)}
 </div>
 
+${sectionHead(`최근 호출 (${SUMMARY_RECENT}건)`, `/admin/logs${q}`, "로그에서 더 보기 →")}
+<div class="scroll"><table class="recent"><tr><th>시각</th><th>앱</th><th>용도</th><th>모델</th><th>상태</th><th class="n">HTTP</th><th class="n">지연</th><th class="n">토큰</th><th class="n">비용</th><th>지역</th><th>오류 · 메타</th></tr>${recentRows}</table></div>
+
 ${sectionHead(`추이 (${s.bucketLabel} 단위)`, `/admin/trend${q}`)}
 ${svgTrend(s.buckets)}
 
@@ -192,9 +195,6 @@ ${svgTrend(s.buckets)}
   </section>
   <section>${sectionHead(`호출 지역 (${s.countryCount}개국)`, `/admin/geo${q}`)}${geoShare}</section>
 </div>
-
-${sectionHead(`최근 호출 (${SUMMARY_RECENT}건)`, `/admin/logs${q}`, "로그에서 더 보기 →")}
-<div class="scroll"><table class="recent"><tr><th>시각</th><th>앱</th><th>용도</th><th>모델</th><th>상태</th><th class="n">HTTP</th><th class="n">지연</th><th class="n">토큰</th><th class="n">비용</th><th>지역</th><th>오류 · 메타</th></tr>${recentRows}</table></div>
 
 <p class="foot">최근 호출은 자동 갱신이 켜져 있으면 새 호출이 들어올 때마다 다시 그려져요.<br>숫자 옆 ▲▼는 직전 같은 기간과 비교한 값이에요.<br>${FOOT_COST}<br>${FOOT_GEO}</p>
 </div>`,
