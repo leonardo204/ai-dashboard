@@ -814,7 +814,7 @@ export function shellAdmin(title: string, body: string, opts: AdminOpts = {}): s
 	const topbar = opts.bare
 		? ""
 		: `<header class="topbar"><div class="in">
-  <span class="bd"><i></i><span>AI 프록시</span></span>
+  <span class="bd"><i></i><span>AI Service</span></span>
   <nav>${nav}</nav>
   <span class="sp"></span>
   ${opts.session ? `<form method="post" action="/admin/logout"><button class="btn" type="submit">로그아웃</button></form>` : ""}
@@ -839,7 +839,7 @@ export function renderLogin(opts: { error?: string; user?: string; next?: string
 		"로그인",
 		`<main class="login"><form class="box" method="post" action="/admin/login">
   <div class="mark">AI</div>
-  <h1>AI 프록시 관리</h1>
+  <h1>AI Service 관리</h1>
   <p class="sub">호출 통계와 앱 토큰을 관리하는 화면이에요.</p>
   ${opts.error ? `<div class="err">${escapeHtml(opts.error)}</div>` : ""}
   <input type="hidden" name="next" value="${escapeHtml(opts.next ?? "/admin")}">
