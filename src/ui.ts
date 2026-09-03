@@ -54,6 +54,9 @@ h1{font-size:20px;margin:0 0 4px;}h2{font-size:14px;margin:26px 0 9px;color:var(
 .chart .ax.end{text-anchor:end;}.chart .ax.mid{text-anchor:middle;}.chart .ax.cst{fill:#C85A95;}
 .chart .b-ok{fill:var(--accent);}
 .chart .b-er{fill:#e2686b;}
+.chart .lv-c{fill:#d1495b;}.chart .lv-w{fill:#E0A33B;}.chart .lv-i{fill:#7fa8e0;}
+.chart.lvl svg{aspect-ratio:1000/200;min-height:150px;}
+.chart .lg .s-c{background:#d1495b;}.chart .lg .s-w{background:#E0A33B;}.chart .lg .s-i{background:#7fa8e0;}
 .chart .hit{fill:transparent;}
 .chart .bg:hover .b-ok{fill:#7a45dd;}
 .chart .bg:hover .hit{fill:rgba(146,95,240,.07);}
@@ -494,6 +497,24 @@ const EXTRA_CSS = `
 .dg a:hover .nm{text-decoration:underline;}
 @media(max-width:520px){.donut{flex-direction:column;align-items:stretch}.donut svg{align-self:center}}
 
+/* 이상탐지 — 심각도 색은 화면 어디서나 같은 뜻으로 쓴다 */
+.sev{display:inline-flex;align-items:center;gap:5px;font-weight:800;font-size:11.5px;
+ border-radius:999px;padding:2px 9px;white-space:nowrap;}
+.sev.critical{background:#fdecec;color:#a9313a;border:1px solid #f6cfcf;}
+.sev.warn{background:#fff6e8;color:#96601a;border:1px solid #f2ddbe;}
+.sev.info{background:#eef4ff;color:#2f5aa8;border:1px solid #d5e2f7;}
+.srv{display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:var(--panel);
+ border:1px solid var(--line);border-radius:14px;padding:13px 16px;margin-bottom:12px;}
+.srv .dot{width:10px;height:10px;border-radius:50%;background:#0a7d33;flex:0 0 10px;}
+.srv.down .dot{background:#c0392b;}
+.srv.stale .dot{background:#E0A33B;}
+.srv .t{font-weight:800;font-size:13.5px;}
+.srv .sm{color:var(--muted);font-size:12px;}
+.srv .jobs{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto;}
+.srv .job{font-size:11.5px;font-weight:700;color:var(--muted);background:#f5f6fa;
+ border:1px solid var(--line);border-radius:8px;padding:3px 8px;}
+.srv .job.bad{background:#fdecec;border-color:#f6cfcf;color:#a9313a;}
+
 /* 요일 × 시각 히트맵 */
 .hm{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px;overflow-x:auto;}
 .hm table{border:none;border-radius:0;background:none;font-size:11px;width:auto;min-width:100%;}
@@ -778,7 +799,7 @@ document.addEventListener('click', function(e){
 // ─────────────────────────────────────────────────────────────
 
 /** 상단바 메뉴 키. */
-export type TabKey = "summary" | "usage" | "trend" | "geo" | "logs" | "apps" | "guide";
+export type TabKey = "summary" | "usage" | "trend" | "geo" | "anomaly" | "logs" | "apps" | "guide";
 
 export interface AdminOpts {
 	/** 세션 로그인으로 들어온 화면인지(= 로그아웃 버튼 노출). */
@@ -802,6 +823,7 @@ const NAV: { key: TabKey; href: string; label: string }[] = [
 	{ key: "usage", href: "/admin/usage", label: "사용량" },
 	{ key: "trend", href: "/admin/trend", label: "추이" },
 	{ key: "geo", href: "/admin/geo", label: "지역" },
+	{ key: "anomaly", href: "/admin/anomaly", label: "이상탐지" },
 	{ key: "logs", href: "/admin/logs", label: "로그" },
 	{ key: "apps", href: "/admin/apps", label: "앱 관리" },
 	{ key: "guide", href: "/admin/guide", label: "가이드" },
@@ -1096,6 +1118,62 @@ export function svgTrend(buckets: StatsSummary["buckets"]): string {
 ${grid}${bars}<polyline points="${line}" class="cl"/>${dots}${xlab}
 </svg>
 <div class="lg"><span class="k"><i class="s-ok"></i>성공</span><span class="k"><i class="s-er"></i>실패</span><span class="k"><i class="s-ct"></i>비용(오른쪽 축)</span></div>
+</div>`;
+}
+
+/**
+ * 심각도 누적 막대 — 이상 신호가 언제 몇 건 잡혔는지 본다.
+ * 값이 작아 꺾은선을 얹을 게 없으므로 추이 차트보다 단순하게 그린다.
+ */
+export function svgLevels(
+	buckets: { b: string; critical: number; warn: number; info: number; total: number }[],
+): string {
+	const data = buckets.slice(0, 40).slice().reverse();
+	if (!data.length) return `<div class="empty">이 기간에 잡힌 이상 신호가 없어요.</div>`;
+
+	const W = 1000, H = 200, L = 44, R = 16, T = 14, B = 30;
+	const iw = W - L - R, ih = H - T - B;
+	const max = niceMax(Math.max(...data.map((d) => d.total), 1));
+	const bw = Math.max(3, Math.min(46, (iw / data.length) * 0.62));
+	const cx = (i: number) => L + (iw / data.length) * (i + 0.5);
+
+	const grid = [0, 0.25, 0.5, 0.75, 1]
+		.map((f) => {
+			const y = T + ih - f * ih;
+			return `<line x1="${L}" y1="${y.toFixed(1)}" x2="${L + iw}" y2="${y.toFixed(1)}" class="gl"/>` +
+				`<text x="${L - 8}" y="${(y + 4).toFixed(1)}" class="ax end">${shortNum(Math.round(max * f))}</text>`;
+		})
+		.join("");
+
+	const bars = data
+		.map((d, i) => {
+			const x = cx(i) - bw / 2;
+			let y = T + ih;
+			const seg = (n: number, cls: string) => {
+				if (!n) return "";
+				const h = Math.max((n / max) * ih, 1.5);
+				y -= h;
+				return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="2" class="${cls}"/>`;
+			};
+			const body = seg(d.info, "lv-i") + seg(d.warn, "lv-w") + seg(d.critical, "lv-c");
+			const tip = `${d.b}\n이상 ${d.total.toLocaleString()}건\n심각 ${d.critical} · 주의 ${d.warn} · 참고 ${d.info}`;
+			return `<g class="bg" data-tip="${escapeHtml(tip)}">` +
+				`<rect x="${x.toFixed(1)}" y="${T}" width="${bw.toFixed(1)}" height="${ih}" class="hit"/>${body}</g>`;
+		})
+		.join("");
+
+	const step = Math.max(1, Math.ceil(data.length / 9));
+	const xlab = data
+		.map((d, i) => (i % step === 0 || i === data.length - 1
+			? `<text x="${cx(i).toFixed(1)}" y="${H - 9}" class="ax mid">${escapeHtml(d.b.replace(/^\d{4}-/, ""))}</text>`
+			: ""))
+		.join("");
+
+	return `<div class="chart lvl">
+<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="기간별 이상 신호">
+${grid}${bars}${xlab}
+</svg>
+<div class="lg"><span class="k"><i class="s-c"></i>심각</span><span class="k"><i class="s-w"></i>주의</span><span class="k"><i class="s-i"></i>참고</span></div>
 </div>`;
 }
 

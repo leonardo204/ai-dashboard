@@ -49,3 +49,49 @@ ALTER TABLE calls ADD COLUMN lon REAL;
 -- 실제 청구액 (OpenRouter usage.cost) — 웹검색 등 토큰 외 요금까지 포함된 값.
 -- 단가표 추정 대신 이 값을 우선 쓰고, 값이 없는 과거 행만 단가표로 보완한다.
 ALTER TABLE calls ADD COLUMN cost REAL;
+
+-- ── 이상탐지 (ai-service 서버가 밀어 넣는다) ─────────────────
+-- 프록시는 저장과 표시만 맡는다. 판정·학습은 이상탐지 서버(121.161.160.122) 몫이다.
+-- 대시보드가 이 표만 읽으므로 이상탐지 서버가 멈춰도 '이상탐지' 탭은 열린다.
+CREATE TABLE IF NOT EXISTS anomalies (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  src_id        INTEGER,                 -- 이상탐지 서버 detections.id
+  detected_at   INTEGER NOT NULL,        -- epoch ms
+  bucket        INTEGER NOT NULL,        -- 판정 구간 시작 시각 (epoch ms)
+  grain         TEXT NOT NULL,           -- 5m | 1h
+  app           TEXT NOT NULL,           -- '*' 는 전체
+  signal        TEXT NOT NULL,
+  severity      TEXT NOT NULL,           -- info | warn | critical
+  score         REAL,
+  observed      REAL,
+  baseline      REAL,
+  label         TEXT,                    -- 사람이 읽는 신호 이름
+  detail        TEXT,                    -- JSON 원문
+  detector      TEXT,                    -- rule | model
+  model_version TEXT,
+  notified_at   INTEGER,
+  status        TEXT NOT NULL DEFAULT 'open'
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_anom_uniq   ON anomalies(grain, bucket, app, signal);
+CREATE INDEX IF NOT EXISTS        idx_anom_bucket ON anomalies(bucket);
+CREATE INDEX IF NOT EXISTS        idx_anom_sev    ON anomalies(severity, bucket);
+
+CREATE TABLE IF NOT EXISTS anomaly_models (
+  version    TEXT PRIMARY KEY,
+  algo       TEXT,
+  scope      TEXT,
+  trained_at INTEGER,
+  train_from INTEGER,
+  train_to   INTEGER,
+  train_rows INTEGER,
+  metrics    TEXT,
+  status     TEXT,
+  note       TEXT
+);
+
+-- 이상탐지 서버 상태 — heartbeat와 작업별 마지막 결과. 끊기면 그 자체가 알림이 된다.
+CREATE TABLE IF NOT EXISTS anomaly_state (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);

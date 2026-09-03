@@ -5,6 +5,7 @@
  *   사용량 /admin/usage  앱·모델·용도별 표
  *   추이   /admin/trend  기간별 흐름 + 요일×시각 히트맵
  *   지역   /admin/geo    지도 + 국가·도시별 표
+ *   이상   /admin/anomaly 이상 신호 현황 · 모델 정보 · 탐지 서버 상태
  *   로그   /admin/logs   호출 1건씩 검색
  *   앱관리 /admin/apps   토큰·모델 맵·상한
  *
@@ -15,10 +16,11 @@ import {
 	PERIODS, MODEL_PRICES, DEFAULT_MODEL, countryName, LOG_PAGE, SUMMARY_RECENT,
 	type AppConfig, type GroupRow,
 	type SummaryData, type UsageData, type TrendData, type GeoData, type LogsData, type LogFilter,
+	type AnomalyData, type AnomalyRow,
 } from "./stats";
 import {
 	escapeHtml, usd, kst, shortNum, shellAdmin, pageHead, filterTabs, sectionHead, delta,
-	svgTrend, svgMap, svgShare, svgDonut, svgHeat, type AdminOpts,
+	svgTrend, svgMap, svgShare, svgDonut, svgHeat, svgLevels, type AdminOpts,
 } from "./ui";
 
 /** 상단바 메뉴가 기간·앱 조건을 그대로 물고 가도록 붙이는 질의 문자열. */
@@ -377,6 +379,204 @@ ${svgMap(g.points, g.geoUnknown)}
 <p class="foot">${FOOT_GEO}</p>
 </div>`,
 		{ ...opts, tab: "geo" },
+	);
+}
+
+// ═════════════════════════════════════════════════════════════
+// 이상탐지 (/admin/anomaly)
+//   판정은 바깥 이상탐지 서버가 하고, 이 화면은 프록시 DB에 쌓인 결과만 읽는다.
+//   그래서 서버가 멈춰도 화면은 열리고, 멈춘 사실이 맨 위 상태줄에 드러난다.
+// ═════════════════════════════════════════════════════════════
+
+const SEV_LABEL: Record<string, string> = { critical: "심각", warn: "주의", info: "참고" };
+const sevTag = (sev: string) => `<span class="sev ${escapeHtml(sev)}">${SEV_LABEL[sev] ?? escapeHtml(sev)}</span>`;
+
+/** 얼마나 지났는지 — 방금 / 3분 전 / 2시간 전 / 4일 전 */
+function ago(ms: number | null): string {
+	if (ms === null) return "기록 없음";
+	const s = Math.max(0, Math.round(ms / 1000));
+	if (s < 60) return "방금";
+	if (s < 3600) return `${Math.floor(s / 60)}분 전`;
+	if (s < 86400) return `${Math.floor(s / 3600)}시간 전`;
+	return `${Math.floor(s / 86400)}일 전`;
+}
+
+/** 관측값은 지표마다 단위가 달라 화면에서 맞춰 준다. */
+function anomValue(v: number | null, metric: string): string {
+	if (v === null || v === undefined) return "-";
+	if (metric === "err_rate") return `${(v * 100).toFixed(1)}%`;
+	if (metric === "cost") return usd(v);
+	if (metric === "latency_p95" || metric === "latency_avg") return `${(v / 1000).toFixed(1)}초`;
+	return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+function anomDetail(r: AnomalyRow): { metric: string; label: string; ratio: number | null; kind: string } {
+	let d: Record<string, unknown> = {};
+	try {
+		d = r.detail ? (JSON.parse(r.detail) as Record<string, unknown>) : {};
+	} catch {
+		d = {};
+	}
+	return {
+		metric: String(d.metric ?? ""),
+		label: r.label || String(d.label ?? r.signal),
+		ratio: typeof d.ratio === "number" ? d.ratio : null,
+		kind: String(d.baseline_kind ?? ""),
+	};
+}
+
+/** 이상탐지 서버 상태줄 — heartbeat가 끊긴 것 자체가 알림이다. */
+function serverBar(a: AnomalyData): string {
+	const age = a.heartbeatAge;
+	const cls = age === null ? "down" : age > 15 * 60_000 ? "down" : age > 5 * 60_000 ? "stale" : "";
+	const msg =
+		age === null
+			? "이상탐지 서버에서 아직 신호가 오지 않았어요."
+			: cls === "down"
+				? "이상탐지 서버 신호가 끊겼어요. 서버 점검이 필요해요."
+				: cls === "stale"
+					? "이상탐지 서버 신호가 늦어지고 있어요."
+					: "이상탐지 서버가 정상 동작 중이에요.";
+
+	const jobs = a.state
+		.filter((s) => s.key.startsWith("job:"))
+		.map((s) => {
+			let v: { ok?: boolean; error?: string; result?: unknown } = {};
+			try {
+				v = JSON.parse(s.value);
+			} catch {
+				/* 형식이 달라지면 이름만 보여준다 */
+			}
+			const name = s.key.slice(4);
+			const title = v.ok === false ? `실패: ${v.error ?? ""}` : `${ago(Date.now() - s.updated_at)} 실행`;
+			return `<span class="job${v.ok === false ? " bad" : ""}" data-tip="${escapeHtml(`${name}\n${title}`)}">${escapeHtml(name)}</span>`;
+		})
+		.join("");
+
+	return `<div class="srv ${cls}"><span class="dot"></span>
+  <span class="t">${msg}</span>
+  <span class="sm">마지막 신호 ${ago(age)}</span>
+  <span class="jobs">${jobs}</span>
+</div>`;
+}
+
+export function renderAnomaly(a: AnomalyData, opts: AdminOpts = {}): string {
+	const q = navQuery(a.period, a.appFilter);
+
+	const card = (l: string, v: string, tone = "", extra = "") =>
+		`<div class="m"><div class="l">${l}</div><div class="v ${tone}">${v}${extra}</div></div>`;
+
+	const sevDonut = svgDonut(
+		[
+			{ label: "심각", value: a.critical },
+			{ label: "주의", value: a.warn },
+			{ label: "참고", value: a.info },
+		].filter((r) => r.value > 0),
+		"건",
+	);
+
+	const signalShare = svgShare(
+		a.bySignal.map((r) => ({
+			label: r.label,
+			value: r.total,
+			sub: r.critical ? `심각 ${r.critical}건` : "",
+		})),
+		"건",
+	);
+
+	const rows = a.recent.length
+		? a.recent
+				.map((r) => {
+					const d = anomDetail(r);
+					return (
+						`<tr><td class="mono">${kst(r.bucket)}</td><td>${sevTag(r.severity)}</td>` +
+						`<td>${escapeHtml(d.label)}</td>` +
+						`<td>${r.app === "*" ? "전체" : escapeHtml(r.app)}</td>` +
+						`<td class="n">${anomValue(r.observed, d.metric)}</td>` +
+						`<td class="n">${anomValue(r.baseline, d.metric)}</td>` +
+						`<td class="n">${d.ratio ? `${d.ratio}배` : "-"}</td>` +
+						`<td class="n">${r.score === null ? "-" : r.score.toFixed(1)}</td>` +
+						`<td>${escapeHtml(r.grain)}</td>` +
+						`<td>${r.detector === "model" ? escapeHtml(r.model_version ?? "모델") : "규칙"}</td>` +
+						`<td>${r.notified_at ? kst(r.notified_at) : "-"}</td></tr>`
+					);
+				})
+				.join("")
+		: `<tr><td colspan="11">이 기간에 잡힌 이상 신호가 없어요.</td></tr>`;
+
+	const modelRows = a.models.length
+		? a.models
+				.map((m) => {
+					let metrics = "";
+					try {
+						metrics = m.metrics ? Object.entries(JSON.parse(m.metrics) as Record<string, unknown>)
+							.map(([k, v]) => `${k} ${typeof v === "number" ? v.toFixed(3) : String(v)}`).join(" · ") : "";
+					} catch {
+						metrics = "";
+					}
+					return (
+						`<tr><td class="mono">${escapeHtml(m.version)}</td><td>${escapeHtml(m.algo ?? "-")}</td>` +
+						`<td>${m.scope === "*" ? "전체" : escapeHtml(m.scope ?? "-")}</td>` +
+						`<td>${escapeHtml(m.status ?? "-")}</td>` +
+						`<td class="mono">${m.trained_at ? kst(m.trained_at) : "-"}</td>` +
+						`<td class="n">${(m.train_rows ?? 0).toLocaleString()}</td>` +
+						`<td>${escapeHtml(metrics)}</td></tr>`
+					);
+				})
+				.join("")
+		: `<tr><td colspan="7">아직 학습된 모델이 없어요. 지금은 규칙·통계 기준으로 판정하고 있어요.</td></tr>`;
+
+	const appRows = a.byApp.length
+		? a.byApp
+				.map(
+					(r) =>
+						`<tr><td>${escapeHtml(r.name)}</td><td class="n">${r.total.toLocaleString()}</td>` +
+						`<td class="n r">${r.critical.toLocaleString()}</td></tr>`,
+				)
+				.join("")
+		: `<tr><td colspan="3">기록이 없어요.</td></tr>`;
+
+	return shellAdmin(
+		"이상탐지",
+		pageHead("이상탐지", `평소와 다른 호출 흐름 · ${sinceLabel(a.since)}`, a.appFilter) +
+			`<div id="hz-body">
+${filterTabs("/admin/anomaly", a.period, a.appFilter, a.apps, PERIODS)}
+${serverBar(a)}
+
+<div class="kpi2" style="margin-bottom:4px">
+  ${card("이상 신호", a.total.toLocaleString(), "", delta(a.total, a.prevTotal, true))}
+  ${card("심각", a.critical.toLocaleString(), a.critical ? "r" : "")}
+  ${card("주의", a.warn.toLocaleString())}
+  ${card("참고", a.info.toLocaleString())}
+  ${card("메일 발송", a.notified.toLocaleString())}
+  ${card("마지막 탐지", a.lastDetected ? ago(Date.now() - a.lastDetected) : "-")}
+</div>
+
+${sectionHead(`${a.bucketLabel} 단위 이상 신호`)}
+${svgLevels(a.buckets)}
+
+<div class="two">
+  <section>${sectionHead("심각도 비중")}${sevDonut}</section>
+  <section>${sectionHead("신호별 분포")}${signalShare}</section>
+</div>
+
+${sectionHead("이상 신호 이력")}
+<div class="scroll"><table class="recent"><tr><th>구간</th><th>등급</th><th>신호</th><th>앱</th><th class="n">관측</th><th class="n">평소</th><th class="n">배수</th><th class="n">점수</th><th>단위</th><th>판정</th><th>메일</th></tr>${rows}</table></div>
+
+<div class="two">
+  <section>${sectionHead("앱별 이상 건수")}
+    <table><tr><th>앱</th><th class="n">전체</th><th class="n">심각</th></tr>${appRows}</table>
+  </section>
+  <section>${sectionHead("탐지 모델")}
+    <div class="scroll"><table><tr><th>버전</th><th>방식</th><th>범위</th><th>상태</th><th>학습 시각</th><th class="n">학습 행</th><th>평가</th></tr>${modelRows}</table></div>
+  </section>
+</div>
+
+<p class="foot">판정은 이상탐지 서버(121.161.160.122)가 하고, 이 화면은 넘겨받은 결과만 보여줘요. 서버가 멈춰도 화면은 열리고 맨 위 상태줄에 표시돼요.<br>
+'평소'는 같은 요일·같은 시각의 과거 기록에서 뽑은 기준선이에요. 표본이 모자라면 최근 구간 전체로 대신하고, 그때는 등급을 한 단계 낮춰요.<br>
+심각·주의 신호는 ${escapeHtml("zerolive7@gmail.com")}으로 메일이 나가요. 같은 신호가 이어지면 일정 시간 동안 묶어서 한 번만 보내요.</p>
+</div>`,
+		{ ...opts, tab: "anomaly" },
 	);
 }
 

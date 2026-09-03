@@ -18,6 +18,8 @@
  *  GET  /admin/guide      연결 가이드 (원문: /admin/guide.md)
  *       /admin/api/*      앱 관리·통계·모델 카탈로그 API
  *  GET  /admin/api/export 호출 로그 증분 내보내기(이상탐지 서버 수집용)
+ *  POST /admin/api/anomaly 이상탐지 결과·모델·서버 상태 받기
+ *  GET  /admin/anomaly    이상탐지 현황
  *
  * 도메인: ai.zerolive.co.kr   ·   문서: docs/PROXY-API.md
  */
@@ -27,11 +29,12 @@ import { renderGuide, GUIDE_MD, GUIDE_FILENAME } from "./guide";
 import {
 	collectStats, collectSummary, collectUsage, collectTrend, collectGeo, queryLogs, logsCsv,
 	listApps, getApp, upsertApp, deleteApp, newToken, pulse, exportCalls, PERIODS, LOG_PAGE,
+	collectAnomaly, pushAnomaly,
 	type AppConfig, type LogFilter,
 } from "./stats";
 import { renderLogin } from "./ui";
 import {
-	renderSummary, renderUsage, renderTrend, renderGeo, renderLogs, renderApps,
+	renderSummary, renderUsage, renderTrend, renderGeo, renderAnomaly, renderLogs, renderApps,
 } from "./views";
 
 interface Env extends ProxyEnv {
@@ -261,6 +264,8 @@ const STAT_PAGES: Record<string, (env: Env, period: string, app: string) => Prom
 	"/admin/usage": async (e, p, a) => renderUsage(await collectUsage(e, p, a), { session: true }),
 	"/admin/trend": async (e, p, a) => renderTrend(await collectTrend(e, p, a), { session: true }),
 	"/admin/geo": async (e, p, a) => renderGeo(await collectGeo(e, p, a), { session: true }),
+	"/admin/anomaly": async (e, p, a) => renderAnomaly(await collectAnomaly(e, p, a), { session: true }),
+	"/admin/anomaly/": async (e, p, a) => renderAnomaly(await collectAnomaly(e, p, a), { session: true }),
 };
 
 /** 주소에서 로그 검색 조건을 읽는다. */
@@ -502,6 +507,23 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 			const afterId = Math.max(0, Number(url.searchParams.get("after_id") || 0) || 0);
 			const limit = Number(url.searchParams.get("limit") || 1000) || 1000;
 			return apiJson(await exportCalls(env, afterId, limit));
+		}
+
+		// ── 이상탐지 결과 받기 (/admin/api/anomaly) — 이상탐지 서버가 밀어 넣는다.
+		//    반대로 화면이 볼 때마다 그 서버를 부르면, 서버가 꺼진 순간 탭 전체가 안 열린다.
+		//    받아서 D1에 두면 서버가 멈춰도 화면은 열리고, 멈춘 사실만 상태줄에 드러난다.
+		if (path === "/admin/api/anomaly") {
+			if (!(await apiAuthorized(request, env, url))) {
+				return apiErr(401, "인증이 필요해요. Authorization: Bearer <ADMIN_API_KEY> 헤더를 넣어 주세요.");
+			}
+			if (request.method !== "POST") return apiErr(405, "POST로 보내주세요.");
+			let body: Record<string, unknown>;
+			try {
+				body = (await request.json()) as Record<string, unknown>;
+			} catch {
+				return apiErr(400, "JSON 형식이 아니에요.");
+			}
+			return apiJson(await pushAnomaly(env, body as Parameters<typeof pushAnomaly>[1]));
 		}
 
 		// ── 앱 관리 API (/admin/api/apps) — 화면 없이 스크립트로
