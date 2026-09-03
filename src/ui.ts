@@ -85,7 +85,8 @@ h1{font-size:20px;margin:0 0 4px;}h2{font-size:14px;margin:26px 0 9px;color:var(
  background:rgba(255,255,255,.72);}
 
 /* ── 비중 막대 */
-.two{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start;}
+.two>section{min-width:0;}
 @media(max-width:860px){.two{grid-template-columns:1fr}}
 .two h2{margin-top:26px;}
 .shares{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px;}
@@ -524,6 +525,7 @@ const EXTRA_CSS = `
 .pm{display:inline-flex;font-weight:800;font-size:11.5px;border-radius:999px;padding:2px 9px;}
 .pm.up{background:#f2fbf4;color:#0a7d33;border:1px solid #cfe8d4;}
 .pm.hold{background:#fff6e8;color:#96601a;border:1px solid #f2ddbe;}
+.pm.off{background:#f5f6fa;color:#6b7280;border:1px solid #e6e9ef;}
 
 /* 요일 × 시각 히트맵 */
 .hm{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px;overflow-x:auto;}
@@ -576,7 +578,15 @@ table.recent td.err{max-width:260px;overflow:hidden;text-overflow:ellipsis;}
 
 /* 표가 길 때 가로 스크롤 */
 .scroll{overflow-x:auto;border-radius:14px;}
+/* 줄이 계속 늘어나는 표 — 높이를 묶어 두 칸 배치가 한쪽으로 길어지지 않게 한다. */
+.scroll.cap{max-height:420px;overflow-y:auto;border:1px solid var(--line);background:var(--panel);}
+.scroll.cap table{border:none;border-radius:0;}
+.scroll.cap thead th,.scroll.cap tr:first-child th{position:sticky;top:0;z-index:1;}
+/* 칸이 좁아 글자가 세로로 깨지는 표 — 넘치면 가로로 민다. */
+table.tight{font-size:12.5px;}
+table.tight td,table.tight th{white-space:nowrap;padding:7px 10px;}
 .scroll table{min-width:640px;}
+.scroll.cap table{min-width:0;}
 
 /* ── 앱 관리 — 앱 1개 = 카드 1장. 표에 편집 폼까지 넣으면 세로로 한없이 길어진다. */
 .lh{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:22px 0 11px;}

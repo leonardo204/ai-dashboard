@@ -1356,7 +1356,7 @@ export async function pushAnomaly(
 		models?: ModelIn[];
 		state?: Record<string, unknown>;
 		/** 이상탐지 서버가 그 구간에 남겨 둔 판정 목록. 여기 없는 건 저쪽에서 지운 것이라 함께 지운다. */
-		prune?: { since?: number; ids?: number[] };
+		prune?: { since?: number; ids?: number[]; models?: string[] };
 	},
 ): Promise<{ detections: number; models: number; state: number; pruned: number }> {
 	const now = Date.now();
@@ -1434,6 +1434,18 @@ export async function pushAnomaly(
 		);
 		pruned = r.meta?.changes ?? 0;
 	}
+	// 모델 목록도 같은 방식으로 맞춘다. 저쪽이 오래된 후보를 걷어내면 여기서도 사라진다.
+	if (pr && Array.isArray(pr.models) && pr.models.length) {
+		const keep = pr.models
+			.filter((v) => typeof v === "string" && /^[\w.-]{1,60}$/.test(v))
+			.map((v) => `'${v}'`);
+		if (keep.length) {
+			await withSchema(env, () =>
+				env.DB.prepare(`DELETE FROM anomaly_models WHERE version NOT IN (${keep.join(",")})`).run(),
+			);
+		}
+	}
+
 	return { detections: dets.length, models: models.length, state: stateN, pruned };
 }
 

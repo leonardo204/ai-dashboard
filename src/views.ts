@@ -470,6 +470,39 @@ const SIGNAL_LABEL: Record<string, string> = {
 
 const pct1 = (v: number | null | undefined) => (v === null || v === undefined ? "-" : `${(v * 100).toFixed(1)}%`);
 
+/** 구간 시각 — 표에서는 초까지 필요 없다. */
+const bucketAt = (ts: number) => kst(ts).slice(0, 11);
+
+/** 모델 상태 — 등록 표에 영문이 그대로 나오지 않게 옮긴다. */
+const MODEL_STATUS: Record<string, { text: string; cls: string }> = {
+	active: { text: "쓰는 중", cls: "up" },
+	candidate: { text: "후보", cls: "hold" },
+	retired: { text: "물러남", cls: "off" },
+};
+
+/**
+ * 모델 평가값 한 줄 — metrics는 {rule:{...}, model:{...}} 꼴이라
+ * 그대로 문자열로 만들면 [object Object]가 된다. 필요한 수치만 뽑아 쓴다.
+ */
+function modelMetrics(raw: string | null): string {
+	if (!raw) return "-";
+	let m: Record<string, unknown>;
+	try {
+		m = JSON.parse(raw) as Record<string, unknown>;
+	} catch {
+		return "-";
+	}
+	const f1 = (k: string) => {
+		const o = m[k] as { f1?: number } | undefined;
+		return o && typeof o.f1 === "number" ? pct1(o.f1) : null;
+	};
+	const parts = [
+		f1("rule") ? `규칙 F1 ${f1("rule")}` : "",
+		f1("model") ? `모델 F1 ${f1("model")}` : "",
+	].filter(Boolean);
+	return parts.length ? parts.join(" · ") : "-";
+}
+
 /** 이상탐지 서버 상태줄 — heartbeat가 끊긴 것 자체가 알림이다. */
 function serverBar(a: AnomalyData): string {
 	const age = a.heartbeatAge;
@@ -534,43 +567,44 @@ export function renderAnomaly(a: AnomalyData, opts: AdminOpts = {}): string {
 				.map((r) => {
 					const d = anomDetail(r);
 					return (
-						`<tr><td class="mono">${kst(r.bucket)}</td><td>${sevTag(r.severity)}</td>` +
+						`<tr><td class="mono" data-tip="${escapeHtml(`${kst(r.bucket)} · ${r.grain} 단위`)}">${bucketAt(r.bucket)}</td>` +
+						`<td>${sevTag(r.severity)}</td>` +
 						`<td>${escapeHtml(d.label)}</td>` +
 						`<td>${r.app === "*" ? "전체" : escapeHtml(r.app)}</td>` +
 						`<td class="n">${anomValue(r.observed, d.metric)}</td>` +
-						`<td class="n">${anomValue(r.baseline, d.metric)}</td>` +
-						`<td class="n">${d.ratio ? `${d.ratio}배` : "-"}</td>` +
+						`<td class="n">${anomValue(r.baseline, d.metric)}` +
+						`${d.ratio ? ` <span class="sm">${d.ratio}배</span>` : ""}</td>` +
 						`<td class="n">${r.score === null ? "-" : r.score.toFixed(1)}</td>` +
-						`<td>${escapeHtml(r.grain)}</td>` +
-						`<td>${r.detector === "model" ? escapeHtml(r.model_version ?? "모델") : "규칙"}</td>` +
+						`<td>${r.detector === "model"
+							? `<span data-tip="${escapeHtml(r.model_version ?? "")}">모델</span>`
+							: "규칙"}</td>` +
 						`<td>${verdictTag(r.verdict, r.verdict_reason)}</td>` +
-						`<td>${r.notified_at ? kst(r.notified_at) : r.suppressed_reason ? `<span class="sm" data-tip="${escapeHtml(r.suppressed_reason)}">보내지 않음</span>` : "-"}</td></tr>`
+						`<td>${r.notified_at ? bucketAt(r.notified_at) : r.suppressed_reason ? `<span class="sm" data-tip="${escapeHtml(r.suppressed_reason)}">보내지 않음</span>` : "-"}</td></tr>`
 					);
 				})
 				.join("")
-		: `<tr><td colspan="12">이 기간에 잡힌 이상 신호가 없어요.</td></tr>`;
+		: `<tr><td colspan="10">이 기간에 잡힌 이상 신호가 없어요.</td></tr>`;
 
-	const modelRows = a.models.length
-		? a.models
+	// 재학습이 6시간마다 돌아 후보가 쌓인다. 쓰는 모델과 최근 것만 보여주고 나머지는 접는다.
+	const MODEL_SHOWN = 6;
+	const modelList = [
+		...a.models.filter((m) => m.status === "active"),
+		...a.models.filter((m) => m.status !== "active"),
+	].slice(0, MODEL_SHOWN);
+	const modelRows = modelList.length
+		? modelList
 				.map((m) => {
-					let metrics = "";
-					try {
-						metrics = m.metrics ? Object.entries(JSON.parse(m.metrics) as Record<string, unknown>)
-							.map(([k, v]) => `${k} ${typeof v === "number" ? v.toFixed(3) : String(v)}`).join(" · ") : "";
-					} catch {
-						metrics = "";
-					}
+					const st = MODEL_STATUS[m.status ?? ""] ?? { text: m.status ?? "-", cls: "off" };
 					return (
-						`<tr><td class="mono">${escapeHtml(m.version)}</td><td>${escapeHtml(m.algo ?? "-")}</td>` +
-						`<td>${m.scope === "*" ? "전체" : escapeHtml(m.scope ?? "-")}</td>` +
-						`<td>${escapeHtml(m.status ?? "-")}</td>` +
-						`<td class="mono">${m.trained_at ? kst(m.trained_at) : "-"}</td>` +
+						`<tr><td class="mono" data-tip="${escapeHtml(`${m.algo ?? ""}\n범위 ${m.scope === "*" ? "전체" : m.scope ?? "-"}`)}">${escapeHtml(m.version)}</td>` +
+						`<td><span class="pm ${st.cls}">${escapeHtml(st.text)}</span></td>` +
+						`<td class="mono">${m.trained_at ? bucketAt(m.trained_at) : "-"}</td>` +
 						`<td class="n">${(m.train_rows ?? 0).toLocaleString()}</td>` +
-						`<td>${escapeHtml(metrics)}</td></tr>`
+						`<td>${escapeHtml(modelMetrics(m.metrics))}</td></tr>`
 					);
 				})
 				.join("")
-		: `<tr><td colspan="7">아직 학습된 모델이 없어요. 지금은 규칙·통계 기준으로 판정하고 있어요.</td></tr>`;
+		: `<tr><td colspan="5">아직 학습된 모델이 없어요. 지금은 규칙·통계 기준으로 판정하고 있어요.</td></tr>`;
 
 	// ── 검증 에이전트 라벨 · 탐지기 성적 · 승격 심사 (이상탐지 서버가 함께 밀어 넣는다)
 	type LabelState = {
@@ -678,28 +712,28 @@ ${svgLevels(a.buckets)}
 </div>
 
 ${sectionHead("이상 신호 이력")}
-<div class="scroll"><table class="recent"><tr><th>구간</th><th>등급</th><th>신호</th><th>앱</th><th class="n">관측</th><th class="n">평소</th><th class="n">배수</th><th class="n">점수</th><th>단위</th><th>탐지기</th><th>검증</th><th>메일</th></tr>${rows}</table></div>
+<div class="scroll cap"><table class="recent"><tr><th>구간</th><th>등급</th><th>신호</th><th>앱</th><th class="n">관측</th><th class="n">평소 대비</th><th class="n">점수</th><th>탐지기</th><th>검증</th><th>메일</th></tr>${rows}</table></div>
 
 <div class="two">
   <section>${sectionHead("검증 결과")}
     <table><tr><th>판정</th><th class="n">건수</th><th class="n">비중</th></tr>${verdictRows}</table>
   </section>
+  <section>${sectionHead("앱별 이상 건수")}
+    <table><tr><th>앱</th><th class="n">전체</th><th class="n">심각</th></tr>${appRows}</table>
+  </section>
+</div>
+
+<div class="two">
   <section>${sectionHead("탐지기 성적 비교")}
-    <div class="scroll"><table><tr><th>구분</th><th class="n">규칙 정밀도</th><th class="n">규칙 재현율</th><th class="n">모델 정밀도</th><th class="n">모델 재현율</th></tr>${compareRows}</table></div>
+    <div class="scroll cap"><table class="tight"><tr><th>구분</th><th class="n">규칙 정밀도</th><th class="n">규칙 재현율</th><th class="n">모델 정밀도</th><th class="n">모델 재현율</th></tr>${compareRows}</table></div>
+  </section>
+  <section><div class="sh2"><h2>탐지 모델</h2>${a.models.length > MODEL_SHOWN ? `<span class="sm">최근 ${MODEL_SHOWN}개만 · 전체 ${a.models.length}개</span>` : ""}</div>
+    <div class="scroll cap"><table class="tight"><tr><th>버전</th><th>상태</th><th>학습 시각</th><th class="n">학습 행</th><th>평가</th></tr>${modelRows}</table></div>
   </section>
 </div>
 
 ${sectionHead("승격 심사")}
-<div class="scroll"><table><tr><th>시각</th><th>후보</th><th>결과</th><th>근거</th></tr>${promRows}</table></div>
-
-<div class="two">
-  <section>${sectionHead("앱별 이상 건수")}
-    <table><tr><th>앱</th><th class="n">전체</th><th class="n">심각</th></tr>${appRows}</table>
-  </section>
-  <section>${sectionHead("탐지 모델")}
-    <div class="scroll"><table><tr><th>버전</th><th>방식</th><th>범위</th><th>상태</th><th>학습 시각</th><th class="n">학습 행</th><th>평가</th></tr>${modelRows}</table></div>
-  </section>
-</div>
+<div class="scroll cap"><table><tr><th>시각</th><th>후보</th><th>결과</th><th>근거</th></tr>${promRows}</table></div>
 
 <p class="foot">판정은 이상탐지 서버(121.161.160.122)가 하고, 이 화면은 넘겨받은 결과만 보여줘요. 서버가 멈춰도 화면은 열리고 맨 위 상태줄에 표시돼요.<br>
 '평소'는 같은 요일·같은 시각의 과거 기록에서 뽑은 기준선이에요. 표본이 모자라면 최근 구간 전체로 대신하고, 그때는 등급을 한 단계 낮춰요.<br>
