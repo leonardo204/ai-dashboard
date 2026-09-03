@@ -17,6 +17,7 @@
  *  GET  /admin/apps       앱 관리 화면
  *  GET  /admin/guide      연결 가이드 (원문: /admin/guide.md)
  *       /admin/api/*      앱 관리·통계·모델 카탈로그 API
+ *  GET  /admin/api/export 호출 로그 증분 내보내기(이상탐지 서버 수집용)
  *
  * 도메인: ai.zerolive.co.kr   ·   문서: docs/PROXY-API.md
  */
@@ -25,7 +26,7 @@ import { handleChat, handleEmbeddings, type ProxyEnv } from "./proxy";
 import { renderGuide, GUIDE_MD, GUIDE_FILENAME } from "./guide";
 import {
 	collectStats, collectSummary, collectUsage, collectTrend, collectGeo, queryLogs, logsCsv,
-	listApps, getApp, upsertApp, deleteApp, newToken, pulse, PERIODS, LOG_PAGE,
+	listApps, getApp, upsertApp, deleteApp, newToken, pulse, exportCalls, PERIODS, LOG_PAGE,
 	type AppConfig, type LogFilter,
 } from "./stats";
 import { renderLogin } from "./ui";
@@ -489,6 +490,18 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 				note: "프록시는 모델을 제한하지 않아요. 여기 id를 body.model 또는 앱 models 맵에 그대로 쓰면 돼요. 임베딩 모델은 이 목록에 없지만 POST /v1/embeddings로 호출돼요.",
 				models: rows,
 			});
+		}
+
+		// ── 증분 내보내기 (/admin/api/export) — 이상탐지 서버가 1분마다 끌어간다.
+		//    프록시가 밀어 넣지 않고 받아가게 두는 이유: 수집 서버가 꺼져 있어도 호출 경로가 멀쩡하고,
+		//    복구되면 마지막 id 다음부터 밀린 만큼 따라잡을 수 있다.
+		if (path === "/admin/api/export") {
+			if (!(await apiAuthorized(request, env, url))) {
+				return apiErr(401, "인증이 필요해요. Authorization: Bearer <ADMIN_API_KEY> 헤더를 넣어 주세요.");
+			}
+			const afterId = Math.max(0, Number(url.searchParams.get("after_id") || 0) || 0);
+			const limit = Number(url.searchParams.get("limit") || 1000) || 1000;
+			return apiJson(await exportCalls(env, afterId, limit));
 		}
 
 		// ── 앱 관리 API (/admin/api/apps) — 화면 없이 스크립트로

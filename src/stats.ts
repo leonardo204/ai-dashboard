@@ -288,6 +288,40 @@ export async function pulse(env: StatsEnv, appFilter: string): Promise<{ mx: num
 	return { mx: row?.mx ?? 0, ts: row?.ts ?? 0 };
 }
 
+/**
+ * 증분 내보내기 — 이상탐지 서버가 마지막으로 받은 id 다음부터 끌어간다.
+ * id는 AUTOINCREMENT라 순서가 보장되고 인덱스(PK)로 바로 잘리므로, 몇 시간 밀려도 따라잡기가 싸다.
+ * D1은 180일이 지나면 지워지므로 장기 보관본은 받아가는 쪽에서 들고 있는다.
+ */
+export async function exportCalls(
+	env: StatsEnv,
+	afterId: number,
+	limit: number,
+): Promise<{ rows: Record<string, unknown>[]; lastId: number; maxId: number; remaining: number }> {
+	const n = Math.max(1, Math.min(5000, limit || 1000));
+	const [rs, tail] = await withSchema(env, () =>
+		Promise.all([
+			env.DB.prepare(
+				"SELECT id, ts, kind, status, http, latency_ms, ip, in_tokens, out_tokens, err, app, model, meta," +
+					" country, region, city, lat, lon, cost FROM calls WHERE id > ?1 ORDER BY id ASC LIMIT ?2",
+			)
+				.bind(afterId, n)
+				.all<Record<string, unknown>>(),
+			env.DB.prepare("SELECT MAX(id) AS mx, COUNT(*) AS n FROM calls WHERE id > ?1")
+				.bind(afterId)
+				.first<{ mx: number | null; n: number | null }>(),
+		]),
+	);
+	const rows = rs.results ?? [];
+	const lastId = rows.length ? Number(rows[rows.length - 1].id) : afterId;
+	return {
+		rows,
+		lastId,
+		maxId: tail?.mx ?? afterId,
+		remaining: Math.max(0, (tail?.n ?? 0) - rows.length),
+	};
+}
+
 // ─────────────────────────────────────────────────────────────
 // 집계
 // ─────────────────────────────────────────────────────────────
