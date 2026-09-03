@@ -756,7 +756,32 @@ export interface SummaryData {
 	prev: { total: number; error: number; cost: number; avgLatency: number } | null;
 	/** 맨 아래에 붙는 최근 호출 몇 건 — 자세히는 로그 화면에서 본다. */
 	recent: LogRow[];
+	/** 이상탐지 요약 — 판정은 바깥 서버가 하고 여기에는 결과만 쌓인다. */
+	anomaly: AnomalyBrief;
 }
+
+/**
+ * 요약 화면에 얹는 이상탐지 한 줄.
+ * 전용 탭과 같은 표를 읽되, 훑어보는 화면이라 개수와 최근 몇 건만 가져온다.
+ */
+export interface AnomalyBriefRow {
+	bucket: number; app: string; signal: string; severity: string;
+	label: string | null; observed: number | null; baseline: number | null;
+	detail: string | null; verdict: string | null; verdict_reason: string | null;
+}
+export interface AnomalyBrief {
+	total: number; critical: number; warn: number;
+	prevTotal: number;
+	lastDetected: number;
+	/** 이상탐지 서버가 마지막으로 신호를 보낸 뒤 지난 시간(ms). 한 번도 없으면 null. */
+	heartbeatAge: number | null;
+	/** 검증 에이전트가 정탐으로 본 비율(0~1). 라벨이 아직 없으면 null. */
+	hitRate: number | null;
+	recent: AnomalyBriefRow[];
+}
+
+/** 요약 화면 이상탐지 칸에 보여줄 최근 이상 건수. */
+export const SUMMARY_ANOMALY_RECENT = 3;
 
 /** 요약 화면 맨 아래에 보여줄 최근 호출 건수. */
 export const SUMMARY_RECENT = 5;
@@ -774,7 +799,8 @@ async function collectSummaryInner(env: StatsEnv, period: string, appFilter: str
 	};
 	const bexpr = bucketExpr(p.bucket);
 
-	const [apps, grouped, bucketRows, ipRow, okRow, errRows, cRows, prevRows, recentRs] = await Promise.all([
+	const [apps, grouped, bucketRows, ipRow, okRow, errRows, cRows, prevRows, recentRs,
+		anomSum, anomPrev, anomRecent, anomState] = await Promise.all([
 		appBriefs(env),
 
 		bind(
@@ -814,6 +840,33 @@ async function collectSummaryInner(env: StatsEnv, period: string, appFilter: str
 			? env.DB.prepare(`SELECT ${LOG_COLS} FROM calls WHERE app = ?1 ORDER BY id DESC LIMIT ?2`).bind(appFilter, SUMMARY_RECENT)
 			: env.DB.prepare(`SELECT ${LOG_COLS} FROM calls ORDER BY id DESC LIMIT ?1`).bind(SUMMARY_RECENT)
 		).all<RawLogRow>(),
+
+		// ── 이상탐지 요약. 전용 탭과 같은 표를 읽되 개수와 최근 몇 건만 본다.
+		bind(
+			"SELECT COUNT(*) AS n," +
+				" SUM(CASE WHEN severity='critical' THEN 1 ELSE 0 END) AS c," +
+				" SUM(CASE WHEN severity='warn' THEN 1 ELSE 0 END) AS w," +
+				" MAX(detected_at) AS last FROM anomalies WHERE bucket >= ?1" + appWhere,
+		).first<{ n: number; c: number | null; w: number | null; last: number | null }>(),
+
+		p.days
+			? (appFilter
+					? env.DB.prepare("SELECT COUNT(*) AS n FROM anomalies WHERE bucket >= ?1 AND bucket < ?2 AND app = ?3").bind(prevSince, since, appFilter)
+					: env.DB.prepare("SELECT COUNT(*) AS n FROM anomalies WHERE bucket >= ?1 AND bucket < ?2").bind(prevSince, since)
+				).first<{ n: number }>()
+			: Promise.resolve(null),
+
+		// 검증에서 오탐으로 판정된 건은 뒤로 민다. 메일도 나가지 않는 건이라
+		// 요약 상단을 차지하면 실제로 봐야 할 신호가 가린다. 그다음 심각한 것, 그다음 최근 것.
+		bind(
+			"SELECT bucket, app, signal, severity, label, observed, baseline, detail, verdict, verdict_reason" +
+				" FROM anomalies WHERE bucket >= ?1" + appWhere +
+				" ORDER BY CASE WHEN verdict IN ('rule_fp','model_fp','both_fp') THEN 1 ELSE 0 END," +
+				" CASE severity WHEN 'critical' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END, bucket DESC" +
+				` LIMIT ${SUMMARY_ANOMALY_RECENT}`,
+		).all<AnomalyBriefRow>(),
+
+		env.DB.prepare("SELECT key, value, updated_at FROM anomaly_state").all<{ key: string; value: string; updated_at: number }>(),
 	]);
 
 	const nameOf = new Map(apps.map((a) => [a.id, a.name]));
@@ -868,6 +921,45 @@ async function collectSummaryInner(env: StatsEnv, period: string, appFilter: str
 		countryCount: countries.filter((c) => c.key !== "(미상)").length,
 		prev,
 		recent: (recentRs.results ?? []).map(toLogRow),
+		anomaly: anomalyBriefOf(anomSum, anomPrev, anomRecent.results ?? [], anomState.results ?? []),
+	};
+}
+
+/** 검증 라벨 가운데 정탐으로 세는 것 / 오탐으로 세는 것. 이상탐지 서버와 같은 기준이다. */
+const VERDICT_HIT = ["confirmed", "rule_only", "model_gain"];
+const VERDICT_MISS = ["rule_fp", "model_fp", "both_fp"];
+
+function anomalyBriefOf(
+	sum: { n: number; c: number | null; w: number | null; last: number | null } | null,
+	prev: { n: number } | null,
+	recent: AnomalyBriefRow[],
+	state: { key: string; value: string; updated_at: number }[],
+): AnomalyBrief {
+	const newest = state.reduce((a, b) => Math.max(a, b.updated_at || 0), 0);
+
+	// 정탐률 — 이상탐지 서버가 밀어 넣은 라벨 집계에서 뽑는다. 형식이 달라지면 표시하지 않는다.
+	let hitRate: number | null = null;
+	const labels = state.find((r) => r.key === "labels");
+	if (labels) {
+		try {
+			const by = (JSON.parse(labels.value) as { by_verdict?: Record<string, number> }).by_verdict ?? {};
+			const cnt = (keys: string[]) => keys.reduce((a, k) => a + (by[k] ?? 0), 0);
+			const hit = cnt(VERDICT_HIT), miss = cnt(VERDICT_MISS);
+			if (hit + miss > 0) hitRate = hit / (hit + miss);
+		} catch {
+			/* 형식이 달라졌을 뿐이라 화면은 그대로 그린다 */
+		}
+	}
+
+	return {
+		total: sum?.n ?? 0,
+		critical: sum?.c ?? 0,
+		warn: sum?.w ?? 0,
+		prevTotal: prev?.n ?? 0,
+		lastDetected: sum?.last ?? 0,
+		heartbeatAge: newest ? Date.now() - newest : null,
+		hitRate,
+		recent,
 	};
 }
 

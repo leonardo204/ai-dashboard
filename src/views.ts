@@ -16,6 +16,7 @@ import {
 	PERIODS, MODEL_PRICES, DEFAULT_MODEL, countryName, LOG_PAGE, SUMMARY_RECENT,
 	type AppConfig, type GroupRow,
 	type SummaryData, type UsageData, type TrendData, type GeoData, type LogsData, type LogFilter,
+	type AnomalyBrief,
 	type AnomalyData, type AnomalyRow,
 } from "./stats";
 import {
@@ -75,6 +76,11 @@ export function renderSummary(s: SummaryData, opts: AdminOpts = {}): string {
 	if (s.prev && s.prev.cost > 0 && s.cost > s.prev.cost * 1.5) {
 		alerts.push(
 			`<div class="al">비용이 직전 같은 기간보다 <b>${Math.round(((s.cost - s.prev.cost) / s.prev.cost) * 100)}%</b> 늘었어요 (${usd(s.prev.cost)} → ${usd(s.cost)})</div>`,
+		);
+	}
+	if (s.anomaly.critical) {
+		alerts.push(
+			`<a class="al" href="/admin/anomaly${q}" style="text-decoration:none">이상 신호 <b>심각 ${s.anomaly.critical.toLocaleString()}건</b> — 이상탐지에서 보기 →</a>`,
 		);
 	}
 	if (s.p95Latency >= 10_000) {
@@ -181,6 +187,9 @@ ${mini("출력 토큰", shortNum(s.outTokens))}
 ${mini("고유 IP", s.uniqueIPs.toLocaleString())}
 ${mini("사용 모델", `${s.modelCount}종`)}
 </div>
+
+${sectionHead("이상탐지", `/admin/anomaly${q}`, "이상탐지에서 보기 →")}
+${anomalyBand(s.anomaly, `/admin/anomaly${q}`)}
 
 ${sectionHead(`최근 호출 (${SUMMARY_RECENT}건)`, `/admin/logs${q}`, "로그에서 더 보기 →")}
 <div class="scroll"><table class="recent"><tr><th>시각</th><th>앱</th><th>용도</th><th>모델</th><th>상태</th><th class="n">HTTP</th><th class="n">지연</th><th class="n">토큰</th><th class="n">비용</th><th>지역</th><th>오류 · 메타</th></tr>${recentRows}</table></div>
@@ -410,7 +419,7 @@ function anomValue(v: number | null, metric: string): string {
 	return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
-function anomDetail(r: AnomalyRow): { metric: string; label: string; ratio: number | null; kind: string } {
+function anomDetail(r: { detail: string | null; label: string | null; signal: string }): { metric: string; label: string; ratio: number | null; kind: string } {
 	let d: Record<string, unknown> = {};
 	try {
 		d = r.detail ? (JSON.parse(r.detail) as Record<string, unknown>) : {};
@@ -501,6 +510,62 @@ function modelMetrics(raw: string | null): string {
 		f1("model") ? `모델 F1 ${f1("model")}` : "",
 	].filter(Boolean);
 	return parts.length ? parts.join(" · ") : "-";
+}
+
+/**
+ * 요약 화면에 얹는 이상탐지 칸.
+ * 훑어보는 화면이라 "지금 이상이 있나 · 무엇이 · 탐지기는 살아 있나" 셋만 담고,
+ * 나머지는 이상탐지 탭 몫으로 넘긴다. 이상이 없으면 한 줄로 접는다.
+ */
+function anomalyBand(a: AnomalyBrief, href: string): string {
+	const age = a.heartbeatAge;
+	const cls = age === null || age > 15 * 60_000 ? "down" : age > 5 * 60_000 ? "stale" : "";
+	const stateText =
+		age === null
+			? "이상탐지 서버에서 아직 신호가 오지 않았어요"
+			: cls === "down"
+				? "이상탐지 서버 신호가 끊겼어요"
+				: cls === "stale"
+					? "이상탐지 서버 신호가 늦어지고 있어요"
+					: "이상탐지 서버 정상";
+	const dot = `<span class="st${cls ? ` ${cls}` : ""}"><span class="dot"></span>${escapeHtml(stateText)}</span>`;
+
+	if (!a.total) {
+		return `<div class="anb quiet">${dot}<span class="t">이 기간에 잡힌 이상 신호가 없어요.</span>` +
+			`<span class="sm">마지막 신호 ${ago(age)}</span></div>`;
+	}
+
+	const rows = a.recent
+		.map((r) => {
+			const d = anomDetail(r);
+			const amount = d.ratio ? `평소의 ${d.ratio}배` : anomValue(r.observed, d.metric);
+			const tip = r.verdict_reason ? `${kst(r.bucket)}\n${r.verdict_reason}` : kst(r.bucket);
+			return `<tr><td class="mono" data-tip="${escapeHtml(tip)}">${kst(r.bucket).slice(0, 11)}</td>` +
+				`<td>${sevTag(r.severity)}</td>` +
+				`<td>${escapeHtml(d.label || SIGNAL_LABEL[r.signal] || r.signal)}</td>` +
+				`<td>${r.app === "*" ? "전체" : escapeHtml(r.app)}</td>` +
+				`<td class="n">${escapeHtml(amount)}</td>` +
+				`<td>${verdictTag(r.verdict, r.verdict_reason)}</td></tr>`;
+		})
+		.join("");
+
+	const box = (v: string, l: string, tone = "") =>
+		`<div><b${tone ? ` class="${tone}"` : ""}>${v}</b><span>${l}</span></div>`;
+
+	return `<div class="anb">
+  <div class="anb-l">
+    ${dot}
+    <div class="nums">
+      ${box(a.critical.toLocaleString(), "심각", a.critical ? "r" : "")}
+      ${box(a.warn.toLocaleString(), "주의")}
+      ${box(a.hitRate === null ? "-" : pct1(a.hitRate), "정탐률")}
+    </div>
+    <div class="sub">전체 ${a.total.toLocaleString()}건${delta(a.total, a.prevTotal, true)} · 마지막 탐지 ${a.lastDetected ? ago(Date.now() - a.lastDetected) : "-"}</div>
+  </div>
+  <div class="anb-r"><div class="scroll"><table class="mini"><tr><th>구간</th><th>등급</th><th>신호</th><th>앱</th><th class="n">관측</th><th>검증</th></tr>${rows}</table></div>
+    <div class="sub"><a href="${href}">이상 신호 ${a.total.toLocaleString()}건 모두 보기 →</a></div>
+  </div>
+</div>`;
 }
 
 /** 이상탐지 서버 상태줄 — heartbeat가 끊긴 것 자체가 알림이다. */

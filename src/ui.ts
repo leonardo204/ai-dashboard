@@ -527,6 +527,29 @@ const EXTRA_CSS = `
 .pm.hold{background:#fff6e8;color:#96601a;border:1px solid #f2ddbe;}
 .pm.off{background:#f5f6fa;color:#6b7280;border:1px solid #e6e9ef;}
 
+/* 요약 화면의 이상탐지 칸 — 왼쪽은 지금 상태, 오른쪽은 최근에 무엇이 잡혔나 */
+.anb{display:grid;grid-template-columns:236px minmax(0,1fr);gap:16px;align-items:start;
+ background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:13px 15px;}
+.anb .st{display:inline-flex;align-items:center;gap:7px;font-weight:800;font-size:12.5px;white-space:nowrap;}
+.anb .st .dot{width:9px;height:9px;border-radius:50%;background:var(--g);flex:0 0 9px;}
+.anb .st.down .dot{background:var(--r);}
+.anb .st.stale .dot{background:#E0A33B;}
+.anb .nums{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px;}
+.anb .nums div{background:#fafbfc;border:1px solid var(--line);border-radius:10px;padding:7px 9px;}
+.anb .nums b{display:block;font-size:17px;font-weight:900;line-height:1.3;font-variant-numeric:tabular-nums;}
+.anb .nums span{font-size:11px;color:var(--muted);font-weight:700;}
+.anb .sub{margin-top:8px;font-size:11.5px;color:var(--muted);}
+.anb .sub a{color:var(--accent);font-weight:700;text-decoration:none;}
+.anb .sub a:hover{text-decoration:underline;}
+.anb .scroll{border-radius:10px;}
+.anb table.mini{border:0;border-radius:0;background:none;font-size:12.5px;min-width:0;}
+.anb table.mini th,.anb table.mini td{padding:5px 9px;white-space:nowrap;}
+.anb table.mini th{background:none;padding-top:0;}
+.anb table.mini tr:last-child td{border-bottom:none;}
+.anb.quiet{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+.anb.quiet .t{font-size:13px;font-weight:700;}
+@media(max-width:860px){.anb{grid-template-columns:1fr}}
+
 /* 요일 × 시각 히트맵 */
 .hm{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px;overflow-x:auto;}
 .hm table{border:none;border-radius:0;background:none;font-size:11px;width:auto;min-width:100%;}
