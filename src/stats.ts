@@ -88,6 +88,10 @@ export async function ensureSchema(env: StatsEnv): Promise<void> {
 		"CREATE TABLE IF NOT EXISTS anomalies (id INTEGER PRIMARY KEY AUTOINCREMENT, src_id INTEGER, detected_at INTEGER NOT NULL, bucket INTEGER NOT NULL, grain TEXT NOT NULL, app TEXT NOT NULL, signal TEXT NOT NULL, severity TEXT NOT NULL, score REAL, observed REAL, baseline REAL, label TEXT, detail TEXT, detector TEXT, model_version TEXT, notified_at INTEGER, status TEXT NOT NULL DEFAULT 'open')",
 		"CREATE TABLE IF NOT EXISTS anomaly_models (version TEXT PRIMARY KEY, algo TEXT, scope TEXT, trained_at INTEGER, train_from INTEGER, train_to INTEGER, train_rows INTEGER, metrics TEXT, status TEXT, note TEXT)",
 		"CREATE TABLE IF NOT EXISTS anomaly_state (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)",
+		// 검증 에이전트가 붙인 판정. 이미 있으면 조용히 실패한다(D1엔 ADD COLUMN IF NOT EXISTS가 없다).
+		"ALTER TABLE anomalies ADD COLUMN verdict TEXT",
+		"ALTER TABLE anomalies ADD COLUMN verdict_reason TEXT",
+		"ALTER TABLE anomalies ADD COLUMN suppressed_reason TEXT",
 	]) {
 		try {
 			await env.DB.prepare(sql).run();
@@ -121,7 +125,8 @@ export async function withSchema<T>(env: StatsEnv, fn: () => Promise<T>): Promis
 	try {
 		return await fn();
 	} catch (e) {
-		if (!/no such table|no such column/i.test(String(e))) throw e;
+		// D1은 상황에 따라 문구가 달라진다. "no such column"과 "has no column named" 둘 다 받는다.
+		if (!/no such table|no such column|has no column named/i.test(String(e))) throw e;
 		schemaReady = false;
 		await ensureSchema(env);
 		return await fn();
@@ -1324,6 +1329,9 @@ export interface AnomalyIn {
 	model_version?: string | null;
 	notified_at?: number | null;
 	status?: string | null;
+	verdict?: string | null;
+	verdict_reason?: string | null;
+	suppressed_reason?: string | null;
 }
 export interface ModelIn {
 	version: string;
@@ -1343,8 +1351,14 @@ const SEVERITIES = new Set(["info", "warn", "critical"]);
 /** 이상탐지 서버가 밀어 넣는 결과를 받는다. 같은 (구간·앱·신호)는 덮어쓴다. */
 export async function pushAnomaly(
 	env: StatsEnv,
-	body: { detections?: AnomalyIn[]; models?: ModelIn[]; state?: Record<string, unknown> },
-): Promise<{ detections: number; models: number; state: number }> {
+	body: {
+		detections?: AnomalyIn[];
+		models?: ModelIn[];
+		state?: Record<string, unknown>;
+		/** 이상탐지 서버가 그 구간에 남겨 둔 판정 목록. 여기 없는 건 저쪽에서 지운 것이라 함께 지운다. */
+		prune?: { since?: number; ids?: number[] };
+	},
+): Promise<{ detections: number; models: number; state: number; pruned: number }> {
 	const now = Date.now();
 	const dets = (body.detections ?? []).slice(0, 500);
 	const models = (body.models ?? []).slice(0, 200);
@@ -1356,18 +1370,23 @@ export async function pushAnomaly(
 		stmts.push(
 			env.DB.prepare(
 				"INSERT INTO anomalies (src_id, detected_at, bucket, grain, app, signal, severity, score, observed," +
-					" baseline, label, detail, detector, model_version, notified_at, status)" +
-					" VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)" +
+					" baseline, label, detail, detector, model_version, notified_at, status," +
+					" verdict, verdict_reason, suppressed_reason)" +
+					" VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19)" +
 					" ON CONFLICT(grain, bucket, app, signal) DO UPDATE SET" +
 					" severity=excluded.severity, score=excluded.score, observed=excluded.observed," +
 					" baseline=excluded.baseline, label=excluded.label, detail=excluded.detail," +
 					" detector=excluded.detector, model_version=excluded.model_version," +
-					" notified_at=excluded.notified_at, status=excluded.status",
+					" notified_at=excluded.notified_at, status=excluded.status," +
+					" verdict=excluded.verdict, verdict_reason=excluded.verdict_reason," +
+					" suppressed_reason=excluded.suppressed_reason",
 			).bind(
 				d.src_id ?? null, d.detected_at ?? now, d.bucket, d.grain, d.app, d.signal, d.severity,
 				d.score ?? null, d.observed ?? null, d.baseline ?? null, d.label ?? null,
 				d.detail == null ? null : JSON.stringify(d.detail).slice(0, 2000),
 				d.detector ?? "rule", d.model_version ?? null, d.notified_at ?? null, d.status ?? "open",
+				d.verdict ?? null, (d.verdict_reason ?? null) && String(d.verdict_reason).slice(0, 400),
+				d.suppressed_reason ?? null,
 			),
 		);
 	}
@@ -1400,7 +1419,22 @@ export async function pushAnomaly(
 	}
 
 	if (stmts.length) await withSchema(env, () => env.DB.batch(stmts));
-	return { detections: dets.length, models: models.length, state: stateN };
+
+	// 판정을 지우는 일은 이상탐지 서버 쪽에서만 일어난다(게이트가 바뀌어 지난 판정을 걷어낼 때).
+	// 그 구간에서 저쪽에 없는 행은 여기서도 지워야 두 화면의 숫자가 어긋나지 않는다.
+	let pruned = 0;
+	const pr = body.prune;
+	if (pr && typeof pr.since === "number" && Array.isArray(pr.ids)) {
+		const ids = pr.ids.filter((n) => Number.isFinite(n)).slice(0, 2000);
+		const keep = ids.length ? ` AND src_id NOT IN (${ids.map((n) => Math.trunc(n)).join(",")})` : "";
+		const r = await withSchema(env, () =>
+			env.DB.prepare(`DELETE FROM anomalies WHERE src_id IS NOT NULL AND detected_at >= ?1${keep}`)
+				.bind(pr.since)
+				.run(),
+		);
+		pruned = r.meta?.changes ?? 0;
+	}
+	return { detections: dets.length, models: models.length, state: stateN, pruned };
 }
 
 export interface AnomalyRow {
@@ -1408,6 +1442,7 @@ export interface AnomalyRow {
 	signal: string; severity: string; score: number | null; observed: number | null;
 	baseline: number | null; label: string | null; detail: string | null;
 	detector: string | null; model_version: string | null; notified_at: number | null; status: string;
+	verdict: string | null; verdict_reason: string | null; suppressed_reason: string | null;
 }
 export interface AnomalyData {
 	period: string;

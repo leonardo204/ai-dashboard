@@ -425,6 +425,51 @@ function anomDetail(r: AnomalyRow): { metric: string; label: string; ratio: numb
 	};
 }
 
+
+/** 이상탐지 서버가 state로 밀어 넣은 JSON 한 덩이를 꺼낸다. 형식이 달라지면 빈 값으로 둔다. */
+function anomState<T>(a: AnomalyData, key: string): T | null {
+	const row = a.state.find((s) => s.key === key);
+	if (!row) return null;
+	try {
+		return JSON.parse(row.value) as T;
+	} catch {
+		return null;
+	}
+}
+
+/** 검증 에이전트 판정 — 여섯 가지 라벨을 화면에서 읽히는 말로 옮긴다. */
+const VERDICT_LABEL: Record<string, { text: string; cls: string }> = {
+	confirmed: { text: "정탐", cls: "hit" },
+	rule_only: { text: "정탐(규칙만)", cls: "hit" },
+	model_gain: { text: "정탐(모델만)", cls: "hit" },
+	rule_fp: { text: "오탐(규칙)", cls: "miss" },
+	model_fp: { text: "오탐(모델)", cls: "miss" },
+	both_fp: { text: "오탐", cls: "miss" },
+	pending: { text: "판단 보류", cls: "wait" },
+};
+
+function verdictTag(v: string | null, reason: string | null): string {
+	if (!v) return `<span class="sm">검증 전</span>`;
+	const m = VERDICT_LABEL[v] ?? { text: v, cls: "wait" };
+	const tip = reason ? `${m.text}\n${reason}` : m.text;
+	return `<span class="vd ${m.cls}" data-tip="${escapeHtml(tip)}">${escapeHtml(m.text)}</span>`;
+}
+
+/** 신호 이름 — 이력 표에 아직 안 나온 신호도 화면에서는 한국어로 보이게 한다. */
+const SIGNAL_LABEL: Record<string, string> = {
+	call_spike: "호출량 급증",
+	error_rate: "오류율 급증",
+	cost_spike: "비용 급증",
+	latency_slow: "응답 지연",
+	ip_surge: "접속 IP 급증",
+	new_country: "새 국가에서 호출",
+	new_ip_burst: "새 IP 다수 등장",
+	rate_limited: "호출 상한 초과(429)",
+	model_anomaly: "모델 이상 판정",
+};
+
+const pct1 = (v: number | null | undefined) => (v === null || v === undefined ? "-" : `${(v * 100).toFixed(1)}%`);
+
 /** 이상탐지 서버 상태줄 — heartbeat가 끊긴 것 자체가 알림이다. */
 function serverBar(a: AnomalyData): string {
 	const age = a.heartbeatAge;
@@ -498,11 +543,12 @@ export function renderAnomaly(a: AnomalyData, opts: AdminOpts = {}): string {
 						`<td class="n">${r.score === null ? "-" : r.score.toFixed(1)}</td>` +
 						`<td>${escapeHtml(r.grain)}</td>` +
 						`<td>${r.detector === "model" ? escapeHtml(r.model_version ?? "모델") : "규칙"}</td>` +
-						`<td>${r.notified_at ? kst(r.notified_at) : "-"}</td></tr>`
+						`<td>${verdictTag(r.verdict, r.verdict_reason)}</td>` +
+						`<td>${r.notified_at ? kst(r.notified_at) : r.suppressed_reason ? `<span class="sm" data-tip="${escapeHtml(r.suppressed_reason)}">보내지 않음</span>` : "-"}</td></tr>`
 					);
 				})
 				.join("")
-		: `<tr><td colspan="11">이 기간에 잡힌 이상 신호가 없어요.</td></tr>`;
+		: `<tr><td colspan="12">이 기간에 잡힌 이상 신호가 없어요.</td></tr>`;
 
 	const modelRows = a.models.length
 		? a.models
@@ -526,6 +572,68 @@ export function renderAnomaly(a: AnomalyData, opts: AdminOpts = {}): string {
 				.join("")
 		: `<tr><td colspan="7">아직 학습된 모델이 없어요. 지금은 규칙·통계 기준으로 판정하고 있어요.</td></tr>`;
 
+	// ── 검증 에이전트 라벨 · 탐지기 성적 · 승격 심사 (이상탐지 서버가 함께 밀어 넣는다)
+	type LabelState = {
+		total?: number;
+		by_verdict?: Record<string, number>;
+		rule?: { hit: number; miss: number; rate: number | null };
+		model?: { hit: number; miss: number; rate: number | null };
+	};
+	type EvalOne = {
+		dataset?: string; version?: string | null; tp?: number; fp?: number; fn?: number;
+		precision?: number; recall?: number; f1?: number; by_signal?: Record<string, number>;
+	};
+	const lab = anomState<LabelState>(a, "labels");
+	const ev = anomState<Record<string, EvalOne>>(a, "eval");
+	const proms = anomState<{ ran_at: string; version: string; baseline: string | null; decision: string; reason: string }[]>(a, "promotion") ?? [];
+	const alertState = anomState<{ suppressed?: number; sent?: number }>(a, "alerts");
+
+	const verdictRows = lab?.by_verdict && Object.keys(lab.by_verdict).length
+		? Object.entries(lab.by_verdict)
+				.sort((x, y) => y[1] - x[1])
+				.map(([k, n]) => {
+					const m = VERDICT_LABEL[k] ?? { text: k, cls: "wait" };
+					const share = lab.total ? (n / lab.total) * 100 : 0;
+					return `<tr><td><span class="vd ${m.cls}">${escapeHtml(m.text)}</span></td>` +
+						`<td class="n">${n.toLocaleString()}</td><td class="n">${share.toFixed(0)}%</td></tr>`;
+				})
+				.join("")
+		: `<tr><td colspan="3">아직 검증된 판정이 없어요.</td></tr>`;
+
+	// 규칙과 모델을 같은 검증셋으로 잰 표. 신호별 재현율까지 나란히 놓아 어느 쪽이 무엇에 강한지 본다.
+	const sigKeys = Array.from(new Set([
+		...Object.keys(ev?.rule?.by_signal ?? {}),
+		...Object.keys(ev?.model?.by_signal ?? {}),
+	])).sort();
+	const sigLabel = (k: string) => a.bySignal.find((x) => x.key === k)?.label ?? SIGNAL_LABEL[k] ?? k;
+	const compareRows = ev?.rule
+		? [
+				`<tr><td><b>전체</b></td>` +
+					`<td class="n">${pct1(ev.rule.precision)}</td><td class="n">${pct1(ev.rule.recall)}</td>` +
+					`<td class="n">${pct1(ev.model?.precision)}</td><td class="n">${pct1(ev.model?.recall)}</td></tr>`,
+				...sigKeys.map((k) => {
+					const r = ev.rule?.by_signal?.[k];
+					const m = ev.model?.by_signal?.[k];
+					const better = m !== undefined && r !== undefined && m > r;
+					return `<tr><td>${escapeHtml(sigLabel(k))}</td><td class="n">-</td>` +
+						`<td class="n${!better && r !== undefined ? " g" : ""}">${pct1(r)}</td>` +
+						`<td class="n">-</td><td class="n${better ? " g" : ""}">${pct1(m)}</td></tr>`;
+				}),
+			].join("")
+		: `<tr><td colspan="5">아직 채점 기록이 없어요.</td></tr>`;
+
+	const promRows = proms.length
+		? proms
+				.map(
+					(p) =>
+						`<tr><td class="mono">${escapeHtml(String(p.ran_at).slice(5, 16))}</td>` +
+						`<td class="mono">${escapeHtml(p.version)}</td>` +
+						`<td><span class="pm ${p.decision === "promoted" ? "up" : "hold"}">${p.decision === "promoted" ? "승격" : "보류"}</span></td>` +
+						`<td>${escapeHtml(p.reason)}</td></tr>`,
+				)
+				.join("")
+		: `<tr><td colspan="4">아직 승격 심사 기록이 없어요.</td></tr>`;
+
 	const appRows = a.byApp.length
 		? a.byApp
 				.map(
@@ -548,8 +656,17 @@ ${serverBar(a)}
   ${card("심각", a.critical.toLocaleString(), a.critical ? "r" : "")}
   ${card("주의", a.warn.toLocaleString())}
   ${card("참고", a.info.toLocaleString())}
-  ${card("메일 발송", a.notified.toLocaleString())}
+  ${card("메일 발송", a.notified.toLocaleString(), "", alertState?.suppressed ? `<span class="sm"> · 억제 ${alertState.suppressed}</span>` : "")}
   ${card("마지막 탐지", a.lastDetected ? ago(Date.now() - a.lastDetected) : "-")}
+</div>
+
+<div class="kpi2" style="margin-bottom:4px">
+  ${card("검증된 판정", (lab?.total ?? 0).toLocaleString())}
+  ${card("규칙 정탐률", pct1(lab?.rule?.rate), (lab?.rule?.rate ?? 1) < 0.5 ? "r" : "")}
+  ${card("모델 정탐률", pct1(lab?.model?.rate), (lab?.model?.rate ?? 1) < 0.5 ? "r" : "")}
+  ${card("검증셋 규칙 F1", pct1(ev?.rule?.f1))}
+  ${card("검증셋 모델 F1", pct1(ev?.model?.f1))}
+  ${card("쓰는 모델", escapeHtml(a.models.find((m) => m.status === "active")?.version ?? "규칙만"))}
 </div>
 
 ${sectionHead(`${a.bucketLabel} 단위 이상 신호`)}
@@ -561,7 +678,19 @@ ${svgLevels(a.buckets)}
 </div>
 
 ${sectionHead("이상 신호 이력")}
-<div class="scroll"><table class="recent"><tr><th>구간</th><th>등급</th><th>신호</th><th>앱</th><th class="n">관측</th><th class="n">평소</th><th class="n">배수</th><th class="n">점수</th><th>단위</th><th>판정</th><th>메일</th></tr>${rows}</table></div>
+<div class="scroll"><table class="recent"><tr><th>구간</th><th>등급</th><th>신호</th><th>앱</th><th class="n">관측</th><th class="n">평소</th><th class="n">배수</th><th class="n">점수</th><th>단위</th><th>탐지기</th><th>검증</th><th>메일</th></tr>${rows}</table></div>
+
+<div class="two">
+  <section>${sectionHead("검증 결과")}
+    <table><tr><th>판정</th><th class="n">건수</th><th class="n">비중</th></tr>${verdictRows}</table>
+  </section>
+  <section>${sectionHead("탐지기 성적 비교")}
+    <div class="scroll"><table><tr><th>구분</th><th class="n">규칙 정밀도</th><th class="n">규칙 재현율</th><th class="n">모델 정밀도</th><th class="n">모델 재현율</th></tr>${compareRows}</table></div>
+  </section>
+</div>
+
+${sectionHead("승격 심사")}
+<div class="scroll"><table><tr><th>시각</th><th>후보</th><th>결과</th><th>근거</th></tr>${promRows}</table></div>
 
 <div class="two">
   <section>${sectionHead("앱별 이상 건수")}
@@ -574,7 +703,9 @@ ${sectionHead("이상 신호 이력")}
 
 <p class="foot">판정은 이상탐지 서버(121.161.160.122)가 하고, 이 화면은 넘겨받은 결과만 보여줘요. 서버가 멈춰도 화면은 열리고 맨 위 상태줄에 표시돼요.<br>
 '평소'는 같은 요일·같은 시각의 과거 기록에서 뽑은 기준선이에요. 표본이 모자라면 최근 구간 전체로 대신하고, 그때는 등급을 한 단계 낮춰요.<br>
-심각·주의 신호는 ${escapeHtml("zerolive7@gmail.com")}으로 메일이 나가요. 같은 신호가 이어지면 일정 시간 동안 묶어서 한 번만 보내요.</p>
+심각·주의 신호는 ${escapeHtml("zerolive7@gmail.com")}으로 메일이 나가요. 같은 신호가 이어지면 일정 시간 동안 묶어서 한 번만 보내요.<br>
+'검증'은 판정 근거를 다시 읽고 정탐인지 오탐인지 가리는 단계예요. 오탐으로 판정되면 메일을 보내지 않아요. 심각 신호는 검증을 기다리지 않고 바로 보내요.<br>
+모델은 검증셋 성적과 실데이터 정탐률이 기준을 넘고 지금 쓰는 모델보다 나빠지지 않을 때만 승격돼요. 그전까지는 판정을 기록만 하고 메일에는 쓰지 않아요.</p>
 </div>`,
 		{ ...opts, tab: "anomaly" },
 	);

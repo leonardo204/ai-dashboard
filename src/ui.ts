@@ -514,6 +514,16 @@ const EXTRA_CSS = `
 .srv .job{font-size:11.5px;font-weight:700;color:var(--muted);background:#f5f6fa;
  border:1px solid var(--line);border-radius:8px;padding:3px 8px;}
 .srv .job.bad{background:#fdecec;border-color:#f6cfcf;color:#a9313a;}
+/* 검증 에이전트 판정 태그 */
+.vd{display:inline-flex;align-items:center;font-weight:800;font-size:11.5px;
+ border-radius:999px;padding:2px 9px;white-space:nowrap;border:1px solid transparent;}
+.vd.hit{background:#f2fbf4;color:#0a7d33;border-color:#cfe8d4;}
+.vd.miss{background:#f5f6fa;color:#6b7280;border-color:#e6e9ef;}
+.vd.wait{background:#fffaf2;color:#96601a;border-color:#f2e2c6;}
+/* 승격 심사 결과 */
+.pm{display:inline-flex;font-weight:800;font-size:11.5px;border-radius:999px;padding:2px 9px;}
+.pm.up{background:#f2fbf4;color:#0a7d33;border:1px solid #cfe8d4;}
+.pm.hold{background:#fff6e8;color:#96601a;border:1px solid #f2ddbe;}
 
 /* 요일 × 시각 히트맵 */
 .hm{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px;overflow-x:auto;}
