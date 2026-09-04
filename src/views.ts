@@ -26,7 +26,7 @@ import {
 	escapeHtml, usd, kst, shortNum, shellAdmin, pageHead, filterTabs, sectionHead, delta,
 	svgTrend, svgMap, svgShare, svgDonut, svgHeat, svgLevels, svgF1, svgTraffic, type AdminOpts,
 } from "./ui";
-import { SITES, siteName, THREAT_LABEL } from "./traffic";
+import { SITES, siteName, siteUrl, THREAT_LABEL } from "./traffic";
 
 /** 상단바 메뉴가 기간·앱 조건을 그대로 물고 가도록 붙이는 질의 문자열. */
 function navQuery(period: string, appFilter: string): string {
@@ -1764,6 +1764,22 @@ function botTable(rows: { bot: string; n: number; last: number; paths: number }[
 }
 
 /**
+ * 추적 중인 서비스 바로가기 줄.
+ * 숫자를 보다가 "지금 그 화면이 어떤데?"로 바로 넘어갈 수 있게 실제 주소를 걸어 둔다.
+ * 지금 걸러 보고 있는 서비스는 도드라지게 둔다.
+ */
+function siteLinks(current: string): string {
+	const links = Object.entries(SITES)
+		.map(
+			([id, v]) =>
+				`<a class="${current === id ? "on" : ""}" href="https://${v.host}/" target="_blank" rel="noopener"` +
+				` data-tip="${escapeHtml(v.host)}">${escapeHtml(v.name)} ↗</a>`,
+		)
+		.join("");
+	return `<div class="golinks"><span class="l">바로가기</span>${links}</div>`;
+}
+
+/**
  * 없는 주소 요청(404) 한 판.
  *
  * "404 급증 54건"만 보이면 서비스가 고장 난 것처럼 읽힌다. 실제로는 대부분 자동 스캐너가
@@ -1866,10 +1882,13 @@ export function renderTraffic(t: TrafficData, opts: AdminOpts = {}): string {
 						`<tr><td><a href="/admin/traffic${trafficQuery(t.period, r.key)}">${escapeHtml(r.name)}</a></td>` +
 						`<td class="n">${r.total.toLocaleString()}${delta(r.total, r.prev)}</td>` +
 						`<td class="n">${r.human.toLocaleString()}</td><td class="n">${r.uniq.toLocaleString()}</td>` +
-						`<td class="n">${r.ai.toLocaleString()}</td><td class="n">${r.search.toLocaleString()}</td></tr>`,
+						`<td class="n">${r.ai.toLocaleString()}</td><td class="n">${r.search.toLocaleString()}</td>` +
+						`<td class="n">${siteUrl(r.key)
+							? `<a class="go" href="${siteUrl(r.key)}" target="_blank" rel="noopener" data-tip="${escapeHtml(SITES[r.key]?.host ?? "")}">열기 ↗</a>`
+							: "-"}</td></tr>`,
 				)
 				.join("")
-		: `<tr><td colspan="6">아직 들어온 방문 기록이 없어요.</td></tr>`;
+		: `<tr><td colspan="7">아직 들어온 방문 기록이 없어요.</td></tr>`;
 
 	const botPathRows = t.botPaths.length
 		? t.botPaths
@@ -1902,6 +1921,7 @@ export function renderTraffic(t: TrafficData, opts: AdminOpts = {}): string {
 		pageHead("트래픽", `서비스 방문 · ${sinceLabel(t.since)}`, t.siteFilter) +
 			`<div id="hz-body">
 ${filterTabs("/admin/traffic", t.period, t.siteFilter, t.sites, PERIODS, "", "", { key: "site", allLabel: "전체 서비스" })}
+${siteLinks(t.siteFilter)}
 
 <div class="kpi2" style="margin-bottom:4px">
   ${card("방문", t.total.toLocaleString(), "", delta(t.total, t.prevTotal))}
@@ -1938,7 +1958,7 @@ ${svgTraffic(t.buckets)}
 
 <div class="two">
   <section>${sectionHead("서비스별 요약")}
-    <div class="scroll cap"><table><thead><tr><th>서비스</th><th class="n">방문</th><th class="n">사람</th><th class="n">고유</th><th class="n">AI</th><th class="n">검색</th></tr></thead><tbody>${siteRows}</tbody></table></div>
+    <div class="scroll cap"><table><thead><tr><th>서비스</th><th class="n">방문</th><th class="n">사람</th><th class="n">고유</th><th class="n">AI</th><th class="n">검색</th><th class="n">바로가기</th></tr></thead><tbody>${siteRows}</tbody></table></div>
   </section>
   <section>${sectionHead("많이 열린 경로")}
     <div class="scroll cap"><table><thead><tr><th>경로</th><th class="n">전체</th><th class="n">사람</th><th class="n">크롤러</th></tr></thead><tbody>${pathRows}</tbody></table></div>

@@ -584,6 +584,16 @@ const EXTRA_CSS = `
 .anb.quiet .t{font-size:13px;font-weight:700;}
 @media(max-width:860px){.anb{grid-template-columns:1fr}}
 
+/* 서비스 바로가기 줄 — 트래픽 화면에서 실제 사이트로 바로 넘어간다 */
+.golinks{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:-4px 0 14px;}
+.golinks .l{font-size:11.5px;font-weight:800;color:var(--muted);margin-right:2px;}
+.golinks a{font-size:12px;font-weight:700;padding:4px 10px;border-radius:999px;
+ border:1px solid var(--line);background:#fafbfc;color:var(--muted);text-decoration:none;}
+.golinks a:hover{background:#f0eaff;border-color:#ddd0fb;color:#5E3A9E;}
+.golinks a.on{background:#f0eaff;border-color:#ddd0fb;color:#5E3A9E;}
+a.go{font-weight:700;color:var(--accent);text-decoration:none;white-space:nowrap;}
+a.go:hover{text-decoration:underline;}
+
 /* 보낸 메일 게시판 */
 .kind{display:inline-flex;font-weight:800;font-size:11.5px;border-radius:999px;padding:2px 9px;
  border:1px solid;white-space:nowrap;}

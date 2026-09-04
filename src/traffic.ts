@@ -26,7 +26,11 @@ export const SITES: Record<string, { name: string; host: string }> = {
 	golf: { name: "라운드온", host: "golf.zerolive.co.kr" },
 	me: { name: "포트폴리오", host: "me.zerolive.co.kr" },
 	"live-translate": { name: "라이브 번역", host: "live-translate.zerolive.co.kr" },
+	mail: { name: "메일 검색", host: "mail-altimedia.zerolive.co.kr" },
 };
+
+/** 서비스 주소 — 화면에서 "바로가기"로 여는 링크. */
+export const siteUrl = (k: string) => (SITES[k] ? `https://${SITES[k].host}/` : "");
 export const siteName = (k: string) => SITES[k]?.name ?? k;
 
 // ─────────────────────────────────────────────────────────────
