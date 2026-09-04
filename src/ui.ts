@@ -711,7 +711,7 @@ table.calls th,table.calls td{white-space:nowrap;overflow:hidden;text-overflow:e
  vertical-align:middle;padding:8px 9px;}
 /* 앱·모델만 너비를 비워 둔다. 나머지를 값이 딱 들어갈 만큼만 잡아 두면
    남는 폭이 전부 이 두 칸으로 가서 이름이 잘리지 않는다. */
-table.calls col.c-ts{width:112px;}
+table.calls col.c-ts{width:126px;}
 table.calls col.c-kind{width:62px;}
 table.calls col.c-st{width:52px;}
 table.calls col.c-http{width:50px;}
@@ -719,7 +719,7 @@ table.calls col.c-lat{width:76px;}
 table.calls col.c-tok{width:62px;}
 table.calls col.c-cost{width:76px;}
 table.calls col.c-geo{width:72px;}
-table.calls col.c-err{width:220px;}
+table.calls col.c-err{width:206px;}
 table.calls td.mono{font-size:11.5px;}
 table.calls td.n{white-space:nowrap;}
 table.calls td.err{max-width:none;font-size:11.5px;color:var(--muted);}
