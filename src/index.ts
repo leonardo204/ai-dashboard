@@ -9,6 +9,7 @@
  * 라우트:
  *  POST /v1/ai            채팅·비전·웹검색
  *  POST /v1/embeddings    임베딩
+ *  POST /v1/hit           다른 서비스가 보내는 방문 기록 (TRAFFIC_TOKEN)
  *  GET  /admin            요약 대시보드 (세션 로그인)
  *  GET  /admin/usage      앱·모델·용도별 사용량
  *  GET  /admin/trend      기간별 추이 · 요일×시각 히트맵
@@ -21,6 +22,7 @@
  *  POST /admin/api/anomaly 이상탐지 결과·모델·서버 상태 받기
  *       /admin/api/passkey/*   관리자 패스키 등록·로그인 (WebAuthn)
  *  GET  /admin/anomaly    이상탐지 현황
+ *  GET  /admin/traffic    서비스 방문(트래픽) 현황 — SEO·AEO
  *
  * 도메인: ai.zerolive.co.kr   ·   문서: docs/PROXY-API.md
  */
@@ -31,15 +33,17 @@ import {
 	collectStats, collectSummary, collectUsage, collectTrend, collectGeo, queryLogs, logsCsv,
 	listApps, getApp, upsertApp, deleteApp, newToken, pulse, exportCalls, PERIODS, LOG_PAGE,
 	collectAnomaly, pushAnomaly, listPasskeys, passkeyCount, deletePasskey,
+	collectTraffic,
 	type AppConfig, type LogFilter,
 } from "./stats";
 import { handlePasskey, type PasskeyEnv } from "./passkey";
+import { handleHit, SITES, type TrafficEnv } from "./traffic";
 import { renderLogin } from "./ui";
 import {
-	renderSummary, renderUsage, renderTrend, renderGeo, renderAnomaly, renderLogs, renderApps,
+	renderSummary, renderUsage, renderTrend, renderGeo, renderAnomaly, renderTraffic, renderLogs, renderApps,
 } from "./views";
 
-interface Env extends ProxyEnv, PasskeyEnv {
+interface Env extends ProxyEnv, PasskeyEnv, TrafficEnv {
 	// ProxyEnv: DB(D1) · OPENROUTER_API_KEY(secret)
 	// 통계 대시보드(/admin) 로그인 — HTTP Basic 인증(secret)
 	ADMIN_USER: string;
@@ -452,6 +456,12 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 			return handleEmbeddings(request, env, ctx);
 		}
 
+		// ── 서비스 방문 기록 받기 — 다른 서비스들이 응답을 보낸 뒤 한 건씩 보낸다.
+		//    사람이 온 건지 크롤러가 온 건지는 이쪽에서 가른다(서비스에 붙는 코드를 짧게 두려고).
+		if (path === "/v1/hit") {
+			return handleHit(request, env, ctx);
+		}
+
 		// ── 관리자 로그인 (세션 도메인 전용 · 직접 만든 화면)
 		if ((path === "/admin/login" || path === "/admin/login/")) {
 			return handleLogin(request, env, url);
@@ -591,6 +601,16 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 			if (unauth) return unauth;
 			const { period, appFilter } = statScope(url);
 			return html(await STAT_PAGES[path](env, period, appFilter), { cache: false });
+		}
+
+		// ── 트래픽 (/admin/traffic) — 서비스 방문 기록. 기간과 서비스로 좁혀 본다.
+		if (path === "/admin/traffic" || path === "/admin/traffic/") {
+			const unauth = await requireAdmin(request, env, url);
+			if (unauth) return unauth;
+			const { period } = statScope(url);
+			const raw = url.searchParams.get("site") || "";
+			const site = SITES[raw] ? raw : "";
+			return html(renderTraffic(await collectTraffic(env, period, site), { session: true }), { cache: false });
 		}
 
 		// ── 호출 로그 (/admin/logs · /admin/logs.csv)

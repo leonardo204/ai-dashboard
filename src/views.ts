@@ -18,10 +18,11 @@ import {
 	type SummaryData, type UsageData, type TrendData, type GeoData, type LogsData, type LogFilter,
 	type AnomalyBrief,
 	type AnomalyData, type AnomalyRow,
+	type TrafficData, type TrafficBrief,
 } from "./stats";
 import {
 	escapeHtml, usd, kst, shortNum, shellAdmin, pageHead, filterTabs, sectionHead, delta,
-	svgTrend, svgMap, svgShare, svgDonut, svgHeat, svgLevels, type AdminOpts,
+	svgTrend, svgMap, svgShare, svgDonut, svgHeat, svgLevels, svgTraffic, type AdminOpts,
 } from "./ui";
 
 /** 상단바 메뉴가 기간·앱 조건을 그대로 물고 가도록 붙이는 질의 문자열. */
@@ -190,6 +191,9 @@ ${mini("사용 모델", `${s.modelCount}종`)}
 
 ${sectionHead("이상탐지", `/admin/anomaly${q}`, "이상탐지에서 보기 →")}
 ${anomalyBand(s.anomaly, `/admin/anomaly${q}`)}
+
+${sectionHead("트래픽", `/admin/traffic?period=${s.period}`, "트래픽에서 보기 →")}
+${trafficBand(s.traffic, `/admin/traffic?period=${s.period}`)}
 
 ${sectionHead(`최근 호출 (${SUMMARY_RECENT}건)`, `/admin/logs${q}`, "로그에서 더 보기 →")}
 <div class="scroll"><table class="recent"><tr><th>시각</th><th>앱</th><th>용도</th><th>모델</th><th>상태</th><th class="n">HTTP</th><th class="n">지연</th><th class="n">토큰</th><th class="n">비용</th><th>지역</th><th>오류 · 메타</th></tr>${recentRows}</table></div>
@@ -516,11 +520,23 @@ function modelMetrics(raw: string | null): string {
 const SEV_COLOR: Record<string, string> = { critical: "#c0392b", warn: "#E0A33B", info: "#35A7FF" };
 
 function sevDonut(a: { critical: number; warn: number; info: number; total: number }): string {
-	const parts = [
-		{ k: "critical", label: "심각", v: a.critical },
-		{ k: "warn", label: "주의", v: a.warn },
-		{ k: "info", label: "참고", v: a.info },
-	].filter((r) => r.v > 0);
+	return smallDonut(
+		[
+			{ label: "심각", v: a.critical, color: SEV_COLOR.critical },
+			{ label: "주의", v: a.warn, color: SEV_COLOR.warn },
+			{ label: "참고", v: a.info, color: SEV_COLOR.info },
+		],
+		a.total,
+		"심각도 비중",
+	);
+}
+
+/**
+ * 작은 도넛 + 범례 — 요약 화면 칸에서 쓴다.
+ * 값이 0인 항목은 아예 그리지 않는다. 조각이 하나뿐이면 원형 링으로 그린다.
+ */
+function smallDonut(rows: { label: string; v: number; color: string }[], total: number, aria: string): string {
+	const parts = rows.filter((r) => r.v > 0);
 	const sum = parts.reduce((x, y) => x + y.v, 0) || 1;
 
 	const C = 48, R = 42, r = 28;
@@ -530,7 +546,7 @@ function sevDonut(a: { critical: number; warn: number; info: number; total: numb
 	let acc = -Math.PI / 2;
 	const arcs =
 		parts.length === 1
-			? `<circle cx="${C}" cy="${C}" r="${(R + r) / 2}" fill="none" stroke="${SEV_COLOR[parts[0].k]}" stroke-width="${R - r}" data-tip="${escapeHtml(`${parts[0].label} ${parts[0].v}건 (100%)`)}"/>`
+			? `<circle cx="${C}" cy="${C}" r="${(R + r) / 2}" fill="none" stroke="${parts[0].color}" stroke-width="${R - r}" data-tip="${escapeHtml(`${parts[0].label} ${parts[0].v}건 (100%)`)}"/>`
 			: parts
 					.map((s) => {
 						const ang = (s.v / sum) * Math.PI * 2;
@@ -540,22 +556,22 @@ function sevDonut(a: { critical: number; warn: number; info: number; total: numb
 						const large = ang > Math.PI ? 1 : 0;
 						const d = `M ${pt(a0, R)} A ${R} ${R} 0 ${large} 1 ${pt(a1, R)} L ${pt(a1, r)} A ${r} ${r} 0 ${large} 0 ${pt(a0, r)} Z`;
 						const tip = `${s.label} ${s.v.toLocaleString()}건 (${((s.v / sum) * 100).toFixed(0)}%)`;
-						return `<path d="${d}" fill="${SEV_COLOR[s.k]}" data-tip="${escapeHtml(tip)}"/>`;
+						return `<path d="${d}" fill="${s.color}" data-tip="${escapeHtml(tip)}"/>`;
 					})
 					.join("");
 
 	const legend = parts
 		.map(
 			(s) =>
-				`<div class="lg"><i style="background:${SEV_COLOR[s.k]}"></i>` +
+				`<div class="lg"><i style="background:${s.color}"></i>` +
 				`<span class="nm">${s.label}</span><b>${s.v.toLocaleString()}</b></div>`,
 		)
 		.join("");
 
 	return `<div class="sevd">
-  <svg viewBox="0 0 ${C * 2} ${C * 2}" role="img" aria-label="심각도 비중">
+  <svg viewBox="0 0 ${C * 2} ${C * 2}" role="img" aria-label="${escapeHtml(aria)}">
     ${arcs}
-    <text x="${C}" y="${C - 1}" class="cv">${a.total.toLocaleString()}</text>
+    <text x="${C}" y="${C - 1}" class="cv">${total.toLocaleString()}</text>
     <text x="${C}" y="${C + 13}" class="cl">건</text>
   </svg>
   <div class="lgs">${legend}</div>
@@ -1123,4 +1139,236 @@ Content-Type: application/json
 <p class="foot">모델은 제한하지 않아요 — <a href="https://openrouter.ai/models" target="_blank" rel="noopener">OpenRouter 카탈로그</a>의 이름을 그대로 쓰면 돼요(목록: <span class="mono">GET /admin/api/models</span>).</p>`,
 		{ ...opts, tab: "apps" },
 	);
+}
+
+// ═════════════════════════════════════════════════════════════
+// 트래픽 (/admin/traffic)
+//   내가 만든 서비스들이 밖에서 얼마나 읽히는지 본다.
+//   보는 순서를 그대로 화면 순서로 뒀다 —
+//   얼마나 들어왔나 → 사람인가 크롤러인가 → AI·검색 크롤러가 다녀갔나 → 어디를 거쳐 왔나.
+// ═════════════════════════════════════════════════════════════
+
+/** 방문 종류 색 — 화면 어디서나 같은 뜻으로 쓴다(차트 범례와 맞춘다). */
+const KIND_COLOR: Record<string, string> = {
+	human: "#925FF0", ai: "#C85A95", search: "#35A7FF", social: "#44AB42", other: "#cfd6e4",
+};
+const KIND_LABEL: Record<string, string> = {
+	human: "사람", ai: "AI 크롤러", search: "검색 크롤러", social: "SNS 미리보기", bot: "기타 봇", other: "기타 봇",
+};
+/** 유입 경로 묶음 이름. */
+const REF_GROUP: Record<string, string> = {
+	ai: "AI 답변", search: "검색", social: "SNS", referral: "외부 링크", internal: "내부 이동", direct: "직접 방문",
+};
+
+const trafficQuery = (period: string, site: string) =>
+	`?period=${period}${site ? `&site=${encodeURIComponent(site)}` : ""}`;
+
+/** 경로가 길면 가운데를 줄인다 — 표가 옆으로 늘어나면 다른 칸이 밀린다. */
+function shortPath(p: string, n = 42): string {
+	const v = p || "/";
+	return v.length <= n ? v : `${v.slice(0, n - 12)}…${v.slice(-10)}`;
+}
+
+function trafficDonut(t: { human: number; ai: number; search: number; social: number; bot: number; total: number }): string {
+	return smallDonut(
+		[
+			{ label: "사람", v: t.human, color: KIND_COLOR.human },
+			{ label: "AI 크롤러", v: t.ai, color: KIND_COLOR.ai },
+			{ label: "검색 크롤러", v: t.search, color: KIND_COLOR.search },
+			{ label: "SNS", v: t.social, color: KIND_COLOR.social },
+			{ label: "기타 봇", v: t.bot, color: KIND_COLOR.other },
+		],
+		t.total,
+		"방문 종류 비중",
+	);
+}
+
+/** 크롤러 표 한 벌 — AEO(AI)와 SEO(검색)에서 같은 모양을 쓴다. */
+function botTable(rows: { bot: string; n: number; last: number; paths: number }[], empty: string): string {
+	const body = rows.length
+		? rows
+				.map(
+					(r) =>
+						`<tr><td>${escapeHtml(r.bot)}</td><td class="n">${r.n.toLocaleString()}</td>` +
+						`<td class="n">${r.paths.toLocaleString()}</td>` +
+						`<td class="mono">${r.last ? kst(r.last).slice(0, 11) : "-"}</td></tr>`,
+				)
+				.join("")
+		: `<tr><td colspan="4">${escapeHtml(empty)}</td></tr>`;
+	return `<div class="cap"><table><thead><tr><th>크롤러</th><th class="n">방문</th><th class="n">읽은 경로</th><th>마지막 방문</th></tr></thead><tbody>${body}</tbody></table></div>`;
+}
+
+export function renderTraffic(t: TrafficData, opts: AdminOpts = {}): string {
+	const q = trafficQuery(t.period, t.siteFilter);
+	const card = (l: string, v: string, tone = "", extra = "") =>
+		`<div class="m"><div class="l">${l}</div><div class="v ${tone}">${v}${extra}</div></div>`;
+
+	const siteShare = svgShare(
+		t.bySite.map((r) => ({
+			label: r.name,
+			value: r.total,
+			sub: `사람 ${r.human.toLocaleString()} · AI 크롤러 ${r.ai.toLocaleString()} · 검색 크롤러 ${r.search.toLocaleString()}`,
+		})),
+		"건",
+	);
+
+	const refRows = t.refs.length
+		? t.refs
+				.map(
+					(r) =>
+						`<tr><td><span class="rg ${escapeHtml(r.group)}">${escapeHtml(REF_GROUP[r.group] ?? r.group)}</span></td>` +
+						`<td>${escapeHtml(r.source)}</td><td class="n">${r.n.toLocaleString()}</td></tr>`,
+				)
+				.join("")
+		: `<tr><td colspan="3">아직 사람 방문 기록이 없어요.</td></tr>`;
+
+	const pathRows = t.topPaths.length
+		? t.topPaths
+				.map(
+					(r) =>
+						`<tr><td class="mono" data-tip="${escapeHtml(r.path)}">${escapeHtml(shortPath(r.path))}</td>` +
+						`<td class="n">${r.total.toLocaleString()}</td><td class="n">${r.human.toLocaleString()}</td>` +
+						`<td class="n">${r.bot.toLocaleString()}</td></tr>`,
+				)
+				.join("")
+		: `<tr><td colspan="4">기록이 없어요.</td></tr>`;
+
+	const siteRows = t.bySite.length
+		? t.bySite
+				.map(
+					(r) =>
+						`<tr><td><a href="/admin/traffic${trafficQuery(t.period, r.key)}">${escapeHtml(r.name)}</a></td>` +
+						`<td class="n">${r.total.toLocaleString()}${delta(r.total, r.prev)}</td>` +
+						`<td class="n">${r.human.toLocaleString()}</td><td class="n">${r.uniq.toLocaleString()}</td>` +
+						`<td class="n">${r.ai.toLocaleString()}</td><td class="n">${r.search.toLocaleString()}</td></tr>`,
+				)
+				.join("")
+		: `<tr><td colspan="6">아직 들어온 방문 기록이 없어요.</td></tr>`;
+
+	const botPathRows = t.botPaths.length
+		? t.botPaths
+				.map(
+					(r) =>
+						`<tr><td class="mono" data-tip="${escapeHtml(r.path)}">${escapeHtml(shortPath(r.path))}</td>` +
+						`<td class="n">${r.n.toLocaleString()}</td></tr>`,
+				)
+				.join("")
+		: `<tr><td colspan="2">아직 AI 크롤러가 읽어간 경로가 없어요.</td></tr>`;
+
+	const recentRows = t.recentBots.length
+		? t.recentBots
+				.map(
+					(r) =>
+						`<tr><td class="mono">${kst(r.ts).slice(0, 11)}</td><td>${escapeHtml(r.site)}</td>` +
+						`<td><span class="kd ${escapeHtml(r.kind)}">${escapeHtml(KIND_LABEL[r.kind] ?? r.kind)}</span></td>` +
+						`<td>${escapeHtml(r.bot)}</td>` +
+						`<td class="mono" data-tip="${escapeHtml(r.path)}">${escapeHtml(shortPath(r.path, 52))}</td>` +
+						`<td class="n">${r.status ?? "-"}</td></tr>`,
+				)
+				.join("")
+		: `<tr><td colspan="6">이 기간에 크롤러가 다녀간 기록이 없어요.</td></tr>`;
+
+	const aiRefs = t.refs.filter((r) => r.group === "ai").reduce((a, b) => a + b.n, 0);
+	const searchRefs = t.refs.filter((r) => r.group === "search").reduce((a, b) => a + b.n, 0);
+
+	return shellAdmin(
+		"트래픽",
+		pageHead("트래픽", `서비스 방문 · ${sinceLabel(t.since)}`, t.siteFilter) +
+			`<div id="hz-body">
+${filterTabs("/admin/traffic", t.period, t.siteFilter, t.sites, PERIODS, "", "", { key: "site", allLabel: "전체 서비스" })}
+
+<div class="kpi2" style="margin-bottom:4px">
+  ${card("방문", t.total.toLocaleString(), "", delta(t.total, t.prevTotal))}
+  ${card("사람", t.human.toLocaleString(), "", delta(t.human, t.prevHuman))}
+  ${card("고유 방문자", t.uniq.toLocaleString())}
+  ${card("AI 크롤러", t.ai.toLocaleString(), "", delta(t.ai, t.prevAI))}
+  ${card("검색 크롤러", t.search.toLocaleString())}
+  ${card("마지막 기록", t.lastTs ? ago(Date.now() - t.lastTs) : "-")}
+</div>
+
+${sectionHead(`${t.bucketLabel} 단위 방문`)}
+${svgTraffic(t.buckets)}
+
+<div class="two">
+  <section>${sectionHead("방문 종류 비중")}
+    <div class="panel">${trafficDonut(t)}</div>
+  </section>
+  <section>${sectionHead("서비스별 방문")}${siteShare}</section>
+</div>
+
+<div class="two">
+  <section>${sectionHead("AI 크롤러 (AEO)")}${botTable(t.aiBots, "아직 AI 크롤러가 다녀간 기록이 없어요.")}</section>
+  <section>${sectionHead("검색·SNS 크롤러 (SEO)")}${botTable(t.searchBots, "아직 검색 크롤러가 다녀간 기록이 없어요.")}</section>
+</div>
+
+<div class="two">
+  <section>${sectionHead("사람이 들어온 경로")}<span class="sm">AI 답변 ${aiRefs.toLocaleString()}건 · 검색 ${searchRefs.toLocaleString()}건</span>
+    <div class="cap"><table><thead><tr><th>구분</th><th>출처</th><th class="n">방문</th></tr></thead><tbody>${refRows}</tbody></table></div>
+  </section>
+  <section>${sectionHead("AI 크롤러가 읽어간 경로")}
+    <div class="cap"><table><thead><tr><th>경로</th><th class="n">방문</th></tr></thead><tbody>${botPathRows}</tbody></table></div>
+  </section>
+</div>
+
+<div class="two">
+  <section>${sectionHead("서비스별 요약")}
+    <div class="scroll cap"><table><thead><tr><th>서비스</th><th class="n">방문</th><th class="n">사람</th><th class="n">고유</th><th class="n">AI</th><th class="n">검색</th></tr></thead><tbody>${siteRows}</tbody></table></div>
+  </section>
+  <section>${sectionHead("많이 열린 경로")}
+    <div class="scroll cap"><table><thead><tr><th>경로</th><th class="n">전체</th><th class="n">사람</th><th class="n">크롤러</th></tr></thead><tbody>${pathRows}</tbody></table></div>
+  </section>
+</div>
+
+${sectionHead("최근 크롤러 방문")}
+<div class="scroll"><table class="recent"><tr><th>시각</th><th>서비스</th><th>종류</th><th>크롤러</th><th>경로</th><th class="n">응답</th></tr>${recentRows}</table></div>
+
+<p class="foot">각 서비스가 응답을 보낸 뒤 방문 한 건씩을 이 대시보드로 보내요. 사람인지 크롤러인지는 브라우저가 밝힌 이름(User-Agent)으로 갈라요.<br>
+AI 크롤러는 ChatGPT·Claude·Perplexity 같은 서비스가 문서를 읽어가는 기록이에요. 여기 방문이 늘면 AI 답변에 실릴 바탕이 쌓이고 있다는 뜻이에요.<br>
+'사람이 들어온 경로'의 <b>AI 답변</b>은 AI 서비스 화면에서 링크를 눌러 실제로 넘어온 방문이에요. 크롤러 방문이 성과로 이어졌는지는 이 숫자로 봐요.<br>
+고유 방문자는 IP를 그대로 두지 않고 가린 값으로 세요. 정적 파일(이미지·스타일 등) 요청은 세지 않아요.</p>
+</div>`,
+		{ ...opts, tab: "traffic" },
+	);
+}
+
+/**
+ * 요약 화면에 얹는 트래픽 칸.
+ * 왼쪽은 사람·크롤러 비중, 오른쪽은 서비스별 방문. 자세히는 트래픽 탭 몫이다.
+ */
+function trafficBand(t: TrafficBrief, href: string): string {
+	if (!t.total) {
+		return `<div class="anb quiet"><span class="st down"><span class="dot"></span>방문 기록 없음</span>` +
+			`<span class="t">이 기간에 들어온 서비스 방문 기록이 없어요.</span>` +
+			`<span class="sm">서비스가 기록을 보내기 시작하면 여기에 쌓여요.</span></div>`;
+	}
+
+	const donut = smallDonut(
+		[
+			{ label: "사람", v: t.human, color: KIND_COLOR.human },
+			{ label: "AI 크롤러", v: t.ai, color: KIND_COLOR.ai },
+			{ label: "검색 크롤러", v: t.search, color: KIND_COLOR.search },
+			{ label: "기타 봇", v: t.other, color: KIND_COLOR.other },
+		],
+		t.total,
+		"방문 종류 비중",
+	);
+
+	const rows = t.sites
+		.map(
+			(r) =>
+				`<tr><td>${escapeHtml(r.name)}</td>` +
+				`<td class="n">${r.total.toLocaleString()}${delta(r.total, r.prev)}</td>` +
+				`<td class="n">${r.ai.toLocaleString()}</td></tr>`,
+		)
+		.join("");
+
+	return `<div class="anb">
+  <div class="anb-l">
+    ${donut}
+    <div class="sub">고유 방문자 ${t.uniq.toLocaleString()}명 · 전체 ${t.total.toLocaleString()}건${delta(t.total, t.prevTotal)}<br>마지막 기록 ${t.lastTs ? ago(Date.now() - t.lastTs) : "-"}</div>
+  </div>
+  <div class="anb-r"><div class="scroll"><table class="mini"><tr><th>서비스</th><th class="n">방문</th><th class="n">AI 크롤러</th></tr>${rows}</table></div>
+    <div class="sub"><a href="${href}">서비스별 자세히 보기 →</a></div>
+  </div>
+</div>`;
 }

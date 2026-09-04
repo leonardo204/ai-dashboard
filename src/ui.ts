@@ -57,6 +57,9 @@ h1{font-size:20px;margin:0 0 4px;}h2{font-size:14px;margin:26px 0 9px;color:var(
 .chart .lv-c{fill:#d1495b;}.chart .lv-w{fill:#E0A33B;}.chart .lv-i{fill:#7fa8e0;}
 .chart.lvl svg{aspect-ratio:1000/200;min-height:150px;}
 .chart .lg .s-c{background:#d1495b;}.chart .lg .s-w{background:#E0A33B;}.chart .lg .s-i{background:#7fa8e0;}
+.chart .tr-h{fill:var(--accent);}.chart .tr-a{fill:#C85A95;}.chart .tr-s{fill:#35A7FF;}.chart .tr-o{fill:#cfd6e4;}
+.chart .lg .s-h{background:var(--accent);}.chart .lg .s-a{background:#C85A95;}
+.chart .lg .s-s{background:#35A7FF;}.chart .lg .s-o{background:#cfd6e4;}
 .chart .hit{fill:transparent;}
 .chart .bg:hover .b-ok{fill:#7a45dd;}
 .chart .bg:hover .hit{fill:rgba(146,95,240,.07);}
@@ -626,6 +629,18 @@ table.recent td.err{max-width:260px;overflow:hidden;text-overflow:ellipsis;}
 .scroll{overflow-x:auto;border-radius:14px;}
 /* 줄이 계속 늘어나는 표 — 높이를 묶어 두 칸 배치가 한쪽으로 길어지지 않게 한다. */
 .scroll.cap{max-height:420px;overflow-y:auto;border:1px solid var(--line);background:var(--panel);}
+/* 표만 있는 칸도 같은 높이로 맞춘다 — 두 칸 배치에서 한쪽만 길어지면 아래가 어긋난다 */
+.cap:not(.scroll){max-height:420px;overflow:auto;border-radius:14px;}
+.cap table{border-radius:14px;}
+.cap thead th{position:sticky;top:0;z-index:1;background:#fafbfc;}
+
+/* 방문 종류 · 유입 경로 태그 — 트래픽 화면에서 쓴다 */
+.kd,.rg{display:inline-flex;font-weight:800;font-size:11.5px;border-radius:999px;padding:2px 9px;white-space:nowrap;
+ background:#f5f6fa;color:#6b7280;border:1px solid #e6e9ef;}
+.kd.ai,.rg.ai{background:#fdeef6;color:#9c3a72;border-color:#f5d4e6;}
+.kd.search,.rg.search{background:#eef4ff;color:#2f5aa8;border-color:#d5e2f7;}
+.kd.social,.rg.social{background:#f0faf1;color:#2f7d3a;border-color:#d3ecd7;}
+.kd.human{background:#f4f0ff;color:#5E3A9E;border-color:#e5dcfb;}
 .scroll.cap table{border:none;border-radius:0;}
 .scroll.cap thead th,.scroll.cap tr:first-child th{position:sticky;top:0;z-index:1;}
 /* 칸이 좁아 글자가 세로로 깨지는 표 — 넘치면 가로로 민다. */
@@ -983,7 +998,7 @@ document.addEventListener('click', function(e){
 // ─────────────────────────────────────────────────────────────
 
 /** 상단바 메뉴 키. */
-export type TabKey = "summary" | "usage" | "trend" | "geo" | "anomaly" | "logs" | "apps" | "guide";
+export type TabKey = "summary" | "usage" | "trend" | "geo" | "anomaly" | "traffic" | "logs" | "apps" | "guide";
 
 export interface AdminOpts {
 	/** 세션 로그인으로 들어온 화면인지(= 로그아웃 버튼 노출). */
@@ -1008,6 +1023,7 @@ const NAV: { key: TabKey; href: string; label: string }[] = [
 	{ key: "trend", href: "/admin/trend", label: "추이" },
 	{ key: "geo", href: "/admin/geo", label: "지역" },
 	{ key: "anomaly", href: "/admin/anomaly", label: "이상탐지" },
+	{ key: "traffic", href: "/admin/traffic", label: "트래픽" },
 	{ key: "logs", href: "/admin/logs", label: "로그" },
 	{ key: "apps", href: "/admin/apps", label: "앱 관리" },
 	{ key: "guide", href: "/admin/guide", label: "가이드" },
@@ -1110,13 +1126,15 @@ export function filterTabs(
 	periods: Record<string, { label: string }>,
 	rightLink = "",
 	rightBelow = "",
+	opts: { key?: string; allLabel?: string } = {},
 ): string {
-	const q = (p: string, a: string) => `${path}?period=${p}${a ? `&app=${encodeURIComponent(a)}` : ""}`;
+	const key = opts.key ?? "app";
+	const q = (p: string, a: string) => `${path}?period=${p}${a ? `&${key}=${encodeURIComponent(a)}` : ""}`;
 	const periodTabs = Object.entries(periods)
 		.map(([k, v]) => `<a class="tab${k === period ? " on" : ""}" href="${q(k, appFilter)}">${v.label}</a>`)
 		.join("");
 	const appTabs =
-		`<a class="tab${!appFilter ? " on" : ""}" href="${q(period, "")}">전체 앱</a>` +
+		`<a class="tab${!appFilter ? " on" : ""}" href="${q(period, "")}">${escapeHtml(opts.allLabel ?? "전체 앱")}</a>` +
 		apps
 			.map(
 				(a) =>
@@ -1370,6 +1388,62 @@ export function svgLevels(
 ${grid}${bars}${xlab}
 </svg>
 <div class="lg"><span class="k"><i class="s-c"></i>심각</span><span class="k"><i class="s-w"></i>주의</span><span class="k"><i class="s-i"></i>참고</span></div>
+</div>`;
+}
+
+/**
+ * 방문 누적 막대 — 사람 · 검색 크롤러 · AI 크롤러를 한 칸에 쌓는다.
+ * 사람만 보면 SEO·AEO가 도는지 알 수 없고, 크롤러만 보면 성과인지 알 수 없어 함께 놓는다.
+ */
+export function svgTraffic(
+	buckets: { b: string; human: number; ai: number; search: number; other: number; total: number }[],
+): string {
+	const data = buckets.slice(0, 40).slice().reverse();
+	if (!data.length) return `<div class="empty">이 기간에 들어온 방문 기록이 없어요.</div>`;
+
+	const W = 1000, H = 200, L = 44, R = 16, T = 14, B = 30;
+	const iw = W - L - R, ih = H - T - B;
+	const max = niceMax(Math.max(...data.map((d) => d.total), 1));
+	const bw = Math.max(3, Math.min(46, (iw / data.length) * 0.62));
+	const cx = (i: number) => L + (iw / data.length) * (i + 0.5);
+
+	const grid = [0, 0.25, 0.5, 0.75, 1]
+		.map((f) => {
+			const y = T + ih - f * ih;
+			return `<line x1="${L}" y1="${y.toFixed(1)}" x2="${L + iw}" y2="${y.toFixed(1)}" class="gl"/>` +
+				`<text x="${L - 8}" y="${(y + 4).toFixed(1)}" class="ax end">${shortNum(Math.round(max * f))}</text>`;
+		})
+		.join("");
+
+	const bars = data
+		.map((d, i) => {
+			const x = cx(i) - bw / 2;
+			let y = T + ih;
+			const seg = (n: number, cls: string) => {
+				if (!n) return "";
+				const h = Math.max((n / max) * ih, 1.5);
+				y -= h;
+				return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="2" class="${cls}"/>`;
+			};
+			const body = seg(d.other, "tr-o") + seg(d.search, "tr-s") + seg(d.ai, "tr-a") + seg(d.human, "tr-h");
+			const tip = `${d.b}\n방문 ${d.total.toLocaleString()}건\n사람 ${d.human} · AI 크롤러 ${d.ai} · 검색 크롤러 ${d.search} · 기타 ${d.other}`;
+			return `<g class="bg" data-tip="${escapeHtml(tip)}">` +
+				`<rect x="${x.toFixed(1)}" y="${T}" width="${bw.toFixed(1)}" height="${ih}" class="hit"/>${body}</g>`;
+		})
+		.join("");
+
+	const step = Math.max(1, Math.ceil(data.length / 9));
+	const xlab = data
+		.map((d, i) => (i % step === 0 || i === data.length - 1
+			? `<text x="${cx(i).toFixed(1)}" y="${H - 9}" class="ax mid">${escapeHtml(d.b.replace(/^\d{4}-/, ""))}</text>`
+			: ""))
+		.join("");
+
+	return `<div class="chart lvl">
+<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="기간별 방문">
+${grid}${bars}${xlab}
+</svg>
+<div class="lg"><span class="k"><i class="s-h"></i>사람</span><span class="k"><i class="s-a"></i>AI 크롤러</span><span class="k"><i class="s-s"></i>검색 크롤러</span><span class="k"><i class="s-o"></i>기타 봇</span></div>
 </div>`;
 }
 

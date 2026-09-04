@@ -9,6 +9,8 @@
  */
 
 
+import { SITES, siteName, ensureHitsTable } from "./traffic";
+
 export interface StatsEnv {
 	DB: D1Database;
 }
@@ -116,6 +118,7 @@ export async function ensureSchema(env: StatsEnv): Promise<void> {
 			/* 무시 */
 		}
 	}
+	await ensureHitsTable(env);
 	schemaReady = true;
 }
 
@@ -819,6 +822,8 @@ export interface SummaryData {
 	recent: LogRow[];
 	/** 이상탐지 요약 — 판정은 바깥 서버가 하고 여기에는 결과만 쌓인다. */
 	anomaly: AnomalyBrief;
+	/** 서비스 방문 요약 — 트래픽 탭과 같은 표를 읽되 개수만 본다. */
+	traffic: TrafficBrief;
 }
 
 /**
@@ -848,10 +853,17 @@ export const SUMMARY_ANOMALY_RECENT = 3;
 export const SUMMARY_RECENT = 5;
 
 export async function collectSummary(env: StatsEnv, period: string, appFilter: string): Promise<SummaryData> {
-	return withSchema(env, () => collectSummaryInner(env, period, appFilter));
+	// 호출 통계와 방문 기록은 서로 다른 표라 같이 조회한다(둘을 순서대로 돌리면 왕복이 두 배가 된다).
+	const [s, t] = await Promise.all([
+		withSchema(env, () => collectSummaryInner(env, period, appFilter)),
+		trafficBrief(env, period),
+	]);
+	return { ...s, traffic: t };
 }
 
-async function collectSummaryInner(env: StatsEnv, period: string, appFilter: string): Promise<SummaryData> {
+async function collectSummaryInner(
+	env: StatsEnv, period: string, appFilter: string,
+): Promise<Omit<SummaryData, "traffic">> {
 	const { p, since, prevSince } = periodInfo(period);
 	const appWhere = appFilter ? " AND app = ?2" : "";
 	const bind = (sql: string) => {
@@ -1715,4 +1727,214 @@ async function collectAnomalyInner(env: StatsEnv, period: string, appFilter: str
 		state,
 		heartbeatAge: newest ? Date.now() - newest : null,
 	};
+}
+
+// ═════════════════════════════════════════════════════════════
+// 트래픽 (/admin/traffic)
+//   각 서비스가 보내온 방문 기록(hits)을 읽는다. 호출 로그(calls)와는 별개다.
+//   보는 목적이 분명하다 — 검색·AI 크롤러가 실제로 다녀갔는지(SEO·AEO),
+//   그리고 그 결과로 사람이 넘어왔는지.
+// ═════════════════════════════════════════════════════════════
+
+export interface TrafficSiteRow {
+	key: string; name: string; total: number; human: number; ai: number; search: number;
+	uniq: number; prev: number;
+}
+export interface TrafficData {
+	period: string;
+	siteFilter: string;
+	since: number;
+	bucketLabel: string;
+	sites: { id: string; name: string; active: boolean }[];
+	total: number; human: number; ai: number; search: number; social: number; bot: number;
+	uniq: number; prevTotal: number; prevHuman: number; prevAI: number;
+	lastTs: number;
+	buckets: { b: string; human: number; ai: number; search: number; other: number; total: number }[];
+	aiBots: { bot: string; n: number; last: number; paths: number }[];
+	searchBots: { bot: string; n: number; last: number; paths: number }[];
+	refs: { group: string; source: string; n: number }[];
+	bySite: TrafficSiteRow[];
+	topPaths: { path: string; total: number; human: number; bot: number }[];
+	botPaths: { path: string; n: number }[];
+	countries: { key: string; total: number }[];
+	status: { code: number | null; n: number }[];
+	recentBots: { ts: number; site: string; bot: string; kind: string; path: string; status: number | null }[];
+}
+
+const TRAFFIC_KINDS = ["human", "ai", "search", "social", "bot"] as const;
+const kindSum = (col: string) => TRAFFIC_KINDS.map((k) => `SUM(kind='${k}') AS ${col}${k}`).join(", ");
+
+export async function collectTraffic(env: StatsEnv, period: string, siteFilter: string): Promise<TrafficData> {
+	return withSchema(env, () => collectTrafficInner(env, period, siteFilter));
+}
+
+async function collectTrafficInner(env: StatsEnv, period: string, siteFilter: string): Promise<TrafficData> {
+	const { p, since, prevSince } = periodInfo(period);
+	const bexpr = bucketExpr(p.bucket);
+	const w = siteFilter ? " AND site = ?2" : "";
+	const bind = (sql: string) => {
+		const st = env.DB.prepare(sql);
+		return siteFilter ? st.bind(since, siteFilter) : st.bind(since);
+	};
+
+	const [sumRow, prevRow, bucketRs, siteRs, prevSiteRs, botRs, refRs, pathRs, botPathRs, cRs, stRs, recentRs] =
+		await Promise.all([
+			bind(
+				`SELECT COUNT(*) AS n, ${kindSum("k_")}, COUNT(DISTINCT CASE WHEN kind='human' THEN ip_hash END) AS uq,` +
+					` MAX(ts) AS last FROM hits WHERE ts >= ?1${w}`,
+			).first<{ n: number; k_human: number; k_ai: number; k_search: number; k_social: number; k_bot: number; uq: number; last: number | null }>(),
+
+			p.days
+				? (siteFilter
+						? env.DB.prepare(
+								`SELECT COUNT(*) AS n, SUM(kind='human') AS h, SUM(kind='ai') AS a FROM hits WHERE ts >= ?1 AND ts < ?2 AND site = ?3`,
+							).bind(prevSince, since, siteFilter)
+						: env.DB.prepare(
+								`SELECT COUNT(*) AS n, SUM(kind='human') AS h, SUM(kind='ai') AS a FROM hits WHERE ts >= ?1 AND ts < ?2`,
+							).bind(prevSince, since)
+					).first<{ n: number; h: number | null; a: number | null }>()
+				: Promise.resolve(null),
+
+			bind(
+				`SELECT ${bexpr} AS b, COUNT(*) AS n, ${kindSum("k_")} FROM hits WHERE ts >= ?1${w}` +
+					` GROUP BY b ORDER BY b DESC LIMIT 60`,
+			).all<{ b: string; n: number; k_human: number; k_ai: number; k_search: number; k_social: number; k_bot: number }>(),
+
+			bind(
+				`SELECT site, COUNT(*) AS n, ${kindSum("k_")}, COUNT(DISTINCT CASE WHEN kind='human' THEN ip_hash END) AS uq` +
+					` FROM hits WHERE ts >= ?1${w} GROUP BY site ORDER BY n DESC`,
+			).all<{ site: string; n: number; k_human: number; k_ai: number; k_search: number; k_social: number; k_bot: number; uq: number }>(),
+
+			p.days
+				? env.DB.prepare("SELECT site, COUNT(*) AS n FROM hits WHERE ts >= ?1 AND ts < ?2 GROUP BY site")
+						.bind(prevSince, since)
+						.all<{ site: string; n: number }>()
+				: Promise.resolve({ results: [] as { site: string; n: number }[] }),
+
+			bind(
+				`SELECT kind, bot, COUNT(*) AS n, MAX(ts) AS last, COUNT(DISTINCT path) AS paths FROM hits` +
+					` WHERE ts >= ?1${w} AND bot IS NOT NULL GROUP BY kind, bot ORDER BY n DESC LIMIT 40`,
+			).all<{ kind: string; bot: string; n: number; last: number; paths: number }>(),
+
+			bind(
+				`SELECT ref_group AS g, ref_source AS s, COUNT(*) AS n FROM hits WHERE ts >= ?1${w}` +
+					` AND kind='human' GROUP BY g, s ORDER BY n DESC LIMIT 20`,
+			).all<{ g: string; s: string; n: number }>(),
+
+			bind(
+				`SELECT path, COUNT(*) AS n, SUM(kind='human') AS h, SUM(kind IN ('ai','search')) AS b FROM hits` +
+					` WHERE ts >= ?1${w} GROUP BY path ORDER BY n DESC LIMIT 15`,
+			).all<{ path: string; n: number; h: number | null; b: number | null }>(),
+
+			bind(
+				`SELECT path, COUNT(*) AS n FROM hits WHERE ts >= ?1${w} AND kind='ai'` +
+					` GROUP BY path ORDER BY n DESC LIMIT 10`,
+			).all<{ path: string; n: number }>(),
+
+			bind(
+				`SELECT COALESCE(NULLIF(country,''),'(미상)') AS c, COUNT(*) AS n FROM hits WHERE ts >= ?1${w}` +
+					` GROUP BY c ORDER BY n DESC LIMIT 8`,
+			).all<{ c: string; n: number }>(),
+
+			bind(
+				`SELECT status AS s, COUNT(*) AS n FROM hits WHERE ts >= ?1${w} GROUP BY s ORDER BY n DESC LIMIT 8`,
+			).all<{ s: number | null; n: number }>(),
+
+			bind(
+				`SELECT ts, site, bot, kind, path, status FROM hits WHERE ts >= ?1${w}` +
+					` AND kind IN ('ai','search') ORDER BY ts DESC LIMIT 12`,
+			).all<{ ts: number; site: string; bot: string | null; kind: string; path: string; status: number | null }>(),
+		]);
+
+	const prevSite = new Map((prevSiteRs.results ?? []).map((r) => [r.site, r.n]));
+	const bots = botRs.results ?? [];
+
+	return {
+		period,
+		siteFilter,
+		since,
+		bucketLabel: bucketLabelOf(p.bucket),
+		sites: Object.entries(SITES).map(([id, v]) => ({ id, name: v.name, active: true })),
+		total: sumRow?.n ?? 0,
+		human: sumRow?.k_human ?? 0,
+		ai: sumRow?.k_ai ?? 0,
+		search: sumRow?.k_search ?? 0,
+		social: sumRow?.k_social ?? 0,
+		bot: sumRow?.k_bot ?? 0,
+		uniq: sumRow?.uq ?? 0,
+		prevTotal: prevRow?.n ?? 0,
+		prevHuman: prevRow?.h ?? 0,
+		prevAI: prevRow?.a ?? 0,
+		lastTs: sumRow?.last ?? 0,
+		buckets: (bucketRs.results ?? []).map((r) => ({
+			b: r.b, total: r.n, human: r.k_human ?? 0, ai: r.k_ai ?? 0, search: r.k_search ?? 0,
+			other: (r.k_social ?? 0) + (r.k_bot ?? 0),
+		})),
+		aiBots: bots.filter((b) => b.kind === "ai").map((b) => ({ bot: b.bot, n: b.n, last: b.last, paths: b.paths })),
+		searchBots: bots
+			.filter((b) => b.kind === "search" || b.kind === "social")
+			.map((b) => ({ bot: b.bot, n: b.n, last: b.last, paths: b.paths })),
+		refs: (refRs.results ?? []).map((r) => ({ group: r.g ?? "direct", source: r.s ?? "직접 방문", n: r.n })),
+		bySite: (siteRs.results ?? []).map((r) => ({
+			key: r.site, name: siteName(r.site), total: r.n,
+			human: r.k_human ?? 0, ai: r.k_ai ?? 0, search: r.k_search ?? 0,
+			uniq: r.uq ?? 0, prev: prevSite.get(r.site) ?? 0,
+		})),
+		topPaths: (pathRs.results ?? []).map((r) => ({ path: r.path, total: r.n, human: r.h ?? 0, bot: r.b ?? 0 })),
+		botPaths: (botPathRs.results ?? []).map((r) => ({ path: r.path, n: r.n })),
+		countries: (cRs.results ?? []).map((r) => ({ key: r.c, total: r.n })),
+		status: (stRs.results ?? []).map((r) => ({ code: r.s, n: r.n })),
+		recentBots: (recentRs.results ?? []).map((r) => ({
+			ts: r.ts, site: siteName(r.site), bot: r.bot ?? "-", kind: r.kind, path: r.path, status: r.status,
+		})),
+	};
+}
+
+/** 요약 화면에 얹는 트래픽 한 줄 — 개수와 서비스별 합계만 본다. */
+export interface TrafficBrief {
+	total: number; human: number; ai: number; search: number; other: number;
+	uniq: number; prevTotal: number; lastTs: number;
+	sites: { key: string; name: string; total: number; prev: number; ai: number }[];
+}
+
+export async function trafficBrief(env: StatsEnv, period: string): Promise<TrafficBrief> {
+	const { p, since, prevSince } = periodInfo(period);
+	const empty: TrafficBrief = {
+		total: 0, human: 0, ai: 0, search: 0, other: 0, uniq: 0, prevTotal: 0, lastTs: 0, sites: [],
+	};
+	try {
+		const [sumRow, siteRs, prevRow, prevSiteRs] = await Promise.all([
+			env.DB.prepare(
+				`SELECT COUNT(*) AS n, ${kindSum("k_")}, COUNT(DISTINCT CASE WHEN kind='human' THEN ip_hash END) AS uq,` +
+					` MAX(ts) AS last FROM hits WHERE ts >= ?1`,
+			).bind(since).first<{ n: number; k_human: number; k_ai: number; k_search: number; k_social: number; k_bot: number; uq: number; last: number | null }>(),
+			env.DB.prepare(
+				"SELECT site, COUNT(*) AS n, SUM(kind='ai') AS a FROM hits WHERE ts >= ?1 GROUP BY site ORDER BY n DESC",
+			).bind(since).all<{ site: string; n: number; a: number | null }>(),
+			p.days
+				? env.DB.prepare("SELECT COUNT(*) AS n FROM hits WHERE ts >= ?1 AND ts < ?2").bind(prevSince, since).first<{ n: number }>()
+				: Promise.resolve(null),
+			p.days
+				? env.DB.prepare("SELECT site, COUNT(*) AS n FROM hits WHERE ts >= ?1 AND ts < ?2 GROUP BY site")
+						.bind(prevSince, since).all<{ site: string; n: number }>()
+				: Promise.resolve({ results: [] as { site: string; n: number }[] }),
+		]);
+		const prevSite = new Map((prevSiteRs.results ?? []).map((r) => [r.site, r.n]));
+		return {
+			total: sumRow?.n ?? 0,
+			human: sumRow?.k_human ?? 0,
+			ai: sumRow?.k_ai ?? 0,
+			search: sumRow?.k_search ?? 0,
+			other: (sumRow?.k_social ?? 0) + (sumRow?.k_bot ?? 0),
+			uniq: sumRow?.uq ?? 0,
+			prevTotal: prevRow?.n ?? 0,
+			lastTs: sumRow?.last ?? 0,
+			sites: (siteRs.results ?? []).slice(0, 6).map((r) => ({
+				key: r.site, name: siteName(r.site), total: r.n, prev: prevSite.get(r.site) ?? 0, ai: r.a ?? 0,
+			})),
+		};
+	} catch {
+		// hits 표가 아직 없는 경우 — 화면은 그대로 그리고 "기록 없음"으로 둔다.
+		return empty;
+	}
 }
