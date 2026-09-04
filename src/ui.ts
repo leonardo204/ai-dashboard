@@ -116,7 +116,7 @@ form.inline{display:inline}
 input,select,textarea{font:inherit;font-size:13px;padding:7px 9px;border:1px solid var(--line);border-radius:9px;background:#fff;width:100%;}
 textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;}
 .btn{font-size:13px;font-weight:700;padding:8px 14px;border-radius:9px;border:1px solid var(--line);
- background:#fff;cursor:pointer;}
+ background:#fff;cursor:pointer;white-space:nowrap;}
 .btn.p{background:var(--accent);border-color:var(--accent);color:#fff;}
 .btn.d{color:var(--r);border-color:#f2c7c2;}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
@@ -170,6 +170,11 @@ textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;
 .topbar nav a.on{background:#f0eaff;color:#5E3A9E;}
 .topbar .sp{flex:1}
 .topbar .who{font-size:12px;color:var(--muted);}
+/* 자리가 모자라면 메뉴가 먼저 줄어들며 옆으로 밀린다. 로그아웃 단추는 줄지 않는다 —
+   줄어들면 글자가 한 자씩 세로로 쌓여 상단바 밖으로 삐져나온다. */
+.topbar nav{flex:1 1 auto;min-width:0;}
+.topbar form{flex:0 0 auto;}
+.topbar .in>form .btn{padding:7px 12px;}
 
 /* ── 토스트 */
 .toasts{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);z-index:60;
@@ -465,7 +470,9 @@ const EXTRA_CSS = `
 .topbar nav{overflow-x:auto;scrollbar-width:none;}
 .topbar nav::-webkit-scrollbar{display:none}
 .topbar nav a{white-space:nowrap;}
-@media(max-width:640px){.topbar .in{gap:8px;padding:0 12px}.topbar .bd span{display:none}}
+@media(max-width:640px){.topbar .in{gap:8px;padding:0 12px}.topbar .bd span{display:none}
+ .topbar nav{margin-left:0;}.topbar nav a{font-size:12.5px;padding:6px 9px;}
+ .topbar .in>form .btn{font-size:12px;padding:6px 10px;}}
 
 /* 제목 오른쪽에 "자세히" 링크를 붙이는 소제목 */
 .sh2{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:26px 0 9px;}
