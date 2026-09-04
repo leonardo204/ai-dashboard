@@ -709,16 +709,17 @@ table.calls{table-layout:fixed;width:100%;}
    자른 값은 마우스를 올리거나 줄을 펼치면 다 나온다. */
 table.calls th,table.calls td{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
  vertical-align:middle;padding:8px 9px;}
-table.calls col.c-ts{width:106px;}
-table.calls col.c-app{width:112px;}
-table.calls col.c-kind{width:64px;}
-table.calls col.c-model{width:104px;}
-table.calls col.c-st{width:56px;}
-table.calls col.c-http{width:52px;}
-table.calls col.c-lat{width:68px;}
+/* 앱·모델만 너비를 비워 둔다. 나머지를 값이 딱 들어갈 만큼만 잡아 두면
+   남는 폭이 전부 이 두 칸으로 가서 이름이 잘리지 않는다. */
+table.calls col.c-ts{width:112px;}
+table.calls col.c-kind{width:62px;}
+table.calls col.c-st{width:52px;}
+table.calls col.c-http{width:50px;}
+table.calls col.c-lat{width:76px;}
 table.calls col.c-tok{width:62px;}
-table.calls col.c-cost{width:68px;}
-table.calls col.c-geo{width:74px;}
+table.calls col.c-cost{width:76px;}
+table.calls col.c-geo{width:72px;}
+table.calls col.c-err{width:220px;}
 table.calls td.mono{font-size:11.5px;}
 table.calls td.n{white-space:nowrap;}
 table.calls td.err{max-width:none;font-size:11.5px;color:var(--muted);}
@@ -730,7 +731,7 @@ table.calls td.geo .sm{color:var(--muted);}
  table.calls th:nth-child(8),table.calls td:nth-child(8){display:none;}
 }
 @media(max-width:860px){
- table.calls col.c-model,table.calls col.c-geo{width:0;}
+ table.calls col.c-geo{width:0;}
  table.calls th:nth-child(4),table.calls td:nth-child(4),
  table.calls th:nth-child(10),table.calls td:nth-child(10){display:none;}
 }
