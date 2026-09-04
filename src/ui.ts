@@ -933,8 +933,14 @@ table.tight td,table.tight th{white-space:nowrap;padding:7px 10px;}
  table.mbc tr.det td,table.mbc tr.mb-wide td{display:block !important;padding:4px 0;}
  table.mbc tr.det td::before,table.mbc tr.mb-wide td::before{display:none;}
  table.mbc tr.det{background:#fafbfc;}
- .scroll{overflow-x:visible;}
+ /* 카드로 편 표는 폭을 못박아 둘 이유가 없다. 남겨 두면 카드가 상자 밖으로 삐져나온다. */
+ table.mbc{min-width:0 !important;}
+ .scroll{overflow-x:auto;}
  .scroll.cap,.cap:not(.scroll){max-height:none;overflow:visible;border:0;background:none;}
+ /* 요약 칸(이상탐지·트래픽) 안의 표는 카드도 한 단계 작게 */
+ .anb table.mbc tr{padding:6px 10px;margin-bottom:6px;}
+ .anb table.mbc td{font-size:12px;padding:4px 0;}
+ .anb table.mbc td.mb-key{font-size:12.5px;}
 
  /* 카드 안에서는 접어 뒀던 칸도 다시 보여준다 — 세로라 자리가 넉넉하다 */
  table.mbc td.o1,table.mbc td.o2{display:flex !important;}
@@ -1119,8 +1125,11 @@ window.hzMobileTables = function(){
   var tables = document.querySelectorAll('table');
   for (var i = 0; i < tables.length; i++) {
     var t = tables[i];
-    // 히트맵(요일×시각)과 요약 칸의 작은 표는 원래 모양이 더 읽기 좋다.
-    if (t.closest('.hm') || t.classList.contains('mini') || t.classList.contains('mb-skip')) continue;
+    // 히트맵(요일×시각)은 표 모양 자체가 뜻이라 그대로 둔다.
+    if (t.closest('.hm') || t.classList.contains('mb-skip')) continue;
+    // 칸이 셋 이하면 휴대폰 폭에도 들어간다. 카드로 펴면 오히려 길어진다.
+    var probe = t.querySelector('tr');
+    if (probe && probe.children.length <= 3) continue;
 
     var head = t.querySelector('thead tr');
     if (!head) {
