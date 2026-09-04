@@ -416,7 +416,7 @@ const ADMIN_JS = `
           if (neu && cur) cur.innerHTML = neu.innerHTML;
         })
         .catch(function(){ /* 잠깐 실패해도 다음 주기에 다시 시도한다 */ })
-        .then(function(){ busy = false; tickClock(); paintLive(); });
+        .then(function(){ busy = false; tickClock(); paintLive(); if (window.hzMobileTables) window.hzMobileTables(); });
     }
 
     function poll(){
@@ -604,6 +604,20 @@ table.mail td.w .sm{margin-top:2px;display:block;line-height:1.5;}
 .noteline a{margin-left:auto;font-size:12px;font-weight:800;color:var(--accent);
  text-decoration:none;white-space:nowrap;}
 .noteline a:hover{text-decoration:underline;}
+
+/* 없는 주소 요청(404) — 종류 딱지와 판단 한 줄 */
+.th{display:inline-flex;font-weight:800;font-size:11px;border-radius:999px;padding:2px 8px;
+ border:1px solid;white-space:nowrap;}
+.th.t-wordpress,.th.t-exploit{background:#fdecec;color:#a9313a;border-color:#f6cfcf;}
+.th.t-secret{background:#fff1e8;color:#a1521a;border-color:#f5d9c4;}
+.th.t-admin,.th.t-probe{background:#fff6e8;color:#96601a;border-color:#f2ddbe;}
+.th.t-broken{background:#eef4ff;color:#2f5aa8;border-color:#d5e2f7;}
+.th.t-other{background:#f5f6fa;color:#6b7280;border-color:#e6e9ef;}
+.nfv{display:flex;flex-direction:column;gap:4px;background:var(--panel);border:1px solid var(--line);
+ border-left:3px solid var(--g);border-radius:14px;padding:12px 16px;margin-bottom:12px;}
+.nfv.warn{border-left-color:#E0A33B;}
+.nfv b{font-size:13.5px;}
+.nfv span{font-size:12.5px;color:var(--muted);line-height:1.6;}
 
 /* 이상탐지 상세 게시판 — 가로 스크롤 없이 화면 폭에 맞춘다.
    게시판에서 옆으로 미는 건 최악이라, 칸 너비를 못박고 글이 줄바꿈하게 둔다. */
@@ -861,6 +875,79 @@ table.tight td,table.tight th{white-space:nowrap;padding:7px 10px;}
 .mdx td,.mdx th{vertical-align:top;}
 .mdx a{color:var(--accent);}
 @media(max-width:640px){.mdx{padding:18px 16px 22px;}.gacts{width:100%;}}
+
+/* ─────────────────────────────────────────────────────────────
+   좁은 화면(휴대폰) — 표를 카드로 편다.
+
+   칸이 8~11개인 표를 휴대폰 폭에 밀어 넣으면 글자가 한 자씩 세로로 쌓이거나
+   칸이 서로 겹친다. 폭을 줄여서 될 일이 아니라서, 좁아지면 표 모양을 버리고
+   줄 하나를 카드 한 장으로 세워 "이름 — 값"으로 읽게 한다.
+   칸 이름은 화면을 그릴 때 머리글에서 읽어 각 칸에 붙여 둔다(ADMIN_JS).
+   ───────────────────────────────────────────────────────────── */
+@media(max-width:640px){
+ .wrap{padding:16px 12px 60px;}
+ h1{font-size:20px;}
+ .head{gap:10px;}
+ .clock{gap:8px;}
+ .clock .t{font-size:15px;}
+ .tabs{gap:6px;margin-bottom:10px;}
+ .tab{font-size:12px;padding:6px 11px;}
+ .sh2{flex-wrap:wrap;gap:4px;margin:20px 0 8px;}
+ .sh2 h2{font-size:15px;}
+ .kpi2{grid-template-columns:repeat(2,1fr);gap:8px;}
+ .m{padding:9px 11px;}
+ .m .v{font-size:15px;}
+ .two{gap:12px;}
+ .noteline{flex-wrap:wrap;gap:4px;}
+ .noteline a{margin-left:0;}
+
+ /* 표 → 카드 */
+ table.mbc{display:block;border:0;background:none;border-radius:0;overflow:visible;}
+ table.mbc colgroup,table.mbc thead,table.mbc tr.mb-hdr{display:none;}
+ table.mbc tbody{display:block;}
+ table.mbc tr{display:block;background:var(--panel);border:1px solid var(--line);
+  border-radius:12px;padding:7px 12px;margin-bottom:8px;}
+ table.mbc tr:last-child{margin-bottom:0;}
+ table.mbc td{display:flex !important;gap:10px;align-items:baseline;justify-content:space-between;
+  border:0;border-bottom:1px solid #f2f3f7;padding:5px 0;white-space:normal !important;
+  overflow:visible !important;text-overflow:clip !important;text-align:left;
+  max-width:none !important;font-size:12.5px;line-height:1.5;word-break:break-word;}
+ table.mbc td:last-child{border-bottom:0;}
+ table.mbc td::before{content:attr(data-l);color:var(--muted);font-size:11px;font-weight:800;
+  flex:0 0 auto;white-space:nowrap;}
+ table.mbc td.mb-empty{display:none !important;}
+ /* 첫 칸은 그 줄의 제목처럼 크게 */
+ table.mbc td.mb-key{font-weight:800;font-size:13.5px;padding-top:2px;}
+ table.mbc td.mb-key::before{display:none;}
+ /* 펼쳐지는 상세 줄과 "기록이 없어요" 같은 안내 줄은 그대로 한 덩이로 둔다 */
+ table.mbc tr.det td,table.mbc tr.mb-wide td{display:block !important;padding:4px 0;}
+ table.mbc tr.det td::before,table.mbc tr.mb-wide td::before{display:none;}
+ table.mbc tr.det{background:#fafbfc;}
+ .scroll{overflow-x:visible;}
+ .scroll.cap,.cap:not(.scroll){max-height:none;overflow:visible;border:0;background:none;}
+
+ /* 카드 안에서는 접어 뒀던 칸도 다시 보여준다 — 세로라 자리가 넉넉하다 */
+ table.mbc td.o1,table.mbc td.o2{display:flex !important;}
+
+ /* 요약 화면의 이상탐지·트래픽 칸 */
+ .anb{padding:11px 12px;}
+ .anb .nums{grid-template-columns:repeat(3,1fr);}
+ .sevd{gap:10px;}
+ .sevd svg{width:76px;height:76px;flex:0 0 76px;}
+ /* 판정 카드 */
+ .cb{padding:11px 12px;}
+ .cb .ln{flex-direction:column;gap:2px;}
+ .cb .ln b{flex:none;}
+ /* 로그 검색 폼 */
+ .flt{padding:12px;}
+ .quick a{font-size:11.5px;padding:4px 9px;}
+ /* 메일 본문 */
+ .mailbody{font-size:11.5px;padding:11px 12px;}
+}
+@media(max-width:400px){
+ .kpi2{grid-template-columns:1fr;}
+ .anb .nums{grid-template-columns:repeat(2,1fr);}
+}
 `;
 
 /* ── 새 화면에서 쓰는 스크립트 — 로그 행 펼치기 ── */
@@ -1011,6 +1098,58 @@ document.addEventListener("click", function(e){
   tr.scrollIntoView({block: 'center'});
   setTimeout(function(){ tr.classList.remove('hl'); }, 2600);
 })();
+
+// 좁은 화면에서 표를 카드로 펴기 위한 밑작업.
+//
+// 칸이 여덟 개 넘는 표를 휴대폰 폭에 밀어 넣으면 글자가 세로로 쌓이거나 칸끼리 겹친다.
+// CSS만으로는 각 값이 무슨 칸인지 알려 줄 수 없어서, 머리글의 칸 이름을 읽어
+// 같은 자리의 칸에 data-l로 붙여 둔다. 좁아지면 CSS가 그 이름을 앞에 찍어 준다.
+// 넓은 화면에서는 아무것도 달라지지 않는다.
+window.hzMobileTables = function(){
+  var tables = document.querySelectorAll('table');
+  for (var i = 0; i < tables.length; i++) {
+    var t = tables[i];
+    // 히트맵(요일×시각)과 요약 칸의 작은 표는 원래 모양이 더 읽기 좋다.
+    if (t.closest('.hm') || t.classList.contains('mini') || t.classList.contains('mb-skip')) continue;
+
+    var head = t.querySelector('thead tr');
+    if (!head) {
+      var first = t.querySelector('tr');
+      if (first && first.querySelector('th')) head = first;
+    }
+    if (!head) continue;
+    head.classList.add('mb-hdr');
+
+    var names = [];
+    for (var h = 0; h < head.children.length; h++) {
+      var span = parseInt(head.children[h].getAttribute('colspan') || '1', 10);
+      var text = (head.children[h].textContent || '').trim();
+      for (var s2 = 0; s2 < span; s2++) names.push(s2 === 0 ? text : '');
+    }
+
+    var rows = t.querySelectorAll('tr');
+    for (var r = 0; r < rows.length; r++) {
+      var row = rows[r];
+      if (row === head || row.classList.contains('mb-hdr')) continue;
+      var cells = row.children;
+      // 칸 하나가 표 전체를 차지하는 줄(펼친 상세·"기록이 없어요")은 통째로 둔다.
+      if (cells.length === 1) { row.classList.add('mb-wide'); continue; }
+      for (var c = 0; c < cells.length; c++) {
+        var cell = cells[c];
+        if (cell.tagName !== 'TD') continue;
+        var name = names[c] || '';
+        if (name) cell.setAttribute('data-l', name);
+        var val = (cell.textContent || '').trim();
+        // 값이 비었거나 '-' 한 글자면 카드에서는 줄만 차지한다.
+        if (!val || val === '-') cell.classList.add('mb-empty');
+        else cell.classList.remove('mb-empty');
+        if (c === 0) cell.classList.add('mb-key');
+      }
+    }
+    t.classList.add('mbc');
+  }
+};
+window.hzMobileTables();
 
 // 토큰 보기/가리기 — 평소엔 가운데를 가려 둔다.
 document.addEventListener('click', function(e){

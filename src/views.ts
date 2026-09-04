@@ -26,7 +26,7 @@ import {
 	escapeHtml, usd, kst, shortNum, shellAdmin, pageHead, filterTabs, sectionHead, delta,
 	svgTrend, svgMap, svgShare, svgDonut, svgHeat, svgLevels, svgF1, svgTraffic, type AdminOpts,
 } from "./ui";
-import { SITES, siteName } from "./traffic";
+import { SITES, siteName, THREAT_LABEL } from "./traffic";
 
 /** 상단바 메뉴가 기간·앱 조건을 그대로 물고 가도록 붙이는 질의 문자열. */
 function navQuery(period: string, appFilter: string): string {
@@ -1763,6 +1763,67 @@ function botTable(rows: { bot: string; n: number; last: number; paths: number }[
 	return `<div class="cap"><table><thead><tr><th>크롤러</th><th class="n">방문</th><th class="n">읽은 경로</th><th>마지막 방문</th></tr></thead><tbody>${body}</tbody></table></div>`;
 }
 
+/**
+ * 없는 주소 요청(404) 한 판.
+ *
+ * "404 급증 54건"만 보이면 서비스가 고장 난 것처럼 읽힌다. 실제로는 대부분 자동 스캐너가
+ * 워드프레스·.env 같은 주소를 차례로 두드려 본 것이고, 우리 서비스에는 그런 게 없어서
+ * 전부 404로 막힌다. 그래서 종류를 나눠 보여 주고, 사람이 손볼 것이 있는지를 먼저 적는다.
+ */
+function notFoundPanel(t: TrafficData): string {
+	const nf = t.notFound;
+	if (!nf.total) {
+		return `<div class="empty">이 기간에 없는 주소 요청이 없어요.</div>`;
+	}
+
+	const scan = nf.total - nf.attention;
+	const broken = nf.byKind.find((r) => r.kind === "broken")?.n ?? 0;
+	const verdict = broken
+		? `<div class="nfv warn"><b>${broken.toLocaleString()}건은 우리 쪽 깨진 링크예요.</b>` +
+			`<span>우리 사이트 안에서 넘어온 요청이라 링크를 고치거나 옮긴 주소로 이어 주면 좋아요. ` +
+			`나머지 ${scan.toLocaleString()}건은 자동 스캔이고 전부 막혔어요.</span></div>`
+		: `<div class="nfv ok"><b>손볼 것은 없어요.</b>` +
+			`<span>${nf.total.toLocaleString()}건 모두 없는 주소라 404로 막혔어요. ` +
+			`대부분 자동 스캐너가 워드프레스·비밀 파일 같은 주소를 차례로 두드려 본 것인데, ` +
+			`우리 서비스에는 그런 게 없어서 통하지 않아요.</span></div>`;
+
+	const kindRows = nf.byKind
+		.map((r) => {
+			const m = THREAT_LABEL[r.kind] ?? { text: r.kind, desc: "" };
+			const pct = nf.total ? (r.n / nf.total) * 100 : 0;
+			return `<tr><td><span class="th t-${escapeHtml(r.kind)}">${escapeHtml(m.text)}</span></td>` +
+				`<td class="n">${r.n.toLocaleString()}<span class="sm"> ${pct.toFixed(0)}%</span></td>` +
+				`<td class="n o1">${r.paths.toLocaleString()}</td>` +
+				`<td class="n o1">${r.ips.toLocaleString()}</td>` +
+				`<td class="w"><span class="sm">${escapeHtml(m.desc)}</span></td></tr>`;
+		})
+		.join("");
+
+	const topRows = nf.top
+		.map((r) => {
+			const m = THREAT_LABEL[r.kind ?? "other"] ?? { text: r.kind ?? "-", desc: "" };
+			return `<tr><td class="mono w" data-tip="${escapeHtml(r.path)}">${escapeHtml(r.path)}</td>` +
+				`<td class="o1">${escapeHtml(siteName(r.site))}</td>` +
+				`<td><span class="th t-${escapeHtml(r.kind ?? "other")}">${escapeHtml(m.text)}</span></td>` +
+				`<td class="n">${r.n.toLocaleString()}</td>` +
+				`<td class="n o2">${r.ips.toLocaleString()}</td>` +
+				`<td class="o2"><span class="pill g">막힘</span></td></tr>`;
+		})
+		.join("");
+
+	return `${verdict}
+<div class="two">
+  <section>${sectionHead("어떤 요청이었나")}
+    <table class="fx"><colgroup><col style="width:132px"><col style="width:88px"><col class="o1" style="width:64px"><col class="o1" style="width:64px"><col></colgroup>
+    <tr><th>종류</th><th class="n">건수</th><th class="n o1">주소</th><th class="n o1">보낸 곳</th><th>무슨 요청인가</th></tr>${kindRows}</table>
+  </section>
+  <section>${sectionHead("많이 두드려 본 주소")}
+    <div class="cap"><table class="fx"><colgroup><col><col class="o1" style="width:96px"><col style="width:110px"><col style="width:62px"><col class="o2" style="width:62px"><col class="o2" style="width:64px"></colgroup>
+    <tr><th>주소</th><th class="o1">서비스</th><th>종류</th><th class="n">건수</th><th class="n o2">보낸 곳</th><th class="o2">결과</th></tr>${topRows}</table></div>
+  </section>
+</div>`;
+}
+
 export function renderTraffic(t: TrafficData, opts: AdminOpts = {}): string {
 	const q = trafficQuery(t.period, t.siteFilter);
 	const card = (l: string, v: string, tone = "", extra = "") =>
@@ -1884,9 +1945,15 @@ ${svgTraffic(t.buckets)}
   </section>
 </div>
 
+${sectionHead(`없는 주소 요청 (404) · ${t.notFound.total.toLocaleString()}건`, `/admin/traffic${q}`, "")}
+${notFoundPanel(t)}
+
 ${sectionHead("최근 크롤러 방문")}
 <div class="scroll"><table class="recent"><tr><th>시각</th><th>서비스</th><th>종류</th><th>크롤러</th><th>경로</th><th class="n">응답</th></tr>${recentRows}</table></div>
 
+<p class="foot">없는 주소 요청은 대부분 자동 스캐너예요. 워드프레스·PHP·관리 도구처럼 흔히 뚫리는 것을 차례로 두드려 보고 하나라도 열리면 파고들어요. 우리 서비스는 Cloudflare Workers와 Next.js로만 돌아가고 그런 소프트웨어가 없어서 전부 없는 주소로 끝나요.<br>
+막는 설정을 따로 넣지 않아도 돼요 — 없는 주소는 이미 404로 끝나고, 스캐너를 막아도 IP만 바꿔 다시 와요. ‘우리 쪽 깨진 링크’로 잡힌 것만 고쳐 주면 충분해요.<br>
+같은 주소에 200이 찍히면 그때는 실제로 열린 것이니 바로 살펴봐야 해요.<br>
 <p class="foot">각 서비스가 응답을 보낸 뒤 방문 한 건씩을 이 대시보드로 보내요. 사람인지 크롤러인지는 브라우저가 밝힌 이름(User-Agent)으로 갈라요.<br>
 AI 크롤러는 ChatGPT·Claude·Perplexity 같은 서비스가 문서를 읽어가는 기록이에요. 여기 방문이 늘면 AI 답변에 실릴 바탕이 쌓이고 있다는 뜻이에요.<br>
 '사람이 들어온 경로'의 <b>AI 답변</b>은 AI 서비스 화면에서 링크를 눌러 실제로 넘어온 방문이에요. 크롤러 방문이 성과로 이어졌는지는 이 숫자로 봐요.<br>

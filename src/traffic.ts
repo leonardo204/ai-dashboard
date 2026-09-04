@@ -238,6 +238,56 @@ async function withHits<T>(env: TrafficEnv, fn: () => Promise<T>): Promise<T> {
 	}
 }
 
+// ─────────────────────────────────────────────────────────────
+// 없는 주소 요청(404) 가려내기
+//
+// 실제 기록을 보니 404의 대부분은 사람이 주소를 잘못 친 것이 아니라 자동 스캐너다.
+// WordPress 취약점, .env·.git 같은 비밀 파일, 관리 도구 로그인 화면을 차례로 두드려 보고
+// 하나라도 열리면 파고든다. 우리 서비스에는 WordPress도 PHP도 없어서 전부 404로 막히지만,
+// "없는 주소 요청 54건"이라고만 보이면 무슨 일인지 알 수 없다. 그래서 종류를 나눠 둔다.
+//
+//   wordpress  워드프레스 취약점 훑기        (/wp-login.php · /wordpress/ · xmlrpc.php)
+//   secret     비밀 파일 노리기              (.env · .git/config · id_rsa · backup.zip)
+//   admin      관리 도구 로그인 화면 찾기     (phpmyadmin · /manager/html · cpanel)
+//   probe      서버 정보·설정 엿보기         (server-status · phpinfo · /actuator/env)
+//   exploit    알려진 침투 시도              (eval-stdin.php · ProxyShell · /@vite/env)
+//   broken     우리 쪽 깨진 링크             (우리 사이트에서 넘어온 요청)
+//   other      그 밖
+// ─────────────────────────────────────────────────────────────
+const THREAT_RULES: [string, RegExp][] = [
+	["wordpress", /(^|\/)(wp-login|wp-admin|wp-content|wp-includes|wp-json|xmlrpc\.php|wlwmanifest)|(^|\/)(wp|wordpress)(\/|$)|(^|\/)(blog|cms|site|news|shop|test|web|new|old)\/(wp-|index\.php|wordpress)/i],
+	["secret", /(^|\/)\.(env|git|aws|ssh|npmrc|netrc|htpasswd|DS_Store|vscode|idea|svn)|(^|\/)(id_rsa|credentials|secrets?|dump\.sql|backup|db|database)(\.|\/|$)|\.(sql|bak|old|zip|tar\.gz|pem|key|log)$|sftp\.json|config\.(json|php|yml|yaml)$/i],
+	["admin", /(^|\/)(phpmyadmin|pma|myadmin|adminer|manager\/html|cpanel|whm|webmail|solr|jenkins|kibana|grafana|rundeck|zabbix)|login\.action|(^|\/)admin(\.php|\/login|\/config)?$/i],
+	["probe", /(^|\/)(server-status|server-info|phpinfo|info\.php|trace\.axd|elmah\.axd|metrics|healthz|debug)|(^|\/)actuator|telescope\/requests|_catalog|_profiler|\/console\/?$|\/server\/?$/i],
+	["exploit", /eval-stdin|vendor\/phpunit|@vite\/env|cgi-bin|shell|cmd\.exe|\/bin\/|ediscovery|autodiscover|owa\/auth|struts|hudson|\.\.[\/\\]|%2e%2e|___proxy_subdomain/i],
+	// PHP도 GraphQL도 쓰지 않는다. 그런 주소를 찾는 요청은 사람이 아니라 훑어보는 쪽이다.
+	["probe", /\.php($|\?|\/)|(^|\/)(graphql|gql)(\/|$)/i],
+];
+
+/** 없는 주소 요청 한 건의 종류. 404가 아니면 아무것도 붙이지 않는다. */
+export function classifyThreat(path: string, status: number | null, refGroup: string): string | null {
+	if (status !== 404) return null;
+	for (const [kind, re] of THREAT_RULES) {
+		if (re.test(path)) return kind;
+	}
+	// 우리 사이트 안에서 넘어온 요청이면 스캔이 아니라 우리 쪽 깨진 링크다.
+	// 다만 첫 화면(/)은 빼 둔다 — 스캐너가 대상 주소를 그대로 referer에 넣는 일이 흔해서,
+	// 그걸 깨진 링크로 세면 고칠 것이 없는데 있다고 나온다.
+	if (refGroup === "internal" && path !== "/") return "broken";
+	return "other";
+}
+
+/** 화면에 쓰는 이름과 한 줄 설명. */
+export const THREAT_LABEL: Record<string, { text: string; desc: string }> = {
+	wordpress: { text: "워드프레스 훑기", desc: "워드프레스 취약점을 차례로 두드려 보는 자동 스캔이에요. 우리 서비스에는 워드프레스가 없어요." },
+	secret: { text: "비밀 파일 노림", desc: ".env·.git처럼 열쇠가 들어 있을 만한 파일을 찾는 요청이에요. 그런 파일을 두지 않아 열리지 않아요." },
+	admin: { text: "관리 도구 찾기", desc: "phpMyAdmin·cPanel 같은 관리 화면을 찾는 요청이에요. 그런 도구를 쓰지 않아요." },
+	probe: { text: "서버 정보 엿보기", desc: "서버 설정·상태를 그대로 내주는 주소를 찾는 요청이에요. 그런 주소를 열어 두지 않았어요." },
+	exploit: { text: "침투 시도", desc: "알려진 취약점을 그대로 찔러 보는 요청이에요. 해당하는 소프트웨어를 쓰지 않아요." },
+	broken: { text: "우리 쪽 깨진 링크", desc: "우리 사이트 안에서 넘어온 요청이에요. 링크를 고치거나 옮긴 주소를 이어 주면 좋아요." },
+	other: { text: "그 밖", desc: "패턴에 맞지 않는 요청이에요. 주소 오타이거나 예전 주소일 수 있어요." },
+};
+
 /** 방문 기록 받기 — 응답은 바로 돌려주고, 쓰기는 waitUntil로 뒤에서 처리한다. */
 export async function handleHit(request: Request, env: TrafficEnv, ctx: ExecutionContext): Promise<Response> {
 	const ok = (body: unknown, status = 200) =>
@@ -267,12 +317,17 @@ export async function handleHit(request: Request, env: TrafficEnv, ctx: Executio
 		if (!site || !status) return ok({ error: "site와 status가 필요해요." }, 400);
 		const ipHash = await hashIP(trim(h.ip, 60) || "", env.ADMIN_PASS || "hit");
 		const since = Date.now() - 120_000;
+		// 경로가 오면 그 경로의 줄만 고친다. 경로 없이 "같은 방문자의 마지막 줄"을 고치면,
+		// 그 사이에 다른 요청이 들어왔을 때 멀쩡한 줄이 404로 바뀐다(실제로 그렇게 됐다).
+		const fixPath = (trim(h.path, 300) || "").split("?")[0];
+		if (!fixPath) return ok({ ok: false, skipped: "경로를 알 수 없어 고치지 않았어요." });
 		const upd = await withHits(env, () =>
 			env.DB.prepare(
 				"UPDATE hits SET status = ?1 WHERE id = (SELECT id FROM hits WHERE site = ?2" +
-					" AND ts >= ?3 AND (?4 IS NULL OR ip_hash = ?4) ORDER BY id DESC LIMIT 1)",
+					" AND ts >= ?3 AND path = ?5 AND (?4 IS NULL OR ip_hash = ?4)" +
+					" ORDER BY id DESC LIMIT 1)",
 			)
-				.bind(status, site, since, ipHash)
+				.bind(status, site, since, ipHash, fixPath)
 				.run(),
 		);
 		const changed = upd.meta?.changes ?? 0;
@@ -302,6 +357,7 @@ export async function handleHit(request: Request, env: TrafficEnv, ctx: Executio
 			c.kind, c.bot, r.group, r.source, r.host,
 			trim(h?.country, 8), trim(h?.region, 60), trim(h?.city, 60),
 			ua.slice(0, 300), await hashIP(trim(h?.ip, 60) || "", salt), trim(h?.method, 10) || "GET",
+			classifyThreat(path, num(h?.status), r.group),
 		]);
 	}
 	if (!rows.length) return ok({ ok: true, saved: 0 });
@@ -309,8 +365,8 @@ export async function handleHit(request: Request, env: TrafficEnv, ctx: Executio
 	const stmts = rows.map((v) =>
 		env.DB.prepare(
 			"INSERT INTO hits (ts, site, path, status, latency_ms, kind, bot, ref_group, ref_source," +
-				" ref_host, country, region, city, ua, ip_hash, method)" +
-				" VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
+				" ref_host, country, region, city, ua, ip_hash, method, threat)" +
+				" VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
 		).bind(...(v as [number, string, string, number | null, number | null, string, string | null, string, string, string | null, string | null, string | null, string | null, string, string | null, string])),
 	);
 	ctx.waitUntil(
@@ -330,9 +386,12 @@ export async function ensureHitsTable(env: TrafficEnv): Promise<void> {
 			" site TEXT NOT NULL, path TEXT, status INTEGER, latency_ms INTEGER, kind TEXT NOT NULL," +
 			" bot TEXT, ref_group TEXT, ref_source TEXT, ref_host TEXT, country TEXT, region TEXT," +
 			" city TEXT, ua TEXT, ip_hash TEXT, method TEXT)",
+		// 없는 주소 요청(404)의 종류. 이미 있으면 조용히 실패한다.
+		"ALTER TABLE hits ADD COLUMN threat TEXT",
 		"CREATE INDEX IF NOT EXISTS idx_hits_ts ON hits(ts)",
 		"CREATE INDEX IF NOT EXISTS idx_hits_site_ts ON hits(site, ts)",
 		"CREATE INDEX IF NOT EXISTS idx_hits_kind_ts ON hits(kind, ts)",
+		"CREATE INDEX IF NOT EXISTS idx_hits_threat ON hits(threat, ts)",
 	]) {
 		try {
 			await env.DB.prepare(sql).run();

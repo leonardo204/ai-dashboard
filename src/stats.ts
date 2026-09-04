@@ -2059,6 +2059,16 @@ export interface TrafficData {
 	countries: { key: string; total: number }[];
 	status: { code: number | null; n: number }[];
 	recentBots: { ts: number; site: string; bot: string; kind: string; path: string; status: number | null }[];
+	/** 없는 주소 요청(404) — 종류별 건수와 실제로 두드려 본 주소들. */
+	notFound: {
+		total: number;
+		blocked: number;      // 404로 막힌 수 = 전부
+		byKind: { kind: string; n: number; paths: number; ips: number; last: number }[];
+		top: { path: string; site: string; kind: string | null; n: number; ips: number; last: number }[];
+		bySite: { site: string; n: number }[];
+		/** 스캔이 아닌 것 — 우리 쪽 깨진 링크와 정체가 애매한 요청 */
+		attention: number;
+	};
 }
 
 const TRAFFIC_KINDS = ["human", "ai", "search", "social", "bot"] as const;
@@ -2077,7 +2087,8 @@ async function collectTrafficInner(env: StatsEnv, period: string, siteFilter: st
 		return siteFilter ? st.bind(since, siteFilter) : st.bind(since);
 	};
 
-	const [sumRow, prevRow, bucketRs, siteRs, prevSiteRs, botRs, refRs, pathRs, botPathRs, cRs, stRs, recentRs] =
+	const [sumRow, prevRow, bucketRs, siteRs, prevSiteRs, botRs, refRs, pathRs, botPathRs, cRs, stRs, recentRs,
+		nfKindRs, nfTopRs, nfSiteRs] =
 		await Promise.all([
 			bind(
 				`SELECT COUNT(*) AS n, ${kindSum("k_")}, COUNT(DISTINCT CASE WHEN kind='human' THEN ip_hash END) AS uq,` +
@@ -2144,6 +2155,24 @@ async function collectTrafficInner(env: StatsEnv, period: string, siteFilter: st
 				`SELECT ts, site, bot, kind, path, status FROM hits WHERE ts >= ?1${w}` +
 					` AND kind IN ('ai','search') ORDER BY ts DESC LIMIT 12`,
 			).all<{ ts: number; site: string; bot: string | null; kind: string; path: string; status: number | null }>(),
+
+			// ── 없는 주소 요청(404). 종류별 · 주소별 · 서비스별로 나눠 본다.
+			bind(
+				`SELECT COALESCE(threat,'other') AS k, COUNT(*) AS n, COUNT(DISTINCT path) AS paths,` +
+					` COUNT(DISTINCT ip_hash) AS ips, MAX(ts) AS last FROM hits` +
+					` WHERE ts >= ?1${w} AND status = 404 GROUP BY k ORDER BY n DESC`,
+			).all<{ k: string; n: number; paths: number; ips: number; last: number }>(),
+
+			bind(
+				`SELECT path, MAX(site) AS site, MAX(threat) AS k, COUNT(*) AS n,` +
+					` COUNT(DISTINCT ip_hash) AS ips, MAX(ts) AS last FROM hits` +
+					` WHERE ts >= ?1${w} AND status = 404 GROUP BY path ORDER BY n DESC LIMIT 20`,
+			).all<{ path: string; site: string; k: string | null; n: number; ips: number; last: number }>(),
+
+			bind(
+				`SELECT site, COUNT(*) AS n FROM hits WHERE ts >= ?1${w} AND status = 404` +
+					` GROUP BY site ORDER BY n DESC`,
+			).all<{ site: string; n: number }>(),
 		]);
 
 	const prevSite = new Map((prevSiteRs.results ?? []).map((r) => [r.site, r.n]));
@@ -2187,6 +2216,26 @@ async function collectTrafficInner(env: StatsEnv, period: string, siteFilter: st
 		recentBots: (recentRs.results ?? []).map((r) => ({
 			ts: r.ts, site: siteName(r.site), bot: r.bot ?? "-", kind: r.kind, path: r.path, status: r.status,
 		})),
+		notFound: (() => {
+			const byKind = (nfKindRs.results ?? []).map((r) => ({
+				kind: r.k, n: r.n, paths: r.paths, ips: r.ips, last: r.last,
+			}));
+			const total = byKind.reduce((a, b) => a + b.n, 0);
+			// 스캔이 아닌 것 — 우리 쪽 깨진 링크와 정체가 애매한 요청만 사람이 볼 몫이다.
+			const attention = byKind
+				.filter((r) => r.kind === "broken" || r.kind === "other")
+				.reduce((a, b) => a + b.n, 0);
+			return {
+				total,
+				blocked: total,
+				byKind,
+				top: (nfTopRs.results ?? []).map((r) => ({
+					path: r.path, site: r.site, kind: r.k, n: r.n, ips: r.ips, last: r.last,
+				})),
+				bySite: (nfSiteRs.results ?? []).map((r) => ({ site: r.site, n: r.n })),
+				attention,
+			};
+		})(),
 	};
 }
 
