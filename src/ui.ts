@@ -598,6 +598,25 @@ table.mail td.w .sm{margin-top:2px;display:block;line-height:1.5;}
  margin:0 0 10px;font-family:inherit;font-size:12.5px;line-height:1.8;white-space:pre-wrap;
  word-break:break-word;max-height:380px;overflow:auto;}
 
+/* 지표 위 안내 줄 — 왼쪽은 설명, 오른쪽은 상세로 가는 링크 */
+.noteline{display:flex;align-items:baseline;gap:12px;margin:16px 2px 6px;}
+.noteline .sm{min-width:0;}
+.noteline a{margin-left:auto;font-size:12px;font-weight:800;color:var(--accent);
+ text-decoration:none;white-space:nowrap;}
+.noteline a:hover{text-decoration:underline;}
+
+/* 이상탐지 상세 게시판 */
+table.anb2 tr[data-det]{cursor:pointer;}
+table.anb2 tr[data-det]:hover td{background:#faf8ff;}
+table.anb2 tr[data-det].fp td{opacity:.62;}
+table.anb2 td.w{white-space:normal;max-width:560px;}
+table.anb2 td.w b{font-weight:700;}
+table.anb2 td.w .sm{margin-top:3px;display:block;line-height:1.5;}
+table.anb2 tr.det .cb{border:0;border-left:3px solid #c0392b;border-radius:0 10px 10px 0;
+ background:#fff;padding:11px 14px;}
+table.anb2 tr.det .cb.fp{border-left-color:#c9ced8;}
+tr.hl td{background:#fff8e6 !important;}
+
 /* 심각 신호 브리핑 — "심각 3건"만으로는 무엇을 볼지 알 수 없어서 건마다 풀어 쓴다 */
 .cbs{display:grid;gap:10px;}
 .cb{background:var(--panel);border:1px solid var(--line);border-left:3px solid #c0392b;
@@ -906,13 +925,14 @@ document.addEventListener("click", function(e){
   window.addEventListener('blur', hide);
 })();
 
-// 이상탐지 화면에서 "메일 보기 →"로 건너오면 그 줄을 펼쳐서 보여준다.
+// 다른 화면에서 "메일 보기 →"·"자세히 보기 →"로 건너오면 그 줄을 펼쳐서 보여준다.
 (function(){
-  var m = (location.hash || '').match(/^#m-(\d+)$/);
+  var m = (location.hash || '').match(/^#([ma])-(\d+)$/);
   if (!m) return;
-  var tr = document.getElementById('m-' + m[1]);
+  var key = m[1] + '-' + m[2];
+  var tr = document.getElementById(key);
   if (!tr) return;
-  var d = document.getElementById('det-m' + m[1]);
+  var d = document.getElementById('det-' + m[1] + m[2]);
   if (d) d.hidden = false;
   tr.classList.add('hl');
   tr.scrollIntoView({block: 'center'});

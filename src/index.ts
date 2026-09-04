@@ -33,7 +33,7 @@ import { renderGuide, GUIDE_MD, GUIDE_FILENAME } from "./guide";
 import {
 	collectStats, collectSummary, collectUsage, collectTrend, collectGeo, queryLogs, logsCsv,
 	listApps, getApp, upsertApp, deleteApp, newToken, pulse, exportCalls, PERIODS, LOG_PAGE,
-	collectAnomaly, pushAnomaly, collectMails, getMailHtml, listPasskeys, passkeyCount, deletePasskey,
+	collectAnomaly, collectAnomalyBoard, pushAnomaly, collectMails, getMailHtml, listPasskeys, passkeyCount, deletePasskey,
 	collectTraffic,
 	type AppConfig, type LogFilter,
 } from "./stats";
@@ -41,7 +41,7 @@ import { handlePasskey, type PasskeyEnv } from "./passkey";
 import { handleHit, exportHits, SITES, type TrafficEnv } from "./traffic";
 import { renderLogin } from "./ui";
 import {
-	renderSummary, renderUsage, renderTrend, renderGeo, renderAnomaly, renderMails, renderTraffic, renderLogs, renderApps,
+	renderSummary, renderUsage, renderTrend, renderGeo, renderAnomaly, renderAnomalyDetail, renderMails, renderTraffic, renderLogs, renderApps,
 } from "./views";
 
 interface Env extends ProxyEnv, PasskeyEnv, TrafficEnv {
@@ -607,6 +607,16 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 			const { period, appFilter } = statScope(url);
 			const raw = url.searchParams.get("scope");
 			// 메일 발송 내역은 판정이 아니라 결과물이라 화면 자체가 다르다.
+			// 판정 상세는 게시판이라 화면이 다르다. 요약 화면의 "자세히 보기"가 여기로 온다.
+			if (raw === "detail") {
+				const forScope = url.searchParams.get("for") === "traffic" ? "traffic" : "ai";
+				const sevRaw = url.searchParams.get("sev") || "";
+				const sev = ["critical", "warn", "info"].includes(sevRaw) ? sevRaw : "";
+				return html(
+					renderAnomalyDetail(await collectAnomalyBoard(env, period, forScope, sev, appFilter), { session: true }),
+					{ cache: false },
+				);
+			}
 			if (raw === "mail") {
 				const kindRaw = url.searchParams.get("kind") || "";
 				const kind = ["anomaly", "train", "test"].includes(kindRaw) ? kindRaw : "";

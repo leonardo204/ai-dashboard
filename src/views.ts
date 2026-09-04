@@ -17,6 +17,7 @@ import {
 	type AppConfig, type GroupRow, type PasskeyRow,
 	type SummaryData, type UsageData, type TrendData, type GeoData, type LogsData, type LogFilter,
 	type MailsData, type MailRow,
+	type AnomalyBoardData, type AnomalyRowWithMail, ANOMALY_PAGE,
 	type AnomalyBrief,
 	type AnomalyData, type AnomalyRow,
 	type TrafficData, type TrafficBrief,
@@ -628,57 +629,50 @@ function anomTopMetrics(r: AnomalyRow): string {
 }
 
 /**
- * 심각 신호 브리핑 — "심각 3건"만으로는 무엇을 봐야 할지 알 수 없다.
- * 건마다 무슨 일인지·검증 에이전트가 어떻게 봤는지·무엇을 열어 볼지를 적고,
+ * 판정 한 건 풀어 쓰기 — "심각 3건"만으로는 무엇을 봐야 할지 알 수 없다.
+ * 무슨 일인지·검증 에이전트가 어떻게 봤는지·무엇을 열어 볼지를 적고,
  * 그 건이 메일로 나갔으면 그 메일까지 이어 준다.
+ * 상세 게시판에서 줄을 펼치면 이 내용이 나온다.
  */
-function criticalBrief(a: AnomalyData): string {
-	if (!a.criticals.length) return "";
-	const traffic = a.scope === "traffic";
+function anomalyExplain(r: AnomalyRowWithMail, period: string, traffic: boolean): string {
 	const who = traffic ? "서비스" : "앱";
+	const d = anomDetail(r);
+	const guide = SIGNAL_GUIDE[r.signal];
+	const link = guide?.link?.({ period, app: r.app === "*" ? "" : r.app });
+	const fp = r.verdict === "rule_fp" || r.verdict === "model_fp" || r.verdict === "both_fp";
 
-	const cards = a.criticals
-		.map((r) => {
-			const d = anomDetail(r);
-			const guide = SIGNAL_GUIDE[r.signal];
-			const link = guide?.link?.({ period: a.period, app: r.app === "*" ? "" : r.app });
-			const fp = r.verdict === "rule_fp" || r.verdict === "model_fp" || r.verdict === "both_fp";
+	const verdictLine = r.verdict
+		? `<div class="ln ${fp ? "fp" : "hit"}"><b>검증 결과</b>` +
+			`<span>${verdictTag(r.verdict, null)} ${escapeHtml(r.verdict_reason || "")}` +
+			`${r.verdict_confidence ? ` <span class="sm">(확신 ${Math.round(r.verdict_confidence * 100)}%)</span>` : ""}</span></div>`
+		: `<div class="ln wait"><b>검증 결과</b><span>아직 검증 에이전트가 보지 않았어요. 15분 안에 판단이 붙어요.</span></div>`;
 
-			const verdictLine = r.verdict
-				? `<div class="ln ${fp ? "fp" : "hit"}"><b>검증 결과</b>` +
-					`<span>${verdictTag(r.verdict, null)} ${escapeHtml(r.verdict_reason || "")}` +
-					`${r.verdict_confidence ? ` <span class="sm">(확신 ${Math.round(r.verdict_confidence * 100)}%)</span>` : ""}</span></div>`
-				: `<div class="ln wait"><b>검증 결과</b><span>아직 검증 에이전트가 보지 않았어요. 15분 안에 판단이 붙어요.</span></div>`;
+	const todo = r.verdict_action || guide?.todo || "그 시각 기록을 열어 확인해 주세요.";
+	const todoLine = fp
+		? `<div class="ln"><b>할 일</b><span>검증에서 오탐으로 봤어요. 급하게 볼 것은 없지만 근거는 확인해 주세요.</span></div>`
+		: `<div class="ln"><b>확인할 일</b><span>${escapeHtml(todo)}</span></div>`;
 
-			const todo = r.verdict_action || guide?.todo || "그 시각 기록을 열어 확인해 주세요.";
-			const todoLine = fp
-				? `<div class="ln"><b>할 일</b><span>검증에서 오탐으로 봤어요. 급하게 볼 것은 없지만 근거는 확인해 주세요.</span></div>`
-				: `<div class="ln"><b>확인할 일</b><span>${escapeHtml(todo)}</span></div>`;
+	const mail = r.mailId
+		? `<a class="lk mail" href="/admin/anomaly?period=${period}&scope=mail#m-${r.mailId}">메일 «${escapeHtml(String(r.mailSubject ?? "").replace(/^\[AI Service\]\s*/, ""))}» 보기 →</a>`
+		: r.suppressed_reason
+			? `<span class="sm">메일은 보내지 않았어요 — ${escapeHtml(r.suppressed_reason)}</span>`
+			: r.detector === "model"
+				? `<span class="sm">모델이 뒤에서 매긴 판정이라 메일로는 나가지 않아요.</span>`
+				: `<span class="sm">아직 메일로 나가지 않았어요.</span>`;
 
-			const mail = r.mailId
-				? `<a class="lk mail" href="/admin/anomaly?period=${a.period}&scope=mail#m-${r.mailId}">메일 «${escapeHtml(String(r.mailSubject ?? "").replace(/^\[AI Service\]\s*/, ""))}» 보기 →</a>`
-				: r.suppressed_reason
-					? `<span class="sm">메일은 보내지 않았어요 — ${escapeHtml(r.suppressed_reason)}</span>`
-					: r.detector === "model"
-						? `<span class="sm">모델이 뒤에서 매긴 판정이라 메일로는 나가지 않아요.</span>`
-						: `<span class="sm">아직 메일로 나가지 않았어요.</span>`;
+	const numbers =
+		`<div class="ln"><b>수치</b><span>이번 값 ${escapeHtml(anomValue(r.observed, d.metric))}` +
+		` · 평소 값 ${escapeHtml(anomValue(r.baseline, d.metric))}` +
+		`${d.ratio ? ` (${d.ratio}배)` : ""} · 이상 점수 ${r.score === null ? "-" : r.score.toFixed(1)}` +
+		` · 판정 ${r.detector === "model" ? `모델 ${escapeHtml(r.model_version ?? "")}` : "규칙"}</span></div>`;
 
-			return `<div class="cb${fp ? " fp" : ""}">
-  <div class="hd">${sevTag(r.severity)}<b>${escapeHtml(d.label)}</b>
-    <span class="sm">${escapeHtml(r.app === "*" ? "전체" : (traffic ? siteName(r.app) : r.app))} · ${bucketAt(r.bucket)} ${escapeHtml(r.grain)} 구간 · ${ago(Date.now() - r.bucket)}</span></div>
+	return `<div class="cb${fp ? " fp" : ""}">
   <p class="lead">${escapeHtml(anomalyLead(r, who))}</p>
   ${verdictLine}
   ${todoLine}
+  ${numbers}
   <div class="acts">${link ? `<a class="lk" href="${link[0]}">${link[1]}</a>` : ""}${mail}</div>
 </div>`;
-		})
-		.join("");
-
-	const more = a.critical > a.criticals.length
-		? `<span class="sm">심각 ${a.critical.toLocaleString()}건 중 최근 ${a.criticals.length}건 · 나머지는 아래 이력에서 봐요</span>`
-		: "";
-	return `<div class="sh2"><h2>지금 확인할 심각 신호</h2>${more}</div>
-<div class="cbs">${cards}</div>`;
 }
 
 
@@ -904,10 +898,11 @@ function serverBarOf(state: { key: string; value: string; updated_at: number }[]
 }
 
 /** 이상탐지 갈래 고르기 — AI 호출·서비스 방문은 보는 지표가 다르고, 메일 내역은 결과물이다. */
-function scopeTabs(scope: string, period: string): string {
-	const t = (k: string, label: string) =>
-		`<a class="tab${scope === k ? " on" : ""}" href="/admin/anomaly?period=${period}&scope=${k}">${label}</a>`;
-	return `<div class="tabs">${t("ai", "AI 호출")}${t("traffic", "트래픽")}${t("mail", "메일 발송")}</div>`;
+function scopeTabs(scope: string, period: string, forScope = "ai"): string {
+	const t = (k: string, label: string, extra = "") =>
+		`<a class="tab${scope === k ? " on" : ""}" href="/admin/anomaly?period=${period}&scope=${k}${extra}">${label}</a>`;
+	return `<div class="tabs">${t("ai", "AI 호출")}${t("traffic", "트래픽")}` +
+		`${t("detail", "이상탐지 상세", `&for=${forScope}`)}${t("mail", "메일 발송")}</div>`;
 }
 
 const SITE_TABS = Object.entries(SITES).map(([id, v]) => ({ id, name: v.name, active: true }));
@@ -1114,9 +1109,11 @@ ${filterTabs(
 )}
 ${serverBar(a)}
 ${warmupNotice(a)}
-${criticalBrief(a)}
 
-<p class="sm" style="margin:16px 2px 6px">아래 숫자는 <b>${escapeHtml(sinceLabel(a.since))}</b> 쌓인 값이에요. 옆의 ‘24시간’은 그중 최근 하루에 잡힌 수예요.</p>
+<div class="noteline">
+  <span class="sm">아래 숫자는 <b>${escapeHtml(sinceLabel(a.since))}</b> 쌓인 값이에요. 옆의 ‘24시간’은 그중 최근 하루에 잡힌 수예요.</span>
+  <a href="/admin/anomaly?period=${a.period}&scope=detail&for=${a.scope}${a.appFilter ? `&app=${encodeURIComponent(a.appFilter)}` : ""}">${a.critical ? `심각 ${a.critical.toLocaleString()}건 ` : ""}자세히 보기 →</a>
+</div>
 <div class="kpi2" style="margin-bottom:4px">
   ${card("이상 신호", a.total.toLocaleString(), "", delta(a.total, a.prevTotal, true) + `<span class="sm"> · 24시간 ${a.recent24.toLocaleString()}</span>`)}
   ${card("심각", a.critical.toLocaleString(), a.critical ? "r" : "", `<span class="sm"> · 24시간 ${a.critical24.toLocaleString()}</span>`)}
@@ -1278,6 +1275,107 @@ ${sectionHead("보낸 메일 내역", "/admin/anomaly?period=" + d.period, "이�
 같은 신호가 이어지면 정해진 시간 동안 묶어서 한 번만 보내요. 검증에서 잘못 잡은 것으로 판정된 신호는 아예 보내지 않고, 이상탐지 화면에 ‘보내지 않음’으로 남아요.<br>
 트래픽에서는 방문 급감·서버 오류(5xx)·없는 주소 요청(404)만 메일로 보내고, 나머지는 화면에만 남겨요.<br>
 최근 ${MAIL_PAGE}건까지 보여줘요.</p>
+</div>`,
+		{ ...opts, tab: "anomaly" },
+	);
+}
+
+// ═════════════════════════════════════════════════════════════
+// 이상탐지 상세 (/admin/anomaly?scope=detail)
+//   요약 화면에 건마다 카드를 쌓으면 화면이 한없이 길어지고 다른 칸이 밀린다.
+//   그래서 풀어 쓴 설명은 이 게시판으로 옮겼다. 줄을 누르면 그 자리에서 펼쳐진다.
+// ═════════════════════════════════════════════════════════════
+
+/** 게시판 한 줄 — 접힌 머리줄과 펼쳐지는 설명 줄. */
+function anomalyBoardRow(r: AnomalyRowWithMail, period: string, traffic: boolean): string {
+	const d = anomDetail(r);
+	const fp = r.verdict === "rule_fp" || r.verdict === "model_fp" || r.verdict === "both_fp";
+	const who = r.app === "*" ? "전체" : traffic ? siteName(r.app) : r.app;
+
+	const head =
+		`<tr id="a-${r.id}" data-det="a${r.id}"${fp ? ' class="fp"' : ""}>` +
+		`<td class="mono" data-tip="${escapeHtml(`${kst(r.bucket)} · ${r.grain} 단위`)}">${bucketAt(r.bucket)}</td>` +
+		`<td>${sevTag(r.severity)}</td>` +
+		`<td>${escapeHtml(d.label)}</td>` +
+		`<td>${escapeHtml(who)}</td>` +
+		`<td class="w"><b>${escapeHtml(anomalyLead(r, traffic ? "서비스" : "앱"))}</b>` +
+		(r.verdict_action && !fp ? `<div class="sm">확인할 일 · ${escapeHtml(r.verdict_action)}</div>` : "") +
+		`</td>` +
+		`<td>${verdictTag(r.verdict, null)}</td>` +
+		`<td class="n">${r.mailId
+			? `<a href="/admin/anomaly?period=${period}&scope=mail#m-${r.mailId}">메일 →</a>`
+			: `<span class="sm">-</span>`}</td></tr>`;
+
+	const detail =
+		`<tr class="det" id="det-a${r.id}" hidden><td colspan="7">` +
+		anomalyExplain(r, period, traffic) +
+		`</td></tr>`;
+
+	return head + detail;
+}
+
+export function renderAnomalyDetail(d: AnomalyBoardData, opts: AdminOpts = {}): string {
+	const traffic = d.forScope === "traffic";
+	const card = (l: string, v: string, tone = "") =>
+		`<div class="m"><div class="l">${l}</div><div class="v ${tone}">${v}</div></div>`;
+
+	const q = (over: { period?: string; for?: string; sev?: string; app?: string }) => {
+		const p = new URLSearchParams();
+		p.set("period", over.period ?? d.period);
+		p.set("scope", "detail");
+		p.set("for", over.for ?? d.forScope);
+		const sev = over.sev ?? d.sev;
+		if (sev) p.set("sev", sev);
+		const app = over.app ?? d.appFilter;
+		if (app) p.set("app", app);
+		return `/admin/anomaly?${p.toString()}`;
+	};
+
+	const periodTabs = Object.entries(PERIODS)
+		.map(([k, v]) => `<a class="tab${k === d.period ? " on" : ""}" href="${q({ period: k })}">${v.label}</a>`)
+		.join("");
+	const forTab = (k: string, label: string) =>
+		`<a class="tab${d.forScope === k ? " on" : ""}" href="${q({ for: k, app: "" })}">${label}</a>`;
+	const sevTab = (k: string, label: string, n: number) =>
+		`<a class="tab${d.sev === k ? " on" : ""}" href="${q({ sev: k })}">${label} ${n.toLocaleString()}</a>`;
+	const appTab = (id: string, label: string) =>
+		`<a class="tab${d.appFilter === id ? " on" : ""}" href="${q({ app: id })}">${escapeHtml(label)}</a>`;
+
+	const apps = traffic ? SITE_TABS : d.apps;
+	const rows = d.rows.length
+		? d.rows.map((r) => anomalyBoardRow(r, d.period, traffic)).join("")
+		: `<tr><td colspan="7">${d.sev ? "이 조건에 맞는 판정이 없어요." : "이 기간에 잡힌 이상 신호가 없어요."}</td></tr>`;
+
+	return shellAdmin(
+		"이상탐지 상세",
+		pageHead(
+			"이상탐지",
+			`${traffic ? "서비스 방문" : "AI 호출"} 판정 상세 · ${sinceLabel(d.since)}`,
+			d.appFilter,
+		) +
+			`<div id="hz-body">
+${scopeTabs("detail", d.period, d.forScope)}
+<div class="tabs">${forTab("ai", "AI 호출")}${forTab("traffic", "트래픽")}<span style="flex:1"></span>${periodTabs}</div>
+<div class="tabs">${sevTab("", "전체", d.total)}${sevTab("critical", "심각", d.critical)}${sevTab("warn", "주의", d.warn)}${sevTab("info", "참고", d.info)}</div>
+<div class="tabs">${appTab("", traffic ? "전체 서비스" : "전체 앱")}${apps.map((a) => appTab(a.id, a.name)).join("")}</div>
+${serverBarOf(d.state, d.heartbeatAge)}
+
+<div class="kpi2" style="margin-bottom:4px">
+  ${card("판정", d.total.toLocaleString())}
+  ${card("심각", d.critical.toLocaleString(), d.critical ? "r" : "")}
+  ${card("주의", d.warn.toLocaleString())}
+  ${card("참고", d.info.toLocaleString())}
+  ${card("최근 24시간 심각", d.critical24.toLocaleString(), d.critical24 ? "r" : "")}
+  ${card("보이는 줄", `${d.rows.length.toLocaleString()}건`)}
+</div>
+
+${sectionHead("판정 상세", `/admin/anomaly?period=${d.period}&scope=${d.forScope}`, "요약으로 돌아가기 →")}
+<div class="scroll"><table class="recent anb2"><tr><th>구간</th><th>등급</th><th>신호</th><th>${traffic ? "서비스" : "앱"}</th><th>무슨 일인가</th><th>검증</th><th class="n">메일</th></tr>${rows}</table></div>
+
+<p class="foot">줄을 누르면 검증 에이전트의 판단과 확인할 일, 수치가 펼쳐져요.<br>
+검증에서 잘못 잡은 것으로 본 줄은 흐리게 보이고 아래로 밀려요. 급하게 볼 것은 없지만 근거는 남겨 둬요.<br>
+심각 신호는 검증을 기다리지 않고 바로 메일로 나가요. ‘메일 →’를 누르면 그 메일이 펼쳐진 채로 열려요.<br>
+한 번에 ${ANOMALY_PAGE}건까지 보여줘요.</p>
 </div>`,
 		{ ...opts, tab: "anomaly" },
 	);

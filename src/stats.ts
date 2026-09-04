@@ -1764,8 +1764,6 @@ export interface AnomalyData {
 	lastDetected: number;
 	/** 최근 24시간 구간에서 새로 잡힌 수 — "누적 몇 건"과 "지금 벌어지는 일"을 구분한다. */
 	recent24: number; critical24: number;
-	/** 심각 신호 상세 — 화면 맨 위 브리핑에 쓴다. 연결된 메일 번호를 함께 붙인다. */
-	criticals: AnomalyRowWithMail[];
 	buckets: { b: string; critical: number; warn: number; info: number; total: number }[];
 	bySignal: { key: string; label: string; total: number; critical: number }[];
 	byApp: { key: string; name: string; total: number; critical: number }[];
@@ -1820,7 +1818,7 @@ async function collectAnomalyInner(
 	};
 
 	const [appsRs, sumRow, prevRow, bucketRs, sigRs, appRs, recentRs, modelRs, stateRs, trainRs, evalRs,
-		dayRow, critRs, mailRs] = await Promise.all([
+		dayRow, mailRs] = await Promise.all([
 		env.DB.prepare("SELECT id, name, active FROM apps ORDER BY name").all<{ id: string; name: string; active: number }>(),
 		bind(
 			"SELECT COUNT(*) AS n," +
@@ -1869,15 +1867,6 @@ async function collectAnomalyInner(
 				" FROM anomalies WHERE bucket >= ?1" + scopeWhere + appWhere,
 		).first<{ n: number; c: number | null }>(),
 
-		// 심각 신호만 따로 — 이력 표는 120건에서 잘려 심각이 밀려날 수 있다.
-		bind(
-			"SELECT * FROM anomalies WHERE bucket >= ?1" + scopeWhere + appWhere +
-				" AND severity='critical'" +
-				// 오탐으로 판정된 건은 뒤로 민다. 브리핑 맨 위는 실제로 봐야 할 자리다.
-				" ORDER BY CASE WHEN verdict IN ('rule_fp','model_fp','both_fp') THEN 1 ELSE 0 END," +
-				" bucket DESC, detected_at DESC LIMIT 8",
-		).all<AnomalyRow>(),
-
 		// 이상 알림 메일 — 심각 신호가 어느 메일에 실려 나갔는지 이어 준다.
 		env.DB.prepare(
 			"SELECT src_id, subject, det_ids FROM anomaly_mails WHERE kind='anomaly' AND sent_at >= ?1" +
@@ -1885,21 +1874,7 @@ async function collectAnomalyInner(
 		).bind(since).all<{ src_id: number; subject: string; det_ids: string | null }>(),
 	]);
 
-	// 판정 id → 그 판정이 실린 메일. 서버가 보낸 det_ids를 그대로 되짚는다.
-	const mailOf = new Map<number, { id: number; subject: string }>();
-	for (const m of mailRs.results ?? []) {
-		let ids: unknown = [];
-		try {
-			ids = JSON.parse(m.det_ids || "[]");
-		} catch {
-			ids = [];
-		}
-		if (!Array.isArray(ids)) continue;
-		for (const raw of ids) {
-			const n = Number(raw);
-			if (Number.isFinite(n) && !mailOf.has(n)) mailOf.set(n, { id: m.src_id, subject: m.subject });
-		}
-	}
+	const mailOf = mailIndex(mailRs.results ?? []);
 
 	const nameOf = new Map((appsRs.results ?? []).map((a) => [a.id, a.name]));
 	const state = stateRs.results ?? [];
@@ -1928,10 +1903,6 @@ async function collectAnomalyInner(
 		})),
 		recent24: dayRow?.n ?? 0,
 		critical24: dayRow?.c ?? 0,
-		criticals: (critRs.results ?? []).map((r) => {
-			const m = r.src_id ? mailOf.get(r.src_id) : undefined;
-			return { ...r, mailId: m?.id ?? null, mailSubject: m?.subject ?? null };
-		}),
 		recent: (recentRs.results ?? []).map((r) => {
 			const m = r.src_id ? mailOf.get(r.src_id) : undefined;
 			return { ...r, mailId: m?.id ?? null, mailSubject: m?.subject ?? null };
@@ -1942,6 +1913,119 @@ async function collectAnomalyInner(
 		scope,
 		trains: trainRs.results ?? [],
 		evals: (evalRs.results ?? []).slice().reverse(),
+	};
+}
+
+/** 판정 id → 그 판정이 실린 메일. 서버가 보낸 det_ids를 그대로 되짚는다. */
+function mailIndex(
+	rows: { src_id: number; subject: string; det_ids: string | null }[],
+): Map<number, { id: number; subject: string }> {
+	const out = new Map<number, { id: number; subject: string }>();
+	for (const m of rows) {
+		let ids: unknown = [];
+		try {
+			ids = JSON.parse(m.det_ids || "[]");
+		} catch {
+			ids = [];
+		}
+		if (!Array.isArray(ids)) continue;
+		for (const raw of ids) {
+			const n = Number(raw);
+			if (Number.isFinite(n) && !out.has(n)) out.set(n, { id: m.src_id, subject: m.subject });
+		}
+	}
+	return out;
+}
+
+// ── 이상탐지 상세 (/admin/anomaly?scope=detail) ───────────────
+//   요약 화면에 건마다 풀어 쓴 카드를 쌓으면 화면이 한없이 길어진다.
+//   그래서 상세는 이 게시판으로 옮기고, 요약에서는 "자세히 보기"로 넘어온다.
+
+/** 상세 게시판 한 장에 보여줄 판정 수. */
+export const ANOMALY_PAGE = 60;
+
+export interface AnomalyBoardData {
+	period: string;
+	since: number;
+	/** 어느 갈래를 보는지 — ai · traffic */
+	forScope: string;
+	/** 등급 거르기 — critical · warn · info · "" (전체) */
+	sev: string;
+	appFilter: string;
+	apps: { id: string; name: string; active: boolean }[];
+	total: number; critical: number; warn: number; info: number;
+	critical24: number;
+	rows: AnomalyRowWithMail[];
+	state: { key: string; value: string; updated_at: number }[];
+	heartbeatAge: number | null;
+}
+
+export async function collectAnomalyBoard(
+	env: StatsEnv, period: string, forScope: string, sev: string, appFilter: string,
+): Promise<AnomalyBoardData> {
+	return withSchema(env, () => collectAnomalyBoardInner(env, period, forScope, sev, appFilter));
+}
+
+async function collectAnomalyBoardInner(
+	env: StatsEnv, period: string, forScope: string, sev: string, appFilter: string,
+): Promise<AnomalyBoardData> {
+	const { since } = periodInfo(period);
+	const day = Date.now() - 86_400_000;
+	// 조건이 붙는 순서대로 자리 번호를 매긴다(빈 자리를 남기지 않는다).
+	const args: (string | number)[] = [since, forScope];
+	const appWhere = appFilter ? ` AND app = ?${args.push(appFilter)}` : "";
+	const sevWhere = sev ? ` AND severity = ?${args.push(sev)}` : "";
+
+	const [appsRs, sumRow, dayRow, rowsRs, mailRs, stateRs] = await Promise.all([
+		env.DB.prepare("SELECT id, name, active FROM apps ORDER BY name").all<{ id: string; name: string; active: number }>(),
+		env.DB.prepare(
+			"SELECT COUNT(*) AS n," +
+				" SUM(CASE WHEN severity='critical' THEN 1 ELSE 0 END) AS c," +
+				" SUM(CASE WHEN severity='warn' THEN 1 ELSE 0 END) AS w," +
+				" SUM(CASE WHEN severity='info' THEN 1 ELSE 0 END) AS i" +
+				" FROM anomalies WHERE bucket >= ?1 AND scope = ?2" + (appFilter ? " AND app = ?3" : ""),
+		).bind(...(appFilter ? [since, forScope, appFilter] : [since, forScope]))
+			.first<{ n: number; c: number | null; w: number | null; i: number | null }>(),
+		env.DB.prepare(
+			"SELECT COUNT(*) AS n FROM anomalies WHERE bucket >= ?1 AND scope = ?2 AND severity='critical'" +
+				(appFilter ? " AND app = ?3" : ""),
+		).bind(...(appFilter ? [day, forScope, appFilter] : [day, forScope])).first<{ n: number }>(),
+		env.DB.prepare(
+			"SELECT * FROM anomalies WHERE bucket >= ?1 AND scope = ?2" + appWhere + sevWhere +
+				// 등급이 먼저다. 같은 등급 안에서 오탐으로 판정된 건은 뒤로 민다.
+				" ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END," +
+				" CASE WHEN verdict IN ('rule_fp','model_fp','both_fp') THEN 1 ELSE 0 END," +
+				` bucket DESC, detected_at DESC LIMIT ${ANOMALY_PAGE}`,
+		).bind(...args).all<AnomalyRow>(),
+		env.DB.prepare(
+			"SELECT src_id, subject, det_ids FROM anomaly_mails WHERE kind='anomaly' AND sent_at >= ?1" +
+				" ORDER BY sent_at DESC LIMIT 200",
+		).bind(since).all<{ src_id: number; subject: string; det_ids: string | null }>(),
+		env.DB.prepare("SELECT key, value, updated_at FROM anomaly_state ORDER BY key").all<{ key: string; value: string; updated_at: number }>(),
+	]);
+
+	const mailOf = mailIndex(mailRs.results ?? []);
+	const state = stateRs.results ?? [];
+	const newest = state.reduce((a, b) => Math.max(a, b.updated_at || 0), 0);
+
+	return {
+		period,
+		since,
+		forScope,
+		sev,
+		appFilter,
+		apps: (appsRs.results ?? []).map((a) => ({ id: a.id, name: a.name, active: !!a.active })),
+		total: sumRow?.n ?? 0,
+		critical: sumRow?.c ?? 0,
+		warn: sumRow?.w ?? 0,
+		info: sumRow?.i ?? 0,
+		critical24: dayRow?.n ?? 0,
+		rows: (rowsRs.results ?? []).map((r) => {
+			const m = r.src_id ? mailOf.get(r.src_id) : undefined;
+			return { ...r, mailId: m?.id ?? null, mailSubject: m?.subject ?? null };
+		}),
+		state,
+		heartbeatAge: newest ? Date.now() - newest : null,
 	};
 }
 
