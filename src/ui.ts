@@ -551,10 +551,16 @@ const EXTRA_CSS = `
 .anb .st .dot{width:9px;height:9px;border-radius:50%;background:var(--g);flex:0 0 9px;}
 .anb .st.down .dot{background:var(--r);}
 .anb .st.stale .dot{background:#E0A33B;}
-.anb .nums{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px;}
-.anb .nums div{background:#fafbfc;border:1px solid var(--line);border-radius:10px;padding:7px 9px;}
-.anb .nums b{display:block;font-size:17px;font-weight:900;line-height:1.3;font-variant-numeric:tabular-nums;}
-.anb .nums span{font-size:11px;color:var(--muted);font-weight:700;}
+.sevd{display:flex;align-items:center;gap:12px;margin-top:11px;}
+.sevd svg{width:88px;height:88px;flex:0 0 88px;overflow:visible;}
+.sevd svg path{cursor:default;}
+.sevd .cv{text-anchor:middle;font-size:19px;font-weight:900;fill:var(--ink);font-variant-numeric:tabular-nums;}
+.sevd .cl{text-anchor:middle;font-size:10px;font-weight:700;fill:var(--muted);}
+.sevd .lgs{min-width:0;}
+.sevd .lg{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:700;padding:2px 0;}
+.sevd .lg i{width:9px;height:9px;border-radius:3px;flex:0 0 9px;display:block;}
+.sevd .lg .nm{color:var(--muted);}
+.sevd .lg b{font-size:14px;font-weight:900;font-variant-numeric:tabular-nums;}
 .anb .sub{margin-top:8px;font-size:11.5px;color:var(--muted);}
 .anb .sub a{color:var(--accent);font-weight:700;text-decoration:none;}
 .anb .sub a:hover{text-decoration:underline;}

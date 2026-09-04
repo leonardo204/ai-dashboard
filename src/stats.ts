@@ -831,7 +831,7 @@ export interface AnomalyBriefRow {
 	detail: string | null; verdict: string | null; verdict_reason: string | null;
 }
 export interface AnomalyBrief {
-	total: number; critical: number; warn: number;
+	total: number; critical: number; warn: number; info: number;
 	prevTotal: number;
 	lastDetected: number;
 	/** 이상탐지 서버가 마지막으로 신호를 보낸 뒤 지난 시간(ms). 한 번도 없으면 null. */
@@ -1016,6 +1016,8 @@ function anomalyBriefOf(
 		total: sum?.n ?? 0,
 		critical: sum?.c ?? 0,
 		warn: sum?.w ?? 0,
+		// 등급은 셋뿐이라 참고는 따로 세지 않고 나머지로 둔다(조회 하나를 아낀다).
+		info: Math.max(0, (sum?.n ?? 0) - (sum?.c ?? 0) - (sum?.w ?? 0)),
 		prevTotal: prev?.n ?? 0,
 		lastDetected: sum?.last ?? 0,
 		heartbeatAge: newest ? Date.now() - newest : null,

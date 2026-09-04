@@ -512,6 +512,56 @@ function modelMetrics(raw: string | null): string {
 	return parts.length ? parts.join(" · ") : "-";
 }
 
+/** 심각도 비중 도넛 — 요약 칸 왼쪽에 들어가는 작은 판. 가운데에 전체 건수를 적는다. */
+const SEV_COLOR: Record<string, string> = { critical: "#c0392b", warn: "#E0A33B", info: "#35A7FF" };
+
+function sevDonut(a: { critical: number; warn: number; info: number; total: number }): string {
+	const parts = [
+		{ k: "critical", label: "심각", v: a.critical },
+		{ k: "warn", label: "주의", v: a.warn },
+		{ k: "info", label: "참고", v: a.info },
+	].filter((r) => r.v > 0);
+	const sum = parts.reduce((x, y) => x + y.v, 0) || 1;
+
+	const C = 48, R = 42, r = 28;
+	const pt = (ang: number, rad: number) =>
+		`${(C + rad * Math.cos(ang)).toFixed(2)},${(C + rad * Math.sin(ang)).toFixed(2)}`;
+
+	let acc = -Math.PI / 2;
+	const arcs =
+		parts.length === 1
+			? `<circle cx="${C}" cy="${C}" r="${(R + r) / 2}" fill="none" stroke="${SEV_COLOR[parts[0].k]}" stroke-width="${R - r}" data-tip="${escapeHtml(`${parts[0].label} ${parts[0].v}건 (100%)`)}"/>`
+			: parts
+					.map((s) => {
+						const ang = (s.v / sum) * Math.PI * 2;
+						const a0 = acc;
+						const a1 = acc + ang;
+						acc = a1;
+						const large = ang > Math.PI ? 1 : 0;
+						const d = `M ${pt(a0, R)} A ${R} ${R} 0 ${large} 1 ${pt(a1, R)} L ${pt(a1, r)} A ${r} ${r} 0 ${large} 0 ${pt(a0, r)} Z`;
+						const tip = `${s.label} ${s.v.toLocaleString()}건 (${((s.v / sum) * 100).toFixed(0)}%)`;
+						return `<path d="${d}" fill="${SEV_COLOR[s.k]}" data-tip="${escapeHtml(tip)}"/>`;
+					})
+					.join("");
+
+	const legend = parts
+		.map(
+			(s) =>
+				`<div class="lg"><i style="background:${SEV_COLOR[s.k]}"></i>` +
+				`<span class="nm">${s.label}</span><b>${s.v.toLocaleString()}</b></div>`,
+		)
+		.join("");
+
+	return `<div class="sevd">
+  <svg viewBox="0 0 ${C * 2} ${C * 2}" role="img" aria-label="심각도 비중">
+    ${arcs}
+    <text x="${C}" y="${C - 1}" class="cv">${a.total.toLocaleString()}</text>
+    <text x="${C}" y="${C + 13}" class="cl">건</text>
+  </svg>
+  <div class="lgs">${legend}</div>
+</div>`;
+}
+
 /**
  * 요약 화면에 얹는 이상탐지 칸.
  * 훑어보는 화면이라 "지금 이상이 있나 · 무엇이 · 탐지기는 살아 있나" 셋만 담고,
@@ -549,18 +599,11 @@ function anomalyBand(a: AnomalyBrief, href: string): string {
 		})
 		.join("");
 
-	const box = (v: string, l: string, tone = "") =>
-		`<div><b${tone ? ` class="${tone}"` : ""}>${v}</b><span>${l}</span></div>`;
-
 	return `<div class="anb">
   <div class="anb-l">
     ${dot}
-    <div class="nums">
-      ${box(a.critical.toLocaleString(), "심각", a.critical ? "r" : "")}
-      ${box(a.warn.toLocaleString(), "주의")}
-      ${box(a.hitRate === null ? "-" : pct1(a.hitRate), "정탐률")}
-    </div>
-    <div class="sub">전체 ${a.total.toLocaleString()}건${delta(a.total, a.prevTotal, true)} · 마지막 탐지 ${a.lastDetected ? ago(Date.now() - a.lastDetected) : "-"}</div>
+    ${sevDonut(a)}
+    <div class="sub">전체 ${a.total.toLocaleString()}건${delta(a.total, a.prevTotal, true)}${a.hitRate === null ? "" : ` · 정탐률 ${pct1(a.hitRate)}`}<br>마지막 탐지 ${a.lastDetected ? ago(Date.now() - a.lastDetected) : "-"}</div>
   </div>
   <div class="anb-r"><div class="scroll"><table class="mini"><tr><th>구간</th><th>등급</th><th>신호</th><th>앱</th><th class="n">관측</th><th>검증</th></tr>${rows}</table></div>
     <div class="sub"><a href="${href}">이상 신호 ${a.total.toLocaleString()}건 모두 보기 →</a></div>
