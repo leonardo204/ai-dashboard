@@ -150,8 +150,9 @@ export function renderSummary(s: SummaryData, opts: AdminOpts = {}): string {
 				.map((r) => {
 					const geo = r.city && r.city !== "-" ? r.city : r.region && r.region !== "-" ? r.region : r.country;
 					return (
-						`<tr><td class="mono">${kst(r.ts)}</td><td>${escapeHtml(r.app)}</td><td>${escapeHtml(r.kind)}</td>` +
-						`<td class="mono">${escapeHtml(shortModel(r.model ?? "-"))}</td>` +
+						`<tr><td class="mono">${kst(r.ts)}</td><td data-tip="${escapeHtml(r.app)}">${escapeHtml(r.app)}</td>` +
+						`<td>${escapeHtml(r.kind)}</td>` +
+						`<td class="mono" data-tip="${escapeHtml(r.model ?? "-")}">${escapeHtml(shortModel(r.model ?? "-"))}</td>` +
 						`<td><span class="pill ${r.status === "ok" ? "g" : "r"}">${escapeHtml(r.status)}</span></td>` +
 						`<td class="n">${r.http ?? "-"}</td><td class="n">${r.latency_ms.toLocaleString()}ms</td>` +
 						`<td class="n">${(r.inTok + r.outTok).toLocaleString()}</td><td class="n">${usd(r.cost)}</td>` +
@@ -1475,8 +1476,9 @@ export function renderLogs(l: LogsData, opts: AdminOpts = {}): string {
 					const geo = r.city && r.city !== "-" ? r.city : r.region && r.region !== "-" ? r.region : r.country;
 					const brief = r.err ?? r.meta ?? "";
 					return (
-						`<tr data-det="${r.id}"><td>${kst(r.ts)}</td><td>${escapeHtml(r.app)}</td><td>${escapeHtml(r.kind)}</td>` +
-						`<td class="mono">${escapeHtml(shortModel(r.model ?? "-"))}</td>` +
+						`<tr data-det="${r.id}"><td>${kst(r.ts)}</td><td data-tip="${escapeHtml(r.app)}">${escapeHtml(r.app)}</td>` +
+						`<td>${escapeHtml(r.kind)}</td>` +
+						`<td class="mono" data-tip="${escapeHtml(r.model ?? "-")}">${escapeHtml(shortModel(r.model ?? "-"))}</td>` +
 						`<td class="${r.status === "ok" ? "g" : "r"}">${escapeHtml(r.status)}</td>` +
 						`<td class="n">${r.http ?? "-"}</td><td class="n">${r.latency_ms.toLocaleString()}ms</td>` +
 						`<td class="n">${(r.inTok + r.outTok).toLocaleString()}</td><td class="n">${usd(r.cost)}</td>` +

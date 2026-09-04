@@ -704,12 +704,15 @@ table.log td.w{white-space:normal;}
 /* 호출 목록(로그 탭 · 요약 화면 최근 호출) — 칸이 11개라 그냥 두면 옆으로 밀린다.
    너비를 못박아 화면 안에 넣고, 남는 폭은 오류·메타 칸이 가져간다. */
 table.calls{table-layout:fixed;width:100%;}
-table.calls th,table.calls td{white-space:normal;word-break:break-word;overflow-wrap:anywhere;
- vertical-align:top;padding:8px 9px;}
+/* 모든 칸을 한 줄로 고정한다. 한 칸이라도 줄바꿈되면 그 줄만 높아져 오른쪽 눈금이 어긋나 보이고,
+   반대로 줄바꿈을 막기만 하면 긴 값이 옆 칸 위로 넘쳐 겹친다. 넘치는 만큼은 …으로 자르고,
+   자른 값은 마우스를 올리거나 줄을 펼치면 다 나온다. */
+table.calls th,table.calls td{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+ vertical-align:middle;padding:8px 9px;}
 table.calls col.c-ts{width:106px;}
-table.calls col.c-app{width:92px;}
+table.calls col.c-app{width:112px;}
 table.calls col.c-kind{width:64px;}
-table.calls col.c-model{width:112px;}
+table.calls col.c-model{width:104px;}
 table.calls col.c-st{width:56px;}
 table.calls col.c-http{width:52px;}
 table.calls col.c-lat{width:68px;}
@@ -718,9 +721,6 @@ table.calls col.c-cost{width:68px;}
 table.calls col.c-geo{width:74px;}
 table.calls td.mono{font-size:11.5px;}
 table.calls td.n{white-space:nowrap;}
-/* 줄 높이를 모두 같게 둔다. 칸마다 줄 수가 다르면 오른쪽으로 갈수록 눈금이 어긋나 보인다.
-   잘린 내용은 마우스를 올리거나 줄을 펼치면 다 나온다. */
-table.calls td.geo,table.calls td.err{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 table.calls td.err{max-width:none;font-size:11.5px;color:var(--muted);}
 table.calls td.geo .sm{color:var(--muted);}
 /* 화면이 좁아지면 덜 중요한 칸부터 접는다(내용은 줄을 펼치면 다 있다) */
