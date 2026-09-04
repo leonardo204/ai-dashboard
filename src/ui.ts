@@ -605,13 +605,35 @@ table.mail td.w .sm{margin-top:2px;display:block;line-height:1.5;}
  text-decoration:none;white-space:nowrap;}
 .noteline a:hover{text-decoration:underline;}
 
-/* 이상탐지 상세 게시판 */
+/* 이상탐지 상세 게시판 — 가로 스크롤 없이 화면 폭에 맞춘다.
+   게시판에서 옆으로 미는 건 최악이라, 칸 너비를 못박고 글이 줄바꿈하게 둔다. */
+table.anb2{table-layout:fixed;width:100%;font-size:12.5px;}
+table.anb2 th,table.anb2 td{white-space:normal;word-break:break-word;overflow-wrap:anywhere;
+ vertical-align:top;}
+table.anb2 th,table.anb2 td{padding:8px 10px;}
+table.anb2 col.c-when{width:100px;}
+table.anb2 col.c-sev{width:58px;}
+table.anb2 col.c-sig{width:106px;}
+table.anb2 col.c-app{width:100px;}
+table.anb2 col.c-vd{width:116px;}
+table.anb2 col.c-ml{width:56px;}
+table.anb2 .vd,table.anb2 .sev{font-size:11px;padding:2px 7px;}
 table.anb2 tr[data-det]{cursor:pointer;}
 table.anb2 tr[data-det]:hover td{background:#faf8ff;}
 table.anb2 tr[data-det].fp td{opacity:.62;}
-table.anb2 td.w{white-space:normal;max-width:560px;}
-table.anb2 td.w b{font-weight:700;}
+table.anb2 td.mono{font-size:11.5px;}
+table.anb2 td.w b{font-weight:700;line-height:1.55;}
 table.anb2 td.w .sm{margin-top:3px;display:block;line-height:1.5;}
+/* 화면이 좁아지면 표에서 덜 중요한 칸부터 접는다(내용은 펼친 줄에 다 있다) */
+@media(max-width:900px){
+ table.anb2 col.c-sig,table.anb2 col.c-app{width:0;}
+ table.anb2 th:nth-child(3),table.anb2 td:nth-child(3),
+ table.anb2 th:nth-child(4),table.anb2 td:nth-child(4){display:none;}
+}
+@media(max-width:620px){
+ table.anb2 col.c-ml{width:0;}
+ table.anb2 th:nth-child(7),table.anb2 td:nth-child(7){display:none;}
+}
 table.anb2 tr.det .cb{border:0;border-left:3px solid #c0392b;border-radius:0 10px 10px 0;
  background:#fff;padding:11px 14px;}
 table.anb2 tr.det .cb.fp{border-left-color:#c9ced8;}

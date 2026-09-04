@@ -897,12 +897,71 @@ function serverBarOf(state: { key: string; value: string; updated_at: number }[]
 </div>`;
 }
 
-/** 이상탐지 갈래 고르기 — AI 호출·서비스 방문은 보는 지표가 다르고, 메일 내역은 결과물이다. */
-function scopeTabs(scope: string, period: string, forScope = "ai"): string {
-	const t = (k: string, label: string, extra = "") =>
-		`<a class="tab${scope === k ? " on" : ""}" href="/admin/anomaly?period=${period}&scope=${k}${extra}">${label}</a>`;
-	return `<div class="tabs">${t("ai", "AI 호출")}${t("traffic", "트래픽")}` +
-		`${t("detail", "이상탐지 상세", `&for=${forScope}`)}${t("mail", "메일 발송")}</div>`;
+/**
+ * 이상탐지 탭 — 줄을 둘로만 쓴다.
+ *   줄1  무엇을 보나(AI 호출 · 트래픽 · 메일 발송) + 오른쪽에 기간
+ *   줄2  어떻게 보나(요약 · 판정 상세) + 오른쪽에 화면별 곁가지(등급·종류)
+ * 예전에는 갈래 줄과 기간 줄에 같은 이름이 두 번 나와 헷갈렸다.
+ */
+export interface AnomalyNav {
+	/** ai · traffic (메일 화면에서도 직전 갈래를 기억한다) */
+	scope: string;
+	/** summary · detail · mail */
+	view: string;
+	period: string;
+	app?: string;
+	sev?: string;
+	kind?: string;
+}
+
+function anomalyHref(v: AnomalyNav): string {
+	const p = new URLSearchParams();
+	p.set("period", v.period);
+	if (v.view === "mail") {
+		p.set("scope", "mail");
+		if (v.kind) p.set("kind", v.kind);
+	} else if (v.view === "detail") {
+		p.set("scope", "detail");
+		p.set("for", v.scope);
+		if (v.sev) p.set("sev", v.sev);
+		if (v.app) p.set("app", v.app);
+	} else {
+		p.set("scope", v.scope);
+		if (v.app) p.set("app", v.app);
+	}
+	return `/admin/anomaly?${p.toString()}`;
+}
+
+const navTab = (label: string, on: boolean, href: string) =>
+	`<a class="tab${on ? " on" : ""}" href="${href}">${label}</a>`;
+
+/** 줄1 — 갈래 + 기간 */
+function anomalyNavRow(cur: AnomalyNav): string {
+	const view = cur.view === "mail" ? "summary" : cur.view;
+	const left =
+		navTab("AI 호출", cur.view !== "mail" && cur.scope === "ai", anomalyHref({ ...cur, view, scope: "ai", app: "" })) +
+		navTab("트래픽", cur.view !== "mail" && cur.scope === "traffic", anomalyHref({ ...cur, view, scope: "traffic", app: "" })) +
+		navTab("메일 발송", cur.view === "mail", anomalyHref({ ...cur, view: "mail" }));
+	const periods = Object.entries(PERIODS)
+		.map(([k, v]) => navTab(v.label, k === cur.period, anomalyHref({ ...cur, period: k })))
+		.join("");
+	return `<div class="tabs">${left}<span style="flex:1"></span>${periods}</div>`;
+}
+
+/** 줄2 — 보기 방식 + 오른쪽 곁가지 */
+function anomalyViewRow(cur: AnomalyNav, right = ""): string {
+	if (cur.view === "mail") return right ? `<div class="tabs">${right}</div>` : "";
+	const left =
+		navTab("요약", cur.view === "summary", anomalyHref({ ...cur, view: "summary" })) +
+		navTab("판정 상세", cur.view === "detail", anomalyHref({ ...cur, view: "detail" }));
+	return `<div class="tabs">${left}${right ? `<span style="flex:1"></span>${right}` : ""}</div>`;
+}
+
+/** 줄3 — 앱(서비스) 고르기. 항목이 많아 따로 둔다. */
+function anomalyAppRow(cur: AnomalyNav, apps: { id: string; name: string }[], traffic: boolean): string {
+	const t = (id: string, label: string) =>
+		navTab(escapeHtml(label), (cur.app ?? "") === id, anomalyHref({ ...cur, app: id }));
+	return `<div class="tabs">${t("", traffic ? "전체 서비스" : "전체 앱")}${apps.map((a) => t(a.id, a.name)).join("")}</div>`;
 }
 
 const SITE_TABS = Object.entries(SITES).map(([id, v]) => ({ id, name: v.name, active: true }));
@@ -912,6 +971,7 @@ export function renderAnomaly(a: AnomalyData, opts: AdminOpts = {}): string {
 	const who = traffic ? "서비스" : "앱";
 	const nameOf = (k: string) => (k === "*" ? "전체" : traffic ? siteName(k) : k);
 	const q = `?period=${a.period}${a.appFilter ? `&app=${encodeURIComponent(a.appFilter)}` : ""}&scope=${a.scope}`;
+	const nav: AnomalyNav = { scope: a.scope, view: "summary", period: a.period, app: a.appFilter };
 
 	const card = (l: string, v: string, tone = "", extra = "") =>
 		`<div class="m"><div class="l">${l}</div><div class="v ${tone}">${v}${extra}</div></div>`;
@@ -1096,17 +1156,9 @@ export function renderAnomaly(a: AnomalyData, opts: AdminOpts = {}): string {
 			a.appFilter,
 		) +
 			`<div id="hz-body">
-${scopeTabs(a.scope, a.period)}
-${filterTabs(
-	"/admin/anomaly",
-	a.period,
-	a.appFilter,
-	traffic ? SITE_TABS : a.apps,
-	PERIODS,
-	"",
-	"",
-	{ key: traffic ? "site" : "app", allLabel: traffic ? "전체 서비스" : "전체 앱", extra: `&scope=${a.scope}` },
-)}
+${anomalyNavRow(nav)}
+${anomalyViewRow(nav)}
+${anomalyAppRow(nav, traffic ? SITE_TABS : a.apps, traffic)}
 ${serverBar(a)}
 ${warmupNotice(a)}
 
@@ -1240,11 +1292,9 @@ export function renderMails(d: MailsData, opts: AdminOpts = {}): string {
 	const card = (l: string, v: string, tone = "") =>
 		`<div class="m"><div class="l">${l}</div><div class="v ${tone}">${v}</div></div>`;
 
-	const periodTabs = Object.entries(PERIODS)
-		.map(([k, v]) => `<a class="tab${k === d.period ? " on" : ""}" href="/admin/anomaly?period=${k}&scope=mail${d.kind ? `&kind=${d.kind}` : ""}">${v.label}</a>`)
-		.join("");
+	const nav: AnomalyNav = { scope: "ai", view: "mail", period: d.period, kind: d.kind };
 	const kindTab = (k: string, label: string, n?: number) =>
-		`<a class="tab${d.kind === k ? " on" : ""}" href="/admin/anomaly?period=${d.period}&scope=mail${k ? `&kind=${k}` : ""}">${label}${n === undefined ? "" : ` ${n}`}</a>`;
+		navTab(`${label}${n === undefined ? "" : ` ${n}`}`, d.kind === k, anomalyHref({ ...nav, kind: k }));
 
 	const rows = d.rows.length
 		? d.rows.map(mailRow).join("")
@@ -1254,9 +1304,8 @@ export function renderMails(d: MailsData, opts: AdminOpts = {}): string {
 		"보낸 메일",
 		pageHead("이상탐지", `보낸 알림 메일 · ${sinceLabel(d.since)}`, "") +
 			`<div id="hz-body">
-${scopeTabs("mail", d.period)}
-<div class="tabs">${periodTabs}</div>
-<div class="tabs">${kindTab("", "전체", d.total)}${kindTab("anomaly", "이상 알림", d.anomaly)}${kindTab("train", "학습 결과", d.train)}${kindTab("test", "점검", d.test)}</div>
+${anomalyNavRow(nav)}
+${anomalyViewRow(nav, kindTab("", "전체", d.total) + kindTab("anomaly", "이상 알림", d.anomaly) + kindTab("train", "학습 결과", d.train) + kindTab("test", "점검", d.test))}
 ${serverBarOf(d.state, d.heartbeatAge)}
 
 <div class="kpi2" style="margin-bottom:4px">
@@ -1319,27 +1368,14 @@ export function renderAnomalyDetail(d: AnomalyBoardData, opts: AdminOpts = {}): 
 	const card = (l: string, v: string, tone = "") =>
 		`<div class="m"><div class="l">${l}</div><div class="v ${tone}">${v}</div></div>`;
 
-	const q = (over: { period?: string; for?: string; sev?: string; app?: string }) => {
-		const p = new URLSearchParams();
-		p.set("period", over.period ?? d.period);
-		p.set("scope", "detail");
-		p.set("for", over.for ?? d.forScope);
-		const sev = over.sev ?? d.sev;
-		if (sev) p.set("sev", sev);
-		const app = over.app ?? d.appFilter;
-		if (app) p.set("app", app);
-		return `/admin/anomaly?${p.toString()}`;
+	const nav: AnomalyNav = {
+		scope: d.forScope, view: "detail", period: d.period, app: d.appFilter, sev: d.sev,
 	};
-
-	const periodTabs = Object.entries(PERIODS)
-		.map(([k, v]) => `<a class="tab${k === d.period ? " on" : ""}" href="${q({ period: k })}">${v.label}</a>`)
-		.join("");
-	const forTab = (k: string, label: string) =>
-		`<a class="tab${d.forScope === k ? " on" : ""}" href="${q({ for: k, app: "" })}">${label}</a>`;
 	const sevTab = (k: string, label: string, n: number) =>
-		`<a class="tab${d.sev === k ? " on" : ""}" href="${q({ sev: k })}">${label} ${n.toLocaleString()}</a>`;
-	const appTab = (id: string, label: string) =>
-		`<a class="tab${d.appFilter === id ? " on" : ""}" href="${q({ app: id })}">${escapeHtml(label)}</a>`;
+		navTab(`${label} ${n.toLocaleString()}`, d.sev === k, anomalyHref({ ...nav, sev: k }));
+	const sevTabs =
+		sevTab("", "전체", d.total) + sevTab("critical", "심각", d.critical) +
+		sevTab("warn", "주의", d.warn) + sevTab("info", "참고", d.info);
 
 	const apps = traffic ? SITE_TABS : d.apps;
 	const rows = d.rows.length
@@ -1354,10 +1390,9 @@ export function renderAnomalyDetail(d: AnomalyBoardData, opts: AdminOpts = {}): 
 			d.appFilter,
 		) +
 			`<div id="hz-body">
-${scopeTabs("detail", d.period, d.forScope)}
-<div class="tabs">${forTab("ai", "AI 호출")}${forTab("traffic", "트래픽")}<span style="flex:1"></span>${periodTabs}</div>
-<div class="tabs">${sevTab("", "전체", d.total)}${sevTab("critical", "심각", d.critical)}${sevTab("warn", "주의", d.warn)}${sevTab("info", "참고", d.info)}</div>
-<div class="tabs">${appTab("", traffic ? "전체 서비스" : "전체 앱")}${apps.map((a) => appTab(a.id, a.name)).join("")}</div>
+${anomalyNavRow(nav)}
+${anomalyViewRow(nav, sevTabs)}
+${anomalyAppRow(nav, apps, traffic)}
 ${serverBarOf(d.state, d.heartbeatAge)}
 
 <div class="kpi2" style="margin-bottom:4px">
@@ -1370,7 +1405,9 @@ ${serverBarOf(d.state, d.heartbeatAge)}
 </div>
 
 ${sectionHead("판정 상세", `/admin/anomaly?period=${d.period}&scope=${d.forScope}`, "요약으로 돌아가기 →")}
-<div class="scroll"><table class="recent anb2"><tr><th>구간</th><th>등급</th><th>신호</th><th>${traffic ? "서비스" : "앱"}</th><th>무슨 일인가</th><th>검증</th><th class="n">메일</th></tr>${rows}</table></div>
+<table class="anb2">
+<colgroup><col class="c-when"><col class="c-sev"><col class="c-sig"><col class="c-app"><col><col class="c-vd"><col class="c-ml"></colgroup>
+<tr><th>구간</th><th>등급</th><th>신호</th><th>${traffic ? "서비스" : "앱"}</th><th>무슨 일인가</th><th>검증</th><th class="n">메일</th></tr>${rows}</table>
 
 <p class="foot">줄을 누르면 검증 에이전트의 판단과 확인할 일, 수치가 펼쳐져요.<br>
 검증에서 잘못 잡은 것으로 본 줄은 흐리게 보이고 아래로 밀려요. 급하게 볼 것은 없지만 근거는 남겨 둬요.<br>
