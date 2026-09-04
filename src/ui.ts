@@ -576,6 +576,20 @@ const EXTRA_CSS = `
 .anb.quiet .t{font-size:13px;font-weight:700;}
 @media(max-width:860px){.anb{grid-template-columns:1fr}}
 
+/* 보낸 메일 게시판 */
+.kind{display:inline-flex;font-weight:800;font-size:11.5px;border-radius:999px;padding:2px 9px;
+ border:1px solid;white-space:nowrap;}
+.kind.k-an{background:#f6f1ff;color:#5E3A9E;border-color:#e5daff;}
+.kind.k-tr{background:#eef7f0;color:#0a7d33;border-color:#cfe8d4;}
+.kind.k-ts{background:#f5f6fa;color:#6b7280;border-color:#e6e9ef;}
+table.mail tr[data-det]{cursor:pointer;}
+table.mail tr[data-det]:hover td{background:#faf8ff;}
+table.mail td.w{white-space:normal;max-width:520px;}
+table.mail td.w .sm{margin-top:2px;display:block;line-height:1.5;}
+.mailbody{background:#fafbfc;border:1px solid var(--line);border-radius:10px;padding:13px 15px;
+ margin:0 0 10px;font-family:inherit;font-size:12.5px;line-height:1.8;white-space:pre-wrap;
+ word-break:break-word;max-height:380px;overflow:auto;}
+
 /* 요일 × 시각 히트맵 */
 .hm{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px;overflow-x:auto;}
 .hm table{border:none;border-radius:0;background:none;font-size:11px;width:auto;min-width:100%;}

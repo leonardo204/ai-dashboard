@@ -33,7 +33,7 @@ import { renderGuide, GUIDE_MD, GUIDE_FILENAME } from "./guide";
 import {
 	collectStats, collectSummary, collectUsage, collectTrend, collectGeo, queryLogs, logsCsv,
 	listApps, getApp, upsertApp, deleteApp, newToken, pulse, exportCalls, PERIODS, LOG_PAGE,
-	collectAnomaly, pushAnomaly, listPasskeys, passkeyCount, deletePasskey,
+	collectAnomaly, pushAnomaly, collectMails, getMailHtml, listPasskeys, passkeyCount, deletePasskey,
 	collectTraffic,
 	type AppConfig, type LogFilter,
 } from "./stats";
@@ -41,7 +41,7 @@ import { handlePasskey, type PasskeyEnv } from "./passkey";
 import { handleHit, exportHits, SITES, type TrafficEnv } from "./traffic";
 import { renderLogin } from "./ui";
 import {
-	renderSummary, renderUsage, renderTrend, renderGeo, renderAnomaly, renderTraffic, renderLogs, renderApps,
+	renderSummary, renderUsage, renderTrend, renderGeo, renderAnomaly, renderMails, renderTraffic, renderLogs, renderApps,
 } from "./views";
 
 interface Env extends ProxyEnv, PasskeyEnv, TrafficEnv {
@@ -605,9 +605,32 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 			const unauth = await requireAdmin(request, env, url);
 			if (unauth) return unauth;
 			const { period, appFilter } = statScope(url);
-			const scope = url.searchParams.get("scope") === "traffic" ? "traffic" : "ai";
+			const raw = url.searchParams.get("scope");
+			// 메일 발송 내역은 판정이 아니라 결과물이라 화면 자체가 다르다.
+			if (raw === "mail") {
+				const kindRaw = url.searchParams.get("kind") || "";
+				const kind = ["anomaly", "train", "test"].includes(kindRaw) ? kindRaw : "";
+				return html(renderMails(await collectMails(env, period, kind), { session: true }), { cache: false });
+			}
+			const scope = raw === "traffic" ? "traffic" : "ai";
 			return html(
 				renderAnomaly(await collectAnomaly(env, period, appFilter, scope), { session: true }),
+				{ cache: false },
+			);
+		}
+
+		if (path.startsWith("/admin/anomaly/mail/")) {
+			const unauth = await requireAdmin(request, env, url);
+			if (unauth) return unauth;
+			const id = Number(path.slice("/admin/anomaly/mail/".length).replace(/\/$/, ""));
+			if (!Number.isFinite(id)) return apiErr(400, "메일 번호가 올바르지 않아요.");
+			const m = await getMailHtml(env, id);
+			if (!m) return apiErr(404, "그 메일을 찾을 수 없어요.");
+			if (m.html) return html(m.html, { cache: false });
+			return html(
+				`<!DOCTYPE html><meta charset="UTF-8"><title>보낸 메일</title>` +
+					`<pre style="font:13px/1.8 -apple-system,sans-serif;white-space:pre-wrap;padding:24px">` +
+					`${(m.body ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c] as string)}</pre>`,
 				{ cache: false },
 			);
 		}

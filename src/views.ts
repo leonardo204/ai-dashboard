@@ -13,9 +13,10 @@
  */
 
 import {
-	PERIODS, MODEL_PRICES, DEFAULT_MODEL, countryName, LOG_PAGE, SUMMARY_RECENT,
+	PERIODS, MODEL_PRICES, DEFAULT_MODEL, countryName, LOG_PAGE, SUMMARY_RECENT, MAIL_PAGE,
 	type AppConfig, type GroupRow, type PasskeyRow,
 	type SummaryData, type UsageData, type TrendData, type GeoData, type LogsData, type LogFilter,
+	type MailsData, type MailRow,
 	type AnomalyBrief,
 	type AnomalyData, type AnomalyRow,
 	type TrafficData, type TrafficBrief,
@@ -650,7 +651,10 @@ function anomalyBand(a: AnomalyBrief, href: string): string {
 
 /** 이상탐지 서버 상태줄 — heartbeat가 끊긴 것 자체가 알림이다. */
 function serverBar(a: AnomalyData): string {
-	const age = a.heartbeatAge;
+	return serverBarOf(a.state, a.heartbeatAge);
+}
+
+function serverBarOf(state: { key: string; value: string; updated_at: number }[], age: number | null): string {
 	const cls = age === null ? "down" : age > 15 * 60_000 ? "down" : age > 5 * 60_000 ? "stale" : "";
 	const msg =
 		age === null
@@ -661,7 +665,7 @@ function serverBar(a: AnomalyData): string {
 					? "이상탐지 서버 신호가 늦어지고 있어요."
 					: "이상탐지 서버가 정상 동작 중이에요.";
 
-	const jobs = a.state
+	const jobs = state
 		.filter((s) => s.key.startsWith("job:"))
 		.map((s) => {
 			let v: { ok?: boolean; error?: string; result?: unknown } = {};
@@ -683,11 +687,11 @@ function serverBar(a: AnomalyData): string {
 </div>`;
 }
 
-/** 이상탐지 갈래 고르기 — AI 호출과 서비스 방문은 보는 지표도 규모도 달라 따로 본다. */
-function scopeTabs(a: AnomalyData): string {
+/** 이상탐지 갈래 고르기 — AI 호출·서비스 방문은 보는 지표가 다르고, 메일 내역은 결과물이다. */
+function scopeTabs(scope: string, period: string): string {
 	const t = (k: string, label: string) =>
-		`<a class="tab${a.scope === k ? " on" : ""}" href="/admin/anomaly?period=${a.period}&scope=${k}">${label}</a>`;
-	return `<div class="tabs">${t("ai", "AI 호출")}${t("traffic", "트래픽")}</div>`;
+		`<a class="tab${scope === k ? " on" : ""}" href="/admin/anomaly?period=${period}&scope=${k}">${label}</a>`;
+	return `<div class="tabs">${t("ai", "AI 호출")}${t("traffic", "트래픽")}${t("mail", "메일 발송")}</div>`;
 }
 
 const SITE_TABS = Object.entries(SITES).map(([id, v]) => ({ id, name: v.name, active: true }));
@@ -875,7 +879,7 @@ export function renderAnomaly(a: AnomalyData, opts: AdminOpts = {}): string {
 			a.appFilter,
 		) +
 			`<div id="hz-body">
-${scopeTabs(a)}
+${scopeTabs(a.scope, a.period)}
 ${filterTabs(
 	"/admin/anomaly",
 	a.period,
@@ -952,6 +956,103 @@ ${traffic
 심각·주의 신호는 ${escapeHtml("zerolive7@gmail.com")}으로 메일이 나가요. 같은 신호가 이어지면 일정 시간 동안 묶어서 한 번만 보내요.<br>
 '검증'은 판정 근거를 다시 읽고 정탐인지 오탐인지 가리는 단계예요. 오탐으로 판정되면 메일을 보내지 않아요. 심각 신호는 검증을 기다리지 않고 바로 보내요.<br>
 모델은 검증셋 성적과 실데이터 정탐률이 기준을 넘고 지금 쓰는 모델보다 나빠지지 않을 때만 승격돼요. 그전까지는 판정을 기록만 하고 메일에는 쓰지 않아요.</p>
+</div>`,
+		{ ...opts, tab: "anomaly" },
+	);
+}
+
+// ═════════════════════════════════════════════════════════════
+// 보낸 메일 (/admin/anomaly?scope=mail)
+//   메일함을 열지 않고도 무엇이 언제 나갔는지 여기서 본다. 줄을 누르면 본문이 펼쳐지고,
+//   '받은 그대로 보기'는 실제로 보낸 HTML을 새 창에 그대로 띄운다.
+// ═════════════════════════════════════════════════════════════
+
+const MAIL_KIND: Record<string, { text: string; cls: string }> = {
+	anomaly: { text: "이상 알림", cls: "k-an" },
+	train: { text: "학습 결과", cls: "k-tr" },
+	test: { text: "점검", cls: "k-ts" },
+};
+const MAIL_SCOPE: Record<string, string> = { ai: "AI 호출", traffic: "트래픽", both: "AI 호출 · 트래픽" };
+
+function mailRow(m: MailRow): string {
+	const k = MAIL_KIND[m.kind] ?? { text: m.kind, cls: "k-ts" };
+	let signals: string[] = [];
+	try {
+		signals = JSON.parse(m.signals || "[]") as string[];
+	} catch {
+		signals = [];
+	}
+	const sigText = signals
+		.map((v) => v.split("|").slice(-1)[0])
+		.filter((v, i, arr) => arr.indexOf(v) === i)
+		.map((v) => SIGNAL_LABEL[v] ?? v)
+		.join(" · ");
+
+	const head =
+		`<tr data-det="m${m.src_id}">` +
+		`<td class="mono">${bucketAt(m.sent_at)}</td>` +
+		`<td><span class="kind ${k.cls}">${escapeHtml(k.text)}</span></td>` +
+		`<td>${escapeHtml(MAIL_SCOPE[m.scope ?? "ai"] ?? m.scope ?? "-")}</td>` +
+		`<td>${m.kind === "anomaly" ? sevTag(m.severity ?? "info") : "-"}</td>` +
+		`<td class="w"><b>${escapeHtml(m.subject.replace(/^\[AI Service\]\s*/, ""))}</b>` +
+		(m.lead ? `<div class="sm">${escapeHtml(m.lead)}</div>` : "") +
+		`</td>` +
+		`<td class="n">${m.ok ? `<span class="pill g">보냄</span>` : `<span class="pill r">실패</span>`}</td></tr>`;
+
+	const detail =
+		`<tr class="det" id="det-m${m.src_id}" hidden><td colspan="6">` +
+		(m.error ? `<div class="al" style="margin-bottom:10px">보내지 못했어요 — ${escapeHtml(m.error)}</div>` : "") +
+		`<div class="sm" style="margin-bottom:8px">받는 사람 ${escapeHtml(m.recipient ?? "-")}` +
+		(sigText ? ` · 신호 ${escapeHtml(sigText)}` : "") +
+		`</div>` +
+		`<pre class="mailbody">${escapeHtml(m.body ?? "(본문이 남아 있지 않아요)")}</pre>` +
+		(m.has_html
+			? `<a class="btn" href="/admin/anomaly/mail/${m.src_id}" target="_blank" rel="noopener">받은 그대로 보기 →</a>`
+			: "") +
+		`</td></tr>`;
+
+	return head + detail;
+}
+
+export function renderMails(d: MailsData, opts: AdminOpts = {}): string {
+	const card = (l: string, v: string, tone = "") =>
+		`<div class="m"><div class="l">${l}</div><div class="v ${tone}">${v}</div></div>`;
+
+	const periodTabs = Object.entries(PERIODS)
+		.map(([k, v]) => `<a class="tab${k === d.period ? " on" : ""}" href="/admin/anomaly?period=${k}&scope=mail${d.kind ? `&kind=${d.kind}` : ""}">${v.label}</a>`)
+		.join("");
+	const kindTab = (k: string, label: string, n?: number) =>
+		`<a class="tab${d.kind === k ? " on" : ""}" href="/admin/anomaly?period=${d.period}&scope=mail${k ? `&kind=${k}` : ""}">${label}${n === undefined ? "" : ` ${n}`}</a>`;
+
+	const rows = d.rows.length
+		? d.rows.map(mailRow).join("")
+		: `<tr><td colspan="6">이 기간에 보낸 메일이 없어요.</td></tr>`;
+
+	return shellAdmin(
+		"보낸 메일",
+		pageHead("이상탐지", `보낸 알림 메일 · ${sinceLabel(d.since)}`, "") +
+			`<div id="hz-body">
+${scopeTabs("mail", d.period)}
+<div class="tabs">${periodTabs}</div>
+<div class="tabs">${kindTab("", "전체", d.total)}${kindTab("anomaly", "이상 알림", d.anomaly)}${kindTab("train", "학습 결과", d.train)}${kindTab("test", "점검", d.test)}</div>
+${serverBarOf(d.state, d.heartbeatAge)}
+
+<div class="kpi2" style="margin-bottom:4px">
+  ${card("보낸 메일", d.total.toLocaleString())}
+  ${card("이상 알림", d.anomaly.toLocaleString())}
+  ${card("학습 결과", d.train.toLocaleString())}
+  ${card("점검", d.test.toLocaleString())}
+  ${card("보내지 못함", d.failed.toLocaleString(), d.failed ? "r" : "")}
+  ${card("마지막 발송", d.lastSent ? ago(Date.now() - d.lastSent) : "-")}
+</div>
+
+${sectionHead("보낸 메일 내역", "/admin/anomaly?period=" + d.period, "이상 신호 보기 →")}
+<div class="scroll"><table class="recent mail"><tr><th>보낸 시각</th><th>종류</th><th>갈래</th><th>등급</th><th>제목</th><th class="n">결과</th></tr>${rows}</table></div>
+
+<p class="foot">줄을 누르면 실제로 보낸 본문이 펼쳐져요. ‘받은 그대로 보기’는 메일함에서 보이는 모습 그대로 새 창에 띄워요.<br>
+같은 신호가 이어지면 정해진 시간 동안 묶어서 한 번만 보내요. 검증에서 잘못 잡은 것으로 판정된 신호는 아예 보내지 않고, 이상탐지 화면에 ‘보내지 않음’으로 남아요.<br>
+트래픽에서는 방문 급감·서버 오류(5xx)·없는 주소 요청(404)만 메일로 보내고, 나머지는 화면에만 남겨요.<br>
+최근 ${MAIL_PAGE}건까지 보여줘요.</p>
 </div>`,
 		{ ...opts, tab: "anomaly" },
 	);

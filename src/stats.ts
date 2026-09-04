@@ -108,6 +108,11 @@ export async function ensureSchema(env: StatsEnv): Promise<void> {
 			" ran_at INTEGER NOT NULL, dataset TEXT, detector TEXT NOT NULL, version TEXT," +
 			" tp INTEGER, fp INTEGER, fn INTEGER, precision REAL, recall REAL, f1 REAL," +
 			" by_signal TEXT, PRIMARY KEY (scope, src_id))",
+		// 보낸 메일 내역 — 이상탐지 서버가 보낸 알림을 그대로 받아 게시판으로 보여준다.
+		"CREATE TABLE IF NOT EXISTS anomaly_mails (src_id INTEGER PRIMARY KEY, sent_at INTEGER NOT NULL," +
+			" kind TEXT NOT NULL DEFAULT 'anomaly', scope TEXT, severity TEXT, subject TEXT NOT NULL," +
+			" lead TEXT, recipient TEXT, ok INTEGER NOT NULL DEFAULT 1, error TEXT," +
+			" signals TEXT, det_ids TEXT, body TEXT, html TEXT)",
 		// 관리자 패스키(WebAuthn). 공개키만 보관하므로 이 표가 새어도 로그인에는 쓸 수 없다.
 		"CREATE TABLE IF NOT EXISTS passkeys (cred_id TEXT PRIMARY KEY, public_key TEXT NOT NULL, alg INTEGER NOT NULL DEFAULT -7, label TEXT, created_at INTEGER NOT NULL, last_used_at INTEGER, counter INTEGER NOT NULL DEFAULT 0)",
 	]) {
@@ -129,6 +134,7 @@ export async function ensureSchema(env: StatsEnv): Promise<void> {
 		"CREATE INDEX IF NOT EXISTS idx_anom_scope ON anomalies(scope, bucket)",
 		"CREATE INDEX IF NOT EXISTS idx_anom_evals ON anomaly_evals(scope, detector, ran_at)",
 		"CREATE INDEX IF NOT EXISTS idx_anom_trains ON anomaly_trains(scope, started_at)",
+		"CREATE INDEX IF NOT EXISTS idx_anom_mails ON anomaly_mails(sent_at)",
 	]) {
 		try {
 			await env.DB.prepare(sql).run();
@@ -1550,6 +1556,15 @@ export interface EvalIn {
 	by_signal?: unknown;
 }
 
+export interface MailIn {
+	src_id: number;
+	sent_at?: number | null; kind?: string | null; scope?: string | null; severity?: string | null;
+	subject?: string | null; lead?: string | null; recipient?: string | null;
+	ok?: boolean | null; error?: string | null;
+	signals?: string[] | null; det_ids?: number[] | null;
+	body?: string | null; html?: string | null;
+}
+
 const SEVERITIES = new Set(["info", "warn", "critical"]);
 
 /** 이상탐지 서버가 밀어 넣는 결과를 받는다. 같은 (구간·앱·신호)는 덮어쓴다. */
@@ -1559,6 +1574,7 @@ export async function pushAnomaly(
 		detections?: AnomalyIn[];
 		models?: ModelIn[];
 		trains?: TrainIn[];
+		mails?: MailIn[];
 		evals?: EvalIn[];
 		state?: Record<string, unknown>;
 		/** 이상탐지 서버가 그 구간에 남겨 둔 판정 목록. 여기 없는 건 저쪽에서 지운 것이라 함께 지운다. */
@@ -1569,6 +1585,7 @@ export async function pushAnomaly(
 	const dets = (body.detections ?? []).slice(0, 500);
 	const models = (body.models ?? []).slice(0, 200);
 	const trains = (body.trains ?? []).slice(0, 200);
+	const mails = (body.mails ?? []).slice(0, 50);
 	const evals = (body.evals ?? []).slice(0, 400);
 	const state = body.state ?? {};
 
@@ -1650,6 +1667,27 @@ export async function pushAnomaly(
 				e.detector ?? "rule", e.version ?? null, e.tp ?? 0, e.fp ?? 0, e.fn ?? 0,
 				e.precision ?? 0, e.recall ?? 0, e.f1 ?? 0,
 				e.by_signal == null ? null : JSON.stringify(e.by_signal).slice(0, 1200),
+			),
+		);
+	}
+	for (const m of mails) {
+		if (!m || !Number.isFinite(m.src_id) || !m.subject) continue;
+		stmts.push(
+			env.DB.prepare(
+				"INSERT INTO anomaly_mails (src_id, sent_at, kind, scope, severity, subject, lead," +
+					" recipient, ok, error, signals, det_ids, body, html)" +
+					" VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)" +
+					" ON CONFLICT(src_id) DO UPDATE SET ok=excluded.ok, error=excluded.error," +
+					" lead=excluded.lead, body=excluded.body, html=excluded.html",
+			).bind(
+				Math.trunc(m.src_id), m.sent_at ?? now, m.kind ?? "anomaly", m.scope ?? "ai",
+				m.severity ?? "info", String(m.subject).slice(0, 300),
+				(m.lead ?? null) && String(m.lead).slice(0, 400), (m.recipient ?? null) && String(m.recipient).slice(0, 200),
+				m.ok === false ? 0 : 1, (m.error ?? null) && String(m.error).slice(0, 400),
+				JSON.stringify(m.signals ?? []).slice(0, 1000),
+				JSON.stringify(m.det_ids ?? []).slice(0, 2000),
+				(m.body ?? null) && String(m.body).slice(0, 20000),
+				(m.html ?? null) && String(m.html).slice(0, 60000),
 			),
 		);
 	}
@@ -2056,4 +2094,88 @@ export async function trafficBrief(env: StatsEnv, period: string): Promise<Traff
 		// hits 표가 아직 없는 경우 — 화면은 그대로 그리고 "기록 없음"으로 둔다.
 		return empty;
 	}
+}
+
+// ─────────────────────────────────────────────────────────────
+// 보낸 메일 내역 (/admin/anomaly?scope=mail)
+//   이상탐지 서버가 보낸 알림을 그대로 받아 둔다. 무슨 내용이 나갔는지
+//   메일함을 열지 않고 여기서 다시 볼 수 있게 하는 게 목적이다.
+// ─────────────────────────────────────────────────────────────
+
+export interface MailRow {
+	src_id: number; sent_at: number; kind: string; scope: string | null; severity: string | null;
+	subject: string; lead: string | null; recipient: string | null; ok: number;
+	error: string | null; signals: string | null; det_ids: string | null; body: string | null;
+	has_html: number;
+}
+export interface MailsData {
+	period: string;
+	since: number;
+	kind: string;
+	total: number; failed: number;
+	anomaly: number; train: number; test: number;
+	lastSent: number;
+	rows: MailRow[];
+	/** 이상탐지 서버가 마지막으로 신호를 보낸 뒤 지난 시간(ms) */
+	heartbeatAge: number | null;
+	state: { key: string; value: string; updated_at: number }[];
+}
+
+export const MAIL_PAGE = 60;
+
+export async function collectMails(env: StatsEnv, period: string, kind: string): Promise<MailsData> {
+	return withSchema(env, () => collectMailsInner(env, period, kind));
+}
+
+async function collectMailsInner(env: StatsEnv, period: string, kind: string): Promise<MailsData> {
+	const { since } = periodInfo(period);
+	const kindWhere = kind ? " AND kind = ?2" : "";
+	const bind = (sql: string) => {
+		const st = env.DB.prepare(sql);
+		return kind ? st.bind(since, kind) : st.bind(since);
+	};
+
+	const [sumRow, rowsRs, stateRs] = await Promise.all([
+		env.DB.prepare(
+			"SELECT COUNT(*) AS n, SUM(CASE WHEN ok=0 THEN 1 ELSE 0 END) AS bad," +
+				" SUM(CASE WHEN kind='anomaly' THEN 1 ELSE 0 END) AS a," +
+				" SUM(CASE WHEN kind='train' THEN 1 ELSE 0 END) AS t," +
+				" SUM(CASE WHEN kind='test' THEN 1 ELSE 0 END) AS s," +
+				" MAX(sent_at) AS last FROM anomaly_mails WHERE sent_at >= ?1",
+		).bind(since).first<{ n: number; bad: number | null; a: number | null; t: number | null; s: number | null; last: number | null }>(),
+		bind(
+			"SELECT src_id, sent_at, kind, scope, severity, subject, lead, recipient, ok, error," +
+				" signals, det_ids, body, CASE WHEN html IS NULL OR html='' THEN 0 ELSE 1 END AS has_html" +
+				` FROM anomaly_mails WHERE sent_at >= ?1${kindWhere} ORDER BY sent_at DESC LIMIT ${MAIL_PAGE}`,
+		).all<MailRow>(),
+		env.DB.prepare("SELECT key, value, updated_at FROM anomaly_state").all<{ key: string; value: string; updated_at: number }>(),
+	]);
+
+	const state = stateRs.results ?? [];
+	const newest = state.reduce((a, b) => Math.max(a, b.updated_at || 0), 0);
+
+	return {
+		period,
+		since,
+		kind,
+		total: sumRow?.n ?? 0,
+		failed: sumRow?.bad ?? 0,
+		anomaly: sumRow?.a ?? 0,
+		train: sumRow?.t ?? 0,
+		test: sumRow?.s ?? 0,
+		lastSent: sumRow?.last ?? 0,
+		rows: rowsRs.results ?? [],
+		state,
+		heartbeatAge: newest ? Date.now() - newest : null,
+	};
+}
+
+/** 보낸 메일 한 통의 HTML 원문 — 새 창으로 그대로 열어 볼 때 쓴다. */
+export async function getMailHtml(env: StatsEnv, srcId: number): Promise<{ subject: string; html: string | null; body: string | null } | null> {
+	return withSchema(env, async () => {
+		const r = await env.DB.prepare("SELECT subject, html, body FROM anomaly_mails WHERE src_id = ?1")
+			.bind(srcId)
+			.first<{ subject: string; html: string | null; body: string | null }>();
+		return r ?? null;
+	});
 }
