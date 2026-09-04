@@ -1776,12 +1776,12 @@ function notFoundPanel(t: TrafficData): string {
 		return `<div class="empty">이 기간에 없는 주소 요청이 없어요.</div>`;
 	}
 
-	const scan = nf.total - nf.attention;
 	const broken = nf.byKind.find((r) => r.kind === "broken")?.n ?? 0;
+	const rest = nf.total - broken;
 	const verdict = broken
 		? `<div class="nfv warn"><b>${broken.toLocaleString()}건은 우리 쪽 깨진 링크예요.</b>` +
 			`<span>우리 사이트 안에서 넘어온 요청이라 링크를 고치거나 옮긴 주소로 이어 주면 좋아요. ` +
-			`나머지 ${scan.toLocaleString()}건은 자동 스캔이고 전부 막혔어요.</span></div>`
+			`나머지 ${rest.toLocaleString()}건은 자동 스캔이거나 주소 오타예요. 모두 404로 막혔어요.</span></div>`
 		: `<div class="nfv ok"><b>손볼 것은 없어요.</b>` +
 			`<span>${nf.total.toLocaleString()}건 모두 없는 주소라 404로 막혔어요. ` +
 			`대부분 자동 스캐너가 워드프레스·비밀 파일 같은 주소를 차례로 두드려 본 것인데, ` +
