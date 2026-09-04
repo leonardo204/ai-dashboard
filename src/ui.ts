@@ -689,6 +689,43 @@ table.log tr[data-det]{cursor:pointer;}
 table.log tr[data-det]:hover td{background:#faf8ff;}
 table.log td{white-space:nowrap;}
 table.log td.w{white-space:normal;}
+
+/* 호출 목록(로그 탭 · 요약 화면 최근 호출) — 칸이 11개라 그냥 두면 옆으로 밀린다.
+   너비를 못박아 화면 안에 넣고, 남는 폭은 오류·메타 칸이 가져간다. */
+table.calls{table-layout:fixed;width:100%;}
+table.calls th,table.calls td{white-space:normal;word-break:break-word;overflow-wrap:anywhere;
+ vertical-align:top;padding:8px 9px;}
+table.calls col.c-ts{width:106px;}
+table.calls col.c-app{width:92px;}
+table.calls col.c-kind{width:64px;}
+table.calls col.c-model{width:112px;}
+table.calls col.c-st{width:56px;}
+table.calls col.c-http{width:52px;}
+table.calls col.c-lat{width:68px;}
+table.calls col.c-tok{width:62px;}
+table.calls col.c-cost{width:68px;}
+table.calls col.c-geo{width:74px;}
+table.calls td.mono{font-size:11.5px;}
+table.calls td.n{white-space:nowrap;}
+/* 오류·메타는 길다. 세 줄까지만 보이고 나머지는 줄을 펼쳐서 본다. */
+table.calls td.err{max-width:none;white-space:normal;text-overflow:clip;font-size:11.5px;
+ line-height:1.5;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}
+/* 화면이 좁아지면 덜 중요한 칸부터 접는다(내용은 줄을 펼치면 다 있다) */
+@media(max-width:1000px){
+ table.calls col.c-kind,table.calls col.c-tok{width:0;}
+ table.calls th:nth-child(3),table.calls td:nth-child(3),
+ table.calls th:nth-child(8),table.calls td:nth-child(8){display:none;}
+}
+@media(max-width:860px){
+ table.calls col.c-model,table.calls col.c-geo{width:0;}
+ table.calls th:nth-child(4),table.calls td:nth-child(4),
+ table.calls th:nth-child(10),table.calls td:nth-child(10){display:none;}
+}
+@media(max-width:640px){
+ table.calls col.c-http,table.calls col.c-cost{width:0;}
+ table.calls th:nth-child(6),table.calls td:nth-child(6),
+ table.calls th:nth-child(9),table.calls td:nth-child(9){display:none;}
+}
 tr.det td{background:#fafbfc;white-space:normal;}
 .kv{display:grid;grid-template-columns:88px 1fr;gap:3px 12px;font-size:12px;}
 .kv dt{color:var(--muted);font-weight:700;}
