@@ -534,6 +534,14 @@ const EXTRA_CSS = `
 .srv .jobs{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto;}
 .srv .job{font-size:11.5px;font-weight:700;color:var(--muted);background:#f5f6fa;
  border:1px solid var(--line);border-radius:8px;padding:3px 8px;}
+/* 아직 판정을 시작하지 못했을 때 — 조용한 화면과 구분되게 한 줄 알린다 */
+.warm{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;background:#fffaf2;
+ border:1px solid #f2e2c6;border-radius:14px;padding:12px 16px;margin-bottom:12px;font-size:13px;}
+.warm b{font-weight:900;color:#96601a;white-space:nowrap;}
+.warm span{color:var(--muted);}
+.warm .sm{margin-left:auto;font-weight:700;}
+@media(max-width:640px){.warm .sm{margin-left:0;}}
+
 .srv .job.bad{background:#fdecec;border-color:#f6cfcf;color:#a9313a;}
 /* 검증 에이전트 판정 태그 */
 .vd{display:inline-flex;align-items:center;font-weight:800;font-size:11.5px;

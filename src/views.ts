@@ -508,6 +508,45 @@ const pct1 = (v: number | null | undefined) => (v === null || v === undefined ? 
 /** 구간 시각 — 표에서는 초까지 필요 없다. */
 const bucketAt = (ts: number) => kst(ts).slice(0, 11);
 
+/** 판정 단위 이름 — 화면에서는 5m·1h 대신 우리말로 쓴다. */
+const GRAIN_LABEL: Record<string, string> = { "5m": "5분", "1h": "1시간", "1d": "하루" };
+
+interface Readiness {
+	ready?: boolean;
+	grains?: Record<string, { have?: number; need?: number; ready?: boolean; eta?: number | null }>;
+}
+
+/**
+ * 아직 판정을 시작하지 못했을 때 그 사실을 알린다.
+ *
+ * "이상 신호 없음"만 보이면 조용한 건지 못 보고 있는 건지 구분이 안 된다.
+ * 평소 값을 만들 구간이 모자라면 판정 자체를 건너뛰므로, 몇 구간이 더 필요하고
+ * 언제쯤부터 보기 시작하는지를 함께 적는다.
+ */
+function warmupNotice(a: AnomalyData): string {
+	const r = anomState<Record<string, Readiness>>(a, "readiness")?.[a.scope];
+	if (!r || r.ready) return "";
+	const grains = Object.entries(r.grains ?? {});
+	if (!grains.length) return "";
+
+	const parts = grains
+		.map(([g, v]) => {
+			const name = GRAIN_LABEL[g] ?? g;
+			if (v.ready) return `${name} 단위는 판정 중`;
+			const when = v.eta ? ` · ${bucketAt(v.eta)}쯤 시작` : "";
+			return `${name} 단위 ${v.have ?? 0}/${v.need ?? 0}구간${when}`;
+		})
+		.join(" · ");
+	const need = grains[0]?.[1]?.need ?? 5;
+
+	return `<div class="warm">
+  <b>아직 판정을 시작하지 않았어요.</b>
+  <span>평소 값을 만들려면 같은 자리의 지난 구간이 ${need}개는 있어야 하는데 아직 모자라요. 그때까지는 기록만 쌓아요.</span>
+  <span class="sm">${escapeHtml(parts)}</span>
+</div>`;
+}
+
+
 /** 모델 상태 — 등록 표에 영문이 그대로 나오지 않게 옮긴다. */
 const MODEL_STATUS: Record<string, { text: string; cls: string }> = {
 	active: { text: "쓰는 중", cls: "up" },
@@ -891,6 +930,7 @@ ${filterTabs(
 	{ key: traffic ? "site" : "app", allLabel: traffic ? "전체 서비스" : "전체 앱", extra: `&scope=${a.scope}` },
 )}
 ${serverBar(a)}
+${warmupNotice(a)}
 
 <div class="kpi2" style="margin-bottom:4px">
   ${card("이상 신호", a.total.toLocaleString(), "", delta(a.total, a.prevTotal, true))}
