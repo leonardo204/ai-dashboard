@@ -598,6 +598,25 @@ table.mail td.w .sm{margin-top:2px;display:block;line-height:1.5;}
  margin:0 0 10px;font-family:inherit;font-size:12.5px;line-height:1.8;white-space:pre-wrap;
  word-break:break-word;max-height:380px;overflow:auto;}
 
+/* 심각 신호 브리핑 — "심각 3건"만으로는 무엇을 볼지 알 수 없어서 건마다 풀어 쓴다 */
+.cbs{display:grid;gap:10px;}
+.cb{background:var(--panel);border:1px solid var(--line);border-left:3px solid #c0392b;
+ border-radius:14px;padding:13px 16px;}
+.cb.fp{border-left-color:#c9ced8;}
+.cb .hd{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.cb .hd b{font-size:14px;}
+.cb .lead{margin:9px 0 10px;font-size:13.5px;line-height:1.6;}
+.cb .ln{display:flex;gap:10px;font-size:12.5px;line-height:1.6;padding:3px 0;}
+.cb .ln b{flex:0 0 62px;color:var(--muted);font-weight:800;}
+.cb .ln span{min-width:0;}
+.cb .ln.wait span{color:var(--muted);}
+.cb .acts{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:10px;}
+.cb .lk{font-size:12px;font-weight:800;color:var(--accent);text-decoration:none;
+ background:#f5f1ff;border:1px solid #e6dcff;border-radius:9px;padding:5px 10px;}
+.cb .lk:hover{background:#ece4ff;}
+.cb .lk.mail{background:#fff6e8;border-color:#f2ddbe;color:#96601a;}
+tr.hl>td{background:#fff8e6 !important;}
+
 /* 요일 × 시각 히트맵 */
 .hm{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px;overflow-x:auto;}
 .hm table{border:none;border-radius:0;background:none;font-size:11px;width:auto;min-width:100%;}
@@ -885,6 +904,19 @@ document.addEventListener("click", function(e){
   }, true);
   window.addEventListener('scroll', hide, true);
   window.addEventListener('blur', hide);
+})();
+
+// 이상탐지 화면에서 "메일 보기 →"로 건너오면 그 줄을 펼쳐서 보여준다.
+(function(){
+  var m = (location.hash || '').match(/^#m-(\d+)$/);
+  if (!m) return;
+  var tr = document.getElementById('m-' + m[1]);
+  if (!tr) return;
+  var d = document.getElementById('det-m' + m[1]);
+  if (d) d.hidden = false;
+  tr.classList.add('hl');
+  tr.scrollIntoView({block: 'center'});
+  setTimeout(function(){ tr.classList.remove('hl'); }, 2600);
 })();
 
 // 토큰 보기/가리기 — 평소엔 가운데를 가려 둔다.

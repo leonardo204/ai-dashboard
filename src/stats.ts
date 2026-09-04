@@ -94,6 +94,9 @@ export async function ensureSchema(env: StatsEnv): Promise<void> {
 		"ALTER TABLE anomalies ADD COLUMN verdict TEXT",
 		"ALTER TABLE anomalies ADD COLUMN verdict_reason TEXT",
 		"ALTER TABLE anomalies ADD COLUMN suppressed_reason TEXT",
+		// 검증 에이전트의 자연어 설명 — reason은 "왜 이렇게 봤나", action은 "그래서 무엇을 보라".
+		"ALTER TABLE anomalies ADD COLUMN verdict_action TEXT",
+		"ALTER TABLE anomalies ADD COLUMN verdict_confidence REAL",
 		// 판정 갈래 — ai(호출) · traffic(서비스 방문). 앱 이름과 사이트 이름이 한 칸에 섞이지 않게 나눈다.
 		"ALTER TABLE anomalies ADD COLUMN scope TEXT NOT NULL DEFAULT 'ai'",
 		"UPDATE anomalies SET scope='ai' WHERE scope IS NULL OR scope=''",
@@ -1524,6 +1527,8 @@ export interface AnomalyIn {
 	verdict?: string | null;
 	verdict_reason?: string | null;
 	suppressed_reason?: string | null;
+	verdict_action?: string | null;
+	verdict_confidence?: number | null;
 }
 export interface ModelIn {
 	version: string;
@@ -1596,15 +1601,16 @@ export async function pushAnomaly(
 			env.DB.prepare(
 				"INSERT INTO anomalies (src_id, detected_at, bucket, grain, app, signal, severity, score, observed," +
 					" baseline, label, detail, detector, model_version, notified_at, status," +
-					" verdict, verdict_reason, suppressed_reason, scope)" +
-					" VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)" +
+					" verdict, verdict_reason, suppressed_reason, scope, verdict_action, verdict_confidence)" +
+					" VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22)" +
 					" ON CONFLICT(scope, grain, bucket, app, signal) DO UPDATE SET" +
 					" severity=excluded.severity, score=excluded.score, observed=excluded.observed," +
 					" baseline=excluded.baseline, label=excluded.label, detail=excluded.detail," +
 					" detector=excluded.detector, model_version=excluded.model_version," +
 					" notified_at=excluded.notified_at, status=excluded.status," +
 					" verdict=excluded.verdict, verdict_reason=excluded.verdict_reason," +
-					" suppressed_reason=excluded.suppressed_reason",
+					" suppressed_reason=excluded.suppressed_reason," +
+					" verdict_action=excluded.verdict_action, verdict_confidence=excluded.verdict_confidence",
 			).bind(
 				d.src_id ?? null, d.detected_at ?? now, d.bucket, d.grain, d.app, d.signal, d.severity,
 				d.score ?? null, d.observed ?? null, d.baseline ?? null, d.label ?? null,
@@ -1612,6 +1618,8 @@ export async function pushAnomaly(
 				d.detector ?? "rule", d.model_version ?? null, d.notified_at ?? null, d.status ?? "open",
 				d.verdict ?? null, (d.verdict_reason ?? null) && String(d.verdict_reason).slice(0, 400),
 				d.suppressed_reason ?? null, d.scope === "traffic" ? "traffic" : "ai",
+				(d.verdict_action ?? null) && String(d.verdict_action).slice(0, 300),
+				d.verdict_confidence ?? null,
 			),
 		);
 	}
@@ -1734,12 +1742,16 @@ export async function pushAnomaly(
 }
 
 export interface AnomalyRow {
-	id: number; detected_at: number; bucket: number; grain: string; app: string;
+	id: number; src_id: number | null; detected_at: number; bucket: number; grain: string; app: string;
 	signal: string; severity: string; score: number | null; observed: number | null;
 	baseline: number | null; label: string | null; detail: string | null;
 	detector: string | null; model_version: string | null; notified_at: number | null; status: string;
 	verdict: string | null; verdict_reason: string | null; suppressed_reason: string | null;
+	verdict_action: string | null; verdict_confidence: number | null;
 }
+/** 판정 한 줄 + 그 판정이 실려 나간 메일. */
+export type AnomalyRowWithMail = AnomalyRow & { mailId: number | null; mailSubject: string | null };
+
 export interface AnomalyData {
 	period: string;
 	appFilter: string;
@@ -1750,10 +1762,14 @@ export interface AnomalyData {
 	prevTotal: number;
 	notified: number;
 	lastDetected: number;
+	/** 최근 24시간 구간에서 새로 잡힌 수 — "누적 몇 건"과 "지금 벌어지는 일"을 구분한다. */
+	recent24: number; critical24: number;
+	/** 심각 신호 상세 — 화면 맨 위 브리핑에 쓴다. 연결된 메일 번호를 함께 붙인다. */
+	criticals: AnomalyRowWithMail[];
 	buckets: { b: string; critical: number; warn: number; info: number; total: number }[];
 	bySignal: { key: string; label: string; total: number; critical: number }[];
 	byApp: { key: string; name: string; total: number; critical: number }[];
-	recent: AnomalyRow[];
+	recent: AnomalyRowWithMail[];
 	models: {
 		version: string; algo: string | null; scope: string | null; trained_at: number | null;
 		train_from: number | null; train_to: number | null; train_rows: number | null;
@@ -1797,7 +1813,14 @@ async function collectAnomalyInner(
 		return appFilter ? st.bind(since, scope, appFilter) : st.bind(since, scope);
 	};
 
-	const [appsRs, sumRow, prevRow, bucketRs, sigRs, appRs, recentRs, modelRs, stateRs, trainRs, evalRs] = await Promise.all([
+	const day = Date.now() - 86_400_000;
+	const bindDay = (sql: string) => {
+		const st = env.DB.prepare(sql);
+		return appFilter ? st.bind(day, scope, appFilter) : st.bind(day, scope);
+	};
+
+	const [appsRs, sumRow, prevRow, bucketRs, sigRs, appRs, recentRs, modelRs, stateRs, trainRs, evalRs,
+		dayRow, critRs, mailRs] = await Promise.all([
 		env.DB.prepare("SELECT id, name, active FROM apps ORDER BY name").all<{ id: string; name: string; active: number }>(),
 		bind(
 			"SELECT COUNT(*) AS n," +
@@ -1839,7 +1862,44 @@ async function collectAnomalyInner(
 			"SELECT src_id, ran_at, dataset, detector, version, precision, recall, f1 FROM anomaly_evals" +
 				" WHERE scope = ?1 ORDER BY ran_at DESC LIMIT 60",
 		).bind(scope).all<AnomalyData["evals"][number]>(),
+
+		// 최근 24시간 — 기간 누적과 나란히 놓아야 "지금 벌어지는 일"인지 알 수 있다.
+		bindDay(
+			"SELECT COUNT(*) AS n, SUM(CASE WHEN severity='critical' THEN 1 ELSE 0 END) AS c" +
+				" FROM anomalies WHERE bucket >= ?1" + scopeWhere + appWhere,
+		).first<{ n: number; c: number | null }>(),
+
+		// 심각 신호만 따로 — 이력 표는 120건에서 잘려 심각이 밀려날 수 있다.
+		bind(
+			"SELECT * FROM anomalies WHERE bucket >= ?1" + scopeWhere + appWhere +
+				" AND severity='critical'" +
+				// 오탐으로 판정된 건은 뒤로 민다. 브리핑 맨 위는 실제로 봐야 할 자리다.
+				" ORDER BY CASE WHEN verdict IN ('rule_fp','model_fp','both_fp') THEN 1 ELSE 0 END," +
+				" bucket DESC, detected_at DESC LIMIT 8",
+		).all<AnomalyRow>(),
+
+		// 이상 알림 메일 — 심각 신호가 어느 메일에 실려 나갔는지 이어 준다.
+		env.DB.prepare(
+			"SELECT src_id, subject, det_ids FROM anomaly_mails WHERE kind='anomaly' AND sent_at >= ?1" +
+				" ORDER BY sent_at DESC LIMIT 80",
+		).bind(since).all<{ src_id: number; subject: string; det_ids: string | null }>(),
 	]);
+
+	// 판정 id → 그 판정이 실린 메일. 서버가 보낸 det_ids를 그대로 되짚는다.
+	const mailOf = new Map<number, { id: number; subject: string }>();
+	for (const m of mailRs.results ?? []) {
+		let ids: unknown = [];
+		try {
+			ids = JSON.parse(m.det_ids || "[]");
+		} catch {
+			ids = [];
+		}
+		if (!Array.isArray(ids)) continue;
+		for (const raw of ids) {
+			const n = Number(raw);
+			if (Number.isFinite(n) && !mailOf.has(n)) mailOf.set(n, { id: m.src_id, subject: m.subject });
+		}
+	}
 
 	const nameOf = new Map((appsRs.results ?? []).map((a) => [a.id, a.name]));
 	const state = stateRs.results ?? [];
@@ -1866,7 +1926,16 @@ async function collectAnomalyInner(
 			total: r.n,
 			critical: r.c,
 		})),
-		recent: recentRs.results ?? [],
+		recent24: dayRow?.n ?? 0,
+		critical24: dayRow?.c ?? 0,
+		criticals: (critRs.results ?? []).map((r) => {
+			const m = r.src_id ? mailOf.get(r.src_id) : undefined;
+			return { ...r, mailId: m?.id ?? null, mailSubject: m?.subject ?? null };
+		}),
+		recent: (recentRs.results ?? []).map((r) => {
+			const m = r.src_id ? mailOf.get(r.src_id) : undefined;
+			return { ...r, mailId: m?.id ?? null, mailSubject: m?.subject ?? null };
+		}),
 		models: modelRs.results ?? [],
 		state,
 		heartbeatAge: newest ? Date.now() - newest : null,

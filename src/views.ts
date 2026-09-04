@@ -505,6 +505,183 @@ const TRIGGER_LABEL: Record<string, string> = {
 
 const pct1 = (v: number | null | undefined) => (v === null || v === undefined ? "-" : `${(v * 100).toFixed(1)}%`);
 
+/** 지표 이름 — 설명 문장에 그대로 넣는다. */
+const METRIC_LABEL: Record<string, string> = {
+	calls: "호출 수", err_rate: "실패 비율", cost: "비용", latency_p95: "응답 지연",
+	uniq_ips: "접속 IP 수", new_ips: "처음 보는 IP", new_countries: "처음 보는 나라",
+	rate_limited: "상한에 걸린 호출",
+	visits: "방문 수", humans: "사람 방문", ai_bots: "AI 크롤러 방문",
+	search_bots: "검색 크롤러 방문", other_bots: "기타 봇 방문", uniq_visitors: "고유 방문자",
+	err_5xx: "서버 오류(5xx)", err_404: "없는 주소 요청(404)", bot_ratio: "봇 비중",
+	new_bots: "처음 보는 크롤러",
+};
+
+/**
+ * 신호마다 "그래서 무엇을 열어 봐야 하나".
+ * 검증 에이전트가 판단을 붙이기 전에도 화면이 할 말이 있어야 해서 미리 적어 둔다.
+ * 에이전트 설명이 도착하면 그쪽을 먼저 보여주고 이 문구는 뒤로 물러난다.
+ */
+const SIGNAL_GUIDE: Record<string, { todo: string; link?: (q: { period: string; app: string }) => [string, string] }> = {
+	call_spike: {
+		todo: "어느 IP가 몰아서 불렀는지, 앱이 되풀이해 호출한 건 아닌지 로그에서 봐 주세요.",
+		link: (q) => [`/admin/logs?period=${q.period}${q.app ? `&app=${encodeURIComponent(q.app)}` : ""}`, "로그에서 보기 →"],
+	},
+	error_rate: {
+		todo: "실패한 호출의 오류 메시지를 열어 같은 원인인지 확인해 주세요.",
+		link: (q) => [`/admin/logs?period=${q.period}&status=error${q.app ? `&app=${encodeURIComponent(q.app)}` : ""}`, "실패 호출 보기 →"],
+	},
+	cost_spike: {
+		todo: "어떤 모델이 비용을 끌어올렸는지, 비싼 모델로 바뀐 건 아닌지 사용량에서 봐 주세요.",
+		link: (q) => [`/admin/usage?period=${q.period}${q.app ? `&app=${encodeURIComponent(q.app)}` : ""}`, "사용량에서 보기 →"],
+	},
+	ip_surge: {
+		todo: "새로 들어온 IP가 실제 사용자인지, 한곳에서 흩뿌린 건 아닌지 봐 주세요.",
+		link: (q) => [`/admin/logs?period=${q.period}${q.app ? `&app=${encodeURIComponent(q.app)}` : ""}`, "로그에서 보기 →"],
+	},
+	new_ip_burst: {
+		todo: "처음 보는 IP가 한꺼번에 들어왔어요. 토큰이 새어 나간 건 아닌지 확인해 주세요.",
+		link: (q) => [`/admin/logs?period=${q.period}${q.app ? `&app=${encodeURIComponent(q.app)}` : ""}`, "로그에서 보기 →"],
+	},
+	new_country: {
+		todo: "낯선 나라에서 들어온 호출이에요. 쓰는 지역이 맞는지 확인해 주세요.",
+		link: (q) => [`/admin/geo?period=${q.period}${q.app ? `&app=${encodeURIComponent(q.app)}` : ""}`, "지역에서 보기 →"],
+	},
+	rate_limited: {
+		todo: "상한에 걸려 거절된 호출이에요. 상한을 올릴지, 부르는 쪽을 줄일지 정해 주세요.",
+		link: () => ["/admin/apps", "앱 상한 보기 →"],
+	},
+	model_anomaly: {
+		todo: "지표 여러 개가 함께 어긋난 구간이에요. 그 시각 호출을 훑어봐 주세요.",
+		link: (q) => [`/admin/logs?period=${q.period}${q.app ? `&app=${encodeURIComponent(q.app)}` : ""}`, "로그에서 보기 →"],
+	},
+	latency_slow: {
+		todo: "느려진 구간이에요. 어느 모델·용도에서 오래 걸렸는지 확인해 주세요.",
+		link: (q) => [`/admin/logs?period=${q.period}&slow=10000${q.app ? `&app=${encodeURIComponent(q.app)}` : ""}`, "느린 호출 보기 →"],
+	},
+	traffic_drop: {
+		todo: "서비스가 살아 있는지, robots.txt와 사이트맵이 그대로인지 먼저 열어 봐 주세요.",
+		link: (q) => [`/admin/traffic?period=${q.period}${q.app ? `&site=${encodeURIComponent(q.app)}` : ""}`, "트래픽에서 보기 →"],
+	},
+	search_bot_drop: {
+		todo: "검색 크롤러가 막힌 건 아닌지 robots.txt와 색인 상태를 확인해 주세요.",
+		link: (q) => [`/admin/traffic?period=${q.period}${q.app ? `&site=${encodeURIComponent(q.app)}` : ""}`, "트래픽에서 보기 →"],
+	},
+	http_5xx: {
+		todo: "그 시각 서비스가 오류를 냈어요. 배포한 게 있는지, 어느 주소에서 났는지 확인해 주세요.",
+		link: (q) => [`/admin/traffic?period=${q.period}${q.app ? `&site=${encodeURIComponent(q.app)}` : ""}`, "트래픽에서 보기 →"],
+	},
+	http_404: {
+		todo: "없는 주소로 들어온 요청이 늘었어요. 끊긴 링크가 있는지 경로 목록에서 확인해 주세요.",
+		link: (q) => [`/admin/traffic?period=${q.period}${q.app ? `&site=${encodeURIComponent(q.app)}` : ""}`, "트래픽에서 보기 →"],
+	},
+	traffic_spike: {
+		todo: "어디서 들어왔는지 유입 경로를 봐 주세요. 사람이 아니라 봇일 수도 있어요.",
+		link: (q) => [`/admin/traffic?period=${q.period}${q.app ? `&site=${encodeURIComponent(q.app)}` : ""}`, "트래픽에서 보기 →"],
+	},
+	ai_bot_spike: {
+		todo: "어떤 AI 크롤러가 늘었는지, 어떤 글을 읽어 갔는지 확인해 주세요.",
+		link: (q) => [`/admin/traffic?period=${q.period}${q.app ? `&site=${encodeURIComponent(q.app)}` : ""}`, "트래픽에서 보기 →"],
+	},
+	new_bot: {
+		todo: "처음 보는 크롤러예요. 어디에서 온 무엇인지 확인해 주세요.",
+		link: (q) => [`/admin/traffic?period=${q.period}${q.app ? `&site=${encodeURIComponent(q.app)}` : ""}`, "트래픽에서 보기 →"],
+	},
+};
+
+/**
+ * 한 건이 무슨 일인지 한 문장으로 옮긴다.
+ * 검증 에이전트가 아직 안 봤어도 화면이 설명할 수 있어야 해서, 판정에 딸린
+ * 값만으로 문장을 만든다(메일에 쓰는 문장과 같은 결로 맞췄다).
+ */
+function anomalyLead(r: AnomalyRow, who: string): string {
+	const d = anomDetail(r);
+	const metric = METRIC_LABEL[d.metric] || d.label;
+	const where = r.app === "*" ? `전체 ${who}` : `${r.app} ${who}`;
+	const when = bucketAt(r.bucket);
+	const obs = anomValue(r.observed, d.metric);
+	const base = anomValue(r.baseline, d.metric);
+
+	if (r.detector === "model") {
+		const top = anomTopMetrics(r);
+		return `${where}의 ${when} 구간을 학습한 모델이 평소와 다르다고 봤어요.` +
+			(top ? ` 특히 ${top} 쪽이 평소와 벌어졌어요.` : "");
+	}
+	if (d.kind === "absolute") {
+		return `${where}에서 ${when}에 ${metric}이(가) ${obs} 나왔어요. 기준으로 둔 값은 ${base}예요.`;
+	}
+	if (d.ratio && d.ratio < 1) {
+		const cut = Math.round((1 - d.ratio) * 100);
+		return `${where}의 ${metric}이(가) ${when}에 ${obs}로 떨어졌어요. 평소 이 시간대는 ${base} 수준이라 ${cut}% 줄어든 값이에요.`;
+	}
+	return `${where}의 ${metric}이(가) ${when}에 ${obs}까지 올랐어요.` +
+		(d.ratio ? ` 평소 이 시간대는 ${base} 수준이라 ${d.ratio}배예요.` : ` 평소 이 시간대는 ${base} 수준이에요.`);
+}
+
+/** 모델 판정에 딸린 "가장 많이 어긋난 지표" 이름들. */
+function anomTopMetrics(r: AnomalyRow): string {
+	try {
+		const d = r.detail ? (JSON.parse(r.detail) as { top?: { label?: string }[] }) : {};
+		return (d.top ?? []).map((t) => t.label).filter(Boolean).slice(0, 3).join(", ");
+	} catch {
+		return "";
+	}
+}
+
+/**
+ * 심각 신호 브리핑 — "심각 3건"만으로는 무엇을 봐야 할지 알 수 없다.
+ * 건마다 무슨 일인지·검증 에이전트가 어떻게 봤는지·무엇을 열어 볼지를 적고,
+ * 그 건이 메일로 나갔으면 그 메일까지 이어 준다.
+ */
+function criticalBrief(a: AnomalyData): string {
+	if (!a.criticals.length) return "";
+	const traffic = a.scope === "traffic";
+	const who = traffic ? "서비스" : "앱";
+
+	const cards = a.criticals
+		.map((r) => {
+			const d = anomDetail(r);
+			const guide = SIGNAL_GUIDE[r.signal];
+			const link = guide?.link?.({ period: a.period, app: r.app === "*" ? "" : r.app });
+			const fp = r.verdict === "rule_fp" || r.verdict === "model_fp" || r.verdict === "both_fp";
+
+			const verdictLine = r.verdict
+				? `<div class="ln ${fp ? "fp" : "hit"}"><b>검증 결과</b>` +
+					`<span>${verdictTag(r.verdict, null)} ${escapeHtml(r.verdict_reason || "")}` +
+					`${r.verdict_confidence ? ` <span class="sm">(확신 ${Math.round(r.verdict_confidence * 100)}%)</span>` : ""}</span></div>`
+				: `<div class="ln wait"><b>검증 결과</b><span>아직 검증 에이전트가 보지 않았어요. 15분 안에 판단이 붙어요.</span></div>`;
+
+			const todo = r.verdict_action || guide?.todo || "그 시각 기록을 열어 확인해 주세요.";
+			const todoLine = fp
+				? `<div class="ln"><b>할 일</b><span>검증에서 오탐으로 봤어요. 급하게 볼 것은 없지만 근거는 확인해 주세요.</span></div>`
+				: `<div class="ln"><b>확인할 일</b><span>${escapeHtml(todo)}</span></div>`;
+
+			const mail = r.mailId
+				? `<a class="lk mail" href="/admin/anomaly?period=${a.period}&scope=mail#m-${r.mailId}">메일 «${escapeHtml(String(r.mailSubject ?? "").replace(/^\[AI Service\]\s*/, ""))}» 보기 →</a>`
+				: r.suppressed_reason
+					? `<span class="sm">메일은 보내지 않았어요 — ${escapeHtml(r.suppressed_reason)}</span>`
+					: r.detector === "model"
+						? `<span class="sm">모델이 뒤에서 매긴 판정이라 메일로는 나가지 않아요.</span>`
+						: `<span class="sm">아직 메일로 나가지 않았어요.</span>`;
+
+			return `<div class="cb${fp ? " fp" : ""}">
+  <div class="hd">${sevTag(r.severity)}<b>${escapeHtml(d.label)}</b>
+    <span class="sm">${escapeHtml(r.app === "*" ? "전체" : (traffic ? siteName(r.app) : r.app))} · ${bucketAt(r.bucket)} ${escapeHtml(r.grain)} 구간 · ${ago(Date.now() - r.bucket)}</span></div>
+  <p class="lead">${escapeHtml(anomalyLead(r, who))}</p>
+  ${verdictLine}
+  ${todoLine}
+  <div class="acts">${link ? `<a class="lk" href="${link[0]}">${link[1]}</a>` : ""}${mail}</div>
+</div>`;
+		})
+		.join("");
+
+	const more = a.critical > a.criticals.length
+		? `<span class="sm">심각 ${a.critical.toLocaleString()}건 중 최근 ${a.criticals.length}건 · 나머지는 아래 이력에서 봐요</span>`
+		: "";
+	return `<div class="sh2"><h2>지금 확인할 심각 신호</h2>${more}</div>
+<div class="cbs">${cards}</div>`;
+}
+
+
 /** 구간 시각 — 표에서는 초까지 필요 없다. */
 const bucketAt = (ts: number) => kst(ts).slice(0, 11);
 
@@ -779,7 +956,13 @@ export function renderAnomaly(a: AnomalyData, opts: AdminOpts = {}): string {
 							? `<span data-tip="${escapeHtml(r.model_version ?? "")}">모델</span>`
 							: "규칙"}</td>` +
 						`<td>${verdictTag(r.verdict, r.verdict_reason)}</td>` +
-						`<td>${r.notified_at ? bucketAt(r.notified_at) : r.suppressed_reason ? `<span class="sm" data-tip="${escapeHtml(r.suppressed_reason)}">보내지 않음</span>` : "-"}</td></tr>`
+						`<td>${r.mailId
+							? `<a href="/admin/anomaly?period=${a.period}&scope=mail#m-${r.mailId}" data-tip="${escapeHtml(String(r.mailSubject ?? ""))}">메일 보기 →</a>`
+							: r.notified_at
+								? bucketAt(r.notified_at)
+								: r.suppressed_reason
+									? `<span class="sm" data-tip="${escapeHtml(r.suppressed_reason)}">보내지 않음</span>`
+									: "-"}</td></tr>`
 					);
 				})
 				.join("")
@@ -931,10 +1114,12 @@ ${filterTabs(
 )}
 ${serverBar(a)}
 ${warmupNotice(a)}
+${criticalBrief(a)}
 
+<p class="sm" style="margin:16px 2px 6px">아래 숫자는 <b>${escapeHtml(sinceLabel(a.since))}</b> 쌓인 값이에요. 옆의 ‘24시간’은 그중 최근 하루에 잡힌 수예요.</p>
 <div class="kpi2" style="margin-bottom:4px">
-  ${card("이상 신호", a.total.toLocaleString(), "", delta(a.total, a.prevTotal, true))}
-  ${card("심각", a.critical.toLocaleString(), a.critical ? "r" : "")}
+  ${card("이상 신호", a.total.toLocaleString(), "", delta(a.total, a.prevTotal, true) + `<span class="sm"> · 24시간 ${a.recent24.toLocaleString()}</span>`)}
+  ${card("심각", a.critical.toLocaleString(), a.critical ? "r" : "", `<span class="sm"> · 24시간 ${a.critical24.toLocaleString()}</span>`)}
   ${card("주의", a.warn.toLocaleString())}
   ${card("참고", a.info.toLocaleString())}
   ${card("메일 발송", a.notified.toLocaleString(), "", alertState?.suppressed ? `<span class="sm"> · 억제 ${alertState.suppressed}</span>` : "")}
@@ -1029,7 +1214,7 @@ function mailRow(m: MailRow): string {
 		.join(" · ");
 
 	const head =
-		`<tr data-det="m${m.src_id}">` +
+		`<tr id="m-${m.src_id}" data-det="m${m.src_id}">` +
 		`<td class="mono">${bucketAt(m.sent_at)}</td>` +
 		`<td><span class="kind ${k.cls}">${escapeHtml(k.text)}</span></td>` +
 		`<td>${escapeHtml(MAIL_SCOPE[m.scope ?? "ai"] ?? m.scope ?? "-")}</td>` +
