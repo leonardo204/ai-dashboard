@@ -37,6 +37,20 @@ const sinceLabel = (since: number) => (since ? `${kst(since).slice(0, 5)} 이후
 const avgLat = (r: GroupRow) => (r.total ? Math.round(r.latency / r.total) : 0);
 
 /** 표 위에 붙는 검색칸 — 줄이 많은 표에서 쓴다. */
+/**
+ * 폭을 못박은 표의 칸 정의.
+ * "88" 처럼 쓰면 그 폭으로 고정하고, ""이면 남는 폭을 나눠 갖는다.
+ * "70:o1"처럼 뒤에 붙이면 화면이 좁아질 때 접히는 칸이 된다(o1이 먼저, o2가 나중).
+ */
+function cols(...list: string[]): string {
+	return `<colgroup>${list
+		.map((c) => {
+			const [w, o] = c.split(":");
+			return `<col${o ? ` class="${o}"` : ""}${w ? ` style="width:${w}px"` : ""}>`;
+		})
+		.join("")}</colgroup>`;
+}
+
 function tableFilter(tableId: string, placeholder: string): string {
 	return `<input data-filter="${tableId}" placeholder="${escapeHtml(placeholder)}" style="max-width:240px">`;
 }
@@ -141,8 +155,8 @@ export function renderSummary(s: SummaryData, opts: AdminOpts = {}): string {
 						`<td><span class="pill ${r.status === "ok" ? "g" : "r"}">${escapeHtml(r.status)}</span></td>` +
 						`<td class="n">${r.http ?? "-"}</td><td class="n">${r.latency_ms.toLocaleString()}ms</td>` +
 						`<td class="n">${(r.inTok + r.outTok).toLocaleString()}</td><td class="n">${usd(r.cost)}</td>` +
-						`<td>${escapeHtml(geo || "-")}</td>` +
-						`<td class="err">${escapeHtml(r.err ?? r.meta ?? "")}</td></tr>`
+						`<td class="geo">${escapeHtml(geo || "-")}</td>` +
+						`<td class="err"${(r.err ?? r.meta) ? ` data-tip="${escapeHtml(String(r.err ?? r.meta))}"` : ""}>${escapeHtml(r.err ?? r.meta ?? "")}</td></tr>`
 					);
 				})
 				.join("")
@@ -235,10 +249,10 @@ export function renderUsage(u: UsageData, opts: AdminOpts = {}): string {
 					(r) =>
 						`<tr><td><a href="/admin/usage?period=${u.period}&app=${encodeURIComponent(r.key)}">${escapeHtml(r.name)}</a><br><span class="mono">${escapeHtml(r.key)}</span></td>` +
 						`<td class="n">${r.total.toLocaleString()}${u.hasPrev ? delta(r.total, u.prevApp[r.key] ?? 0) : ""}</td>` +
-						`<td class="n g">${r.ok.toLocaleString()}</td><td class="n r">${r.error.toLocaleString()}</td>` +
-						`<td class="n">${(r.inTok + r.outTok).toLocaleString()}</td><td class="n">${usd(r.cost)}</td>` +
-						`<td class="n">${avgLat(r)}ms</td>` +
-						`<td class="n">${r.total ? usd(r.cost / r.total) : "-"}</td>` +
+						`<td class="n g o1">${r.ok.toLocaleString()}</td><td class="n r">${r.error.toLocaleString()}</td>` +
+						`<td class="n o1">${(r.inTok + r.outTok).toLocaleString()}</td><td class="n">${usd(r.cost)}</td>` +
+						`<td class="n o2">${avgLat(r)}ms</td>` +
+						`<td class="n o2">${r.total ? usd(r.cost / r.total) : "-"}</td>` +
 						`<td><a href="/admin/logs?period=${u.period}&app=${encodeURIComponent(r.key)}">로그 →</a></td></tr>`,
 				)
 				.join("")
@@ -251,8 +265,8 @@ export function renderUsage(u: UsageData, opts: AdminOpts = {}): string {
 						`<tr><td class="mono">${escapeHtml(r.key)}${MODEL_PRICES[r.key] ? "" : " *"}</td>` +
 						`<td class="n">${r.total.toLocaleString()}${u.hasPrev ? delta(r.total, u.prevModel[r.key] ?? 0) : ""}</td>` +
 						`<td class="n r">${r.error.toLocaleString()}</td>` +
-						`<td class="n">${r.inTok.toLocaleString()}</td><td class="n">${r.outTok.toLocaleString()}</td>` +
-						`<td class="n">${usd(r.cost)}</td><td class="n">${avgLat(r)}ms</td>` +
+						`<td class="n o1">${r.inTok.toLocaleString()}</td><td class="n o1">${r.outTok.toLocaleString()}</td>` +
+						`<td class="n">${usd(r.cost)}</td><td class="n o2">${avgLat(r)}ms</td>` +
 						`<td><a href="/admin/logs${q}&model=${encodeURIComponent(r.key)}">로그 →</a></td></tr>`,
 				)
 				.join("")
@@ -263,9 +277,9 @@ export function renderUsage(u: UsageData, opts: AdminOpts = {}): string {
 				.map(
 					(r) =>
 						`<tr><td>${escapeHtml(r.key)}</td><td class="n">${r.total.toLocaleString()}</td>` +
-						`<td class="n g">${r.ok.toLocaleString()}</td><td class="n r">${r.error.toLocaleString()}</td>` +
-						`<td class="n">${(r.inTok + r.outTok).toLocaleString()}</td><td class="n">${usd(r.cost)}</td>` +
-						`<td class="n">${avgLat(r)}ms</td>` +
+						`<td class="n g o1">${r.ok.toLocaleString()}</td><td class="n r">${r.error.toLocaleString()}</td>` +
+						`<td class="n o1">${(r.inTok + r.outTok).toLocaleString()}</td><td class="n">${usd(r.cost)}</td>` +
+						`<td class="n o2">${avgLat(r)}ms</td>` +
 						`<td><a href="/admin/logs${q}&kind=${encodeURIComponent(r.key)}">로그 →</a></td></tr>`,
 				)
 				.join("")
@@ -286,13 +300,13 @@ ${filterTabs("/admin/usage", u.period, u.appFilter, u.apps, PERIODS)}
 </div>
 
 <div class="sh2"><h2>앱별</h2></div>
-<div class="scroll"><table id="tb-app"><thead><tr><th>앱</th><th class="n">호출</th><th class="n">성공</th><th class="n">실패</th><th class="n">토큰</th><th class="n">비용</th><th class="n">평균 지연</th><th class="n">호출당 비용</th><th></th></tr></thead><tbody>${appRows}</tbody></table></div>
+<table class="fx" id="tb-app">${cols("", "96", "74:o1", "74", "84:o1", "84", "86:o2", "92:o2", "58")}<thead><tr><th>앱</th><th class="n">호출</th><th class="n o1">성공</th><th class="n">실패</th><th class="n o1">토큰</th><th class="n">비용</th><th class="n o2">평균 지연</th><th class="n o2">호출당 비용</th><th></th></tr></thead><tbody>${appRows}</tbody></table>
 
 <div class="sh2" id="model"><h2>모델별 <span class="sm" id="tb-model-cnt">${u.byModel.length}개</span></h2>${tableFilter("tb-model", "모델 이름으로 걸러보기")}</div>
-<div class="scroll"><table id="tb-model"><thead><tr><th>모델</th><th class="n">호출</th><th class="n">실패</th><th class="n">입력 토큰</th><th class="n">출력 토큰</th><th class="n">비용</th><th class="n">평균 지연</th><th></th></tr></thead><tbody>${modelRows}</tbody></table></div>
+<table class="fx" id="tb-model">${cols("", "96", "74", "90:o1", "90:o1", "84", "86:o2", "58")}<thead><tr><th>모델</th><th class="n">호출</th><th class="n">실패</th><th class="n o1">입력 토큰</th><th class="n o1">출력 토큰</th><th class="n">비용</th><th class="n o2">평균 지연</th><th></th></tr></thead><tbody>${modelRows}</tbody></table>
 
 <div class="sh2"><h2>용도별</h2></div>
-<div class="scroll"><table id="tb-kind"><thead><tr><th>용도</th><th class="n">호출</th><th class="n">성공</th><th class="n">실패</th><th class="n">토큰</th><th class="n">비용</th><th class="n">평균 지연</th><th></th></tr></thead><tbody>${kindRows}</tbody></table></div>
+<table class="fx" id="tb-kind">${cols("", "96", "74:o1", "74", "84:o1", "84", "86:o2", "58")}<thead><tr><th>용도</th><th class="n">호출</th><th class="n o1">성공</th><th class="n">실패</th><th class="n o1">토큰</th><th class="n">비용</th><th class="n o2">평균 지연</th><th></th></tr></thead><tbody>${kindRows}</tbody></table>
 
 <p class="foot">용도는 앱이 보낸 <span class="mono">X-Ai-Kind</span> 값이에요.<br>${FOOT_COST}</p>
 </div>`,
@@ -356,11 +370,11 @@ export function renderGeo(g: GeoData, opts: AdminOpts = {}): string {
 				.map(
 					(r) =>
 						`<tr><td>${escapeHtml(countryName(r.key))}</td><td class="n">${r.total.toLocaleString()}</td>` +
-						`<td class="n g">${r.ok.toLocaleString()}</td><td class="n r">${r.error.toLocaleString()}</td>` +
+						`<td class="n g o1">${r.ok.toLocaleString()}</td><td class="n r">${r.error.toLocaleString()}</td>` +
 						`<td class="n">${r.ips.toLocaleString()}</td>` +
-						`<td class="n">${(r.inTok + r.outTok).toLocaleString()}</td><td class="n">${usd(r.cost)}</td>` +
-						`<td class="n">${avgLat(r)}ms</td>` +
-						`<td class="bar"><span style="width:${Math.round((r.total / maxCountry) * 100)}%"></span></td>` +
+						`<td class="n o1">${(r.inTok + r.outTok).toLocaleString()}</td><td class="n">${usd(r.cost)}</td>` +
+						`<td class="n o2">${avgLat(r)}ms</td>` +
+						`<td class="bar o2"><span style="width:${Math.round((r.total / maxCountry) * 100)}%"></span></td>` +
 						`<td>${r.key === "(미상)" ? "" : `<a href="/admin/logs${q}&country=${encodeURIComponent(r.key)}">로그 →</a>`}</td></tr>`,
 				)
 				.join("")
@@ -372,9 +386,9 @@ export function renderGeo(g: GeoData, opts: AdminOpts = {}): string {
 					(r) =>
 						`<tr><td>${escapeHtml(countryName(r.country))}</td><td>${escapeHtml(r.region)}</td>` +
 						`<td>${escapeHtml(r.city)}</td><td class="n">${r.total.toLocaleString()}</td>` +
-						`<td class="n g">${r.ok.toLocaleString()}</td><td class="n r">${r.error.toLocaleString()}</td>` +
-						`<td class="n">${r.ips.toLocaleString()}</td>` +
-						`<td class="n">${r.tokens.toLocaleString()}</td><td class="n">${usd(r.cost)}</td></tr>`,
+						`<td class="n g o1">${r.ok.toLocaleString()}</td><td class="n r">${r.error.toLocaleString()}</td>` +
+						`<td class="n o1">${r.ips.toLocaleString()}</td>` +
+						`<td class="n o2">${r.tokens.toLocaleString()}</td><td class="n">${usd(r.cost)}</td></tr>`,
 				)
 				.join("")
 		: `<tr><td colspan="9">데이터 없음</td></tr>`;
@@ -387,10 +401,10 @@ ${filterTabs("/admin/geo", g.period, g.appFilter, g.apps, PERIODS)}
 ${svgMap(g.points, g.geoUnknown)}
 
 <div class="sh2"><h2>국가별</h2><span class="sm">${g.byCountry.filter((c) => c.key !== "(미상)").length}개국</span></div>
-<div class="scroll"><table id="tb-country"><thead><tr><th>국가</th><th class="n">호출</th><th class="n">성공</th><th class="n">실패</th><th class="n">고유 IP</th><th class="n">토큰</th><th class="n">비용</th><th class="n">평균 지연</th><th>비중</th><th></th></tr></thead><tbody>${countryRows}</tbody></table></div>
+<table class="fx" id="tb-country">${cols("", "88", "70:o1", "70", "78", "84:o1", "84", "86:o2", "110:o2", "58")}<thead><tr><th>국가</th><th class="n">호출</th><th class="n o1">성공</th><th class="n">실패</th><th class="n">고유 IP</th><th class="n o1">토큰</th><th class="n">비용</th><th class="n o2">평균 지연</th><th class="o2">비중</th><th></th></tr></thead><tbody>${countryRows}</tbody></table>
 
 <div class="sh2"><h2>지역 · 도시별 (상위 ${g.byRegion.length})</h2>${tableFilter("tb-region", "도시·지역 이름으로 걸러보기")}</div>
-<div class="scroll"><table id="tb-region"><thead><tr><th>국가</th><th>지역</th><th>도시</th><th class="n">호출</th><th class="n">성공</th><th class="n">실패</th><th class="n">고유 IP</th><th class="n">토큰</th><th class="n">비용</th></tr></thead><tbody>${regionRows}</tbody></table></div>
+<table class="fx" id="tb-region">${cols("92", "", "", "84", "70:o1", "70", "78:o1", "84:o2", "84")}<thead><tr><th>국가</th><th>지역</th><th>도시</th><th class="n">호출</th><th class="n o1">성공</th><th class="n">실패</th><th class="n o1">고유 IP</th><th class="n o2">토큰</th><th class="n">비용</th></tr></thead><tbody>${regionRows}</tbody></table>
 
 <p class="foot">${FOOT_GEO}</p>
 </div>`,
@@ -1466,8 +1480,8 @@ export function renderLogs(l: LogsData, opts: AdminOpts = {}): string {
 						`<td class="${r.status === "ok" ? "g" : "r"}">${escapeHtml(r.status)}</td>` +
 						`<td class="n">${r.http ?? "-"}</td><td class="n">${r.latency_ms.toLocaleString()}ms</td>` +
 						`<td class="n">${(r.inTok + r.outTok).toLocaleString()}</td><td class="n">${usd(r.cost)}</td>` +
-						`<td>${escapeHtml(r.country)}${geo && geo !== r.country ? `<br><span class="sm">${escapeHtml(geo)}</span>` : ""}</td>` +
-						`<td class="err">${escapeHtml(brief)}</td></tr>` +
+						`<td class="geo">${escapeHtml(r.country)}${geo && geo !== r.country ? ` <span class="sm">${escapeHtml(geo)}</span>` : ""}</td>` +
+						`<td class="err"${brief ? ` data-tip="${escapeHtml(brief)}"` : ""}>${escapeHtml(brief)}</td></tr>` +
 						`<tr class="det" id="det-${r.id}" hidden><td colspan="11"><dl class="kv">` +
 						`<dt>id</dt><dd>${r.id}</dd>` +
 						`<dt>시각</dt><dd>${kst(r.ts)} KST</dd>` +

@@ -683,6 +683,17 @@ tr.hl>td{background:#fff8e6 !important;}
  background:#fafbfc;color:var(--muted);text-decoration:none;}
 .quick a.on{background:#f0eaff;border-color:#ddd0fb;color:#5E3A9E;}
 
+/* 집계 표(사용량 · 지역) — 칸이 8~10개라 그냥 두면 옆으로 밀린다.
+   너비를 못박아 화면 안에 넣고, 좁아지면 덜 중요한 칸(o1 → o2)부터 접는다.
+   접힌 값은 같은 화면의 다른 표나 로그에서 볼 수 있어 잃는 정보가 없다. */
+table.fx{table-layout:fixed;width:100%;}
+table.fx th,table.fx td{white-space:normal;word-break:break-word;overflow-wrap:anywhere;
+ vertical-align:middle;padding:8px 9px;}
+table.fx td.n,table.fx th.n{white-space:nowrap;}
+table.fx td.mono{font-size:11.5px;}
+@media(max-width:1040px){table.fx .o1{display:none;}table.fx col.o1{width:0;}}
+@media(max-width:860px){table.fx .o2{display:none;}table.fx col.o2{width:0;}}
+
 /* 로그 표 — 행을 누르면 상세가 펼쳐진다 */
 table.log{font-size:12.5px;}
 table.log tr[data-det]{cursor:pointer;}
@@ -707,9 +718,11 @@ table.calls col.c-cost{width:68px;}
 table.calls col.c-geo{width:74px;}
 table.calls td.mono{font-size:11.5px;}
 table.calls td.n{white-space:nowrap;}
-/* 오류·메타는 길다. 세 줄까지만 보이고 나머지는 줄을 펼쳐서 본다. */
-table.calls td.err{max-width:none;white-space:normal;text-overflow:clip;font-size:11.5px;
- line-height:1.5;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}
+/* 줄 높이를 모두 같게 둔다. 칸마다 줄 수가 다르면 오른쪽으로 갈수록 눈금이 어긋나 보인다.
+   잘린 내용은 마우스를 올리거나 줄을 펼치면 다 나온다. */
+table.calls td.geo,table.calls td.err{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+table.calls td.err{max-width:none;font-size:11.5px;color:var(--muted);}
+table.calls td.geo .sm{color:var(--muted);}
 /* 화면이 좁아지면 덜 중요한 칸부터 접는다(내용은 줄을 펼치면 다 있다) */
 @media(max-width:1000px){
  table.calls col.c-kind,table.calls col.c-tok{width:0;}
