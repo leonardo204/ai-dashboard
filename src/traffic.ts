@@ -223,6 +223,19 @@ const num = (v: unknown): number | null => {
 export interface HitIn {
 	site?: string; path?: string; status?: number; ms?: number; ua?: string; ref?: string;
 	country?: string; region?: string; city?: string; ip?: string; method?: string; ts?: number;
+	/** 이미 남긴 기록의 상태 코드만 고쳐 쓸 때. Next.js 404·오류 화면이 쓴다. */
+	fix?: boolean; latency_ms?: number;
+}
+
+/** hits 표가 아직 없을 때만 한 번 만들고 다시 시도한다. */
+async function withHits<T>(env: TrafficEnv, fn: () => Promise<T>): Promise<T> {
+	try {
+		return await fn();
+	} catch (e) {
+		if (!/no such table|no such column/i.test(String(e))) throw e;
+		await ensureHitsTable(env);
+		return await fn();
+	}
 }
 
 /** 방문 기록 받기 — 응답은 바로 돌려주고, 쓰기는 waitUntil로 뒤에서 처리한다. */
@@ -243,6 +256,30 @@ export async function handleHit(request: Request, env: TrafficEnv, ctx: Executio
 	} catch {
 		return ok({ error: "JSON 형식이 아니에요." }, 400);
 	}
+	// ── 상태 코드 보정 (fix:true)
+	// Next.js 미들웨어는 응답을 만들기 전 단계라 최종 코드를 모른다. 그래서 통과 요청을 200으로
+	// 남겨 두고, 404·오류 화면이 그려지면 이쪽으로 다시 알려 온다. 같은 방문자의 최근 기록을
+	// 찾아 코드만 고쳐 쓴다 — 새 줄을 만들면 방문 수가 두 배로 잡힌다.
+	if ((body as HitIn)?.fix === true) {
+		const h = body as HitIn;
+		const site = trim(h.site, 40);
+		const status = num(h.status);
+		if (!site || !status) return ok({ error: "site와 status가 필요해요." }, 400);
+		const ipHash = await hashIP(trim(h.ip, 60) || "", env.ADMIN_PASS || "hit");
+		const since = Date.now() - 120_000;
+		const upd = await withHits(env, () =>
+			env.DB.prepare(
+				"UPDATE hits SET status = ?1 WHERE id = (SELECT id FROM hits WHERE site = ?2" +
+					" AND ts >= ?3 AND (?4 IS NULL OR ip_hash = ?4) ORDER BY id DESC LIMIT 1)",
+			)
+				.bind(status, site, since, ipHash)
+				.run(),
+		);
+		const changed = upd.meta?.changes ?? 0;
+		if (changed) return ok({ ok: true, fixed: changed });
+		// 짝이 없으면(기록이 밀렸거나 미들웨어를 안 거친 요청) 새 줄로 남긴다.
+	}
+
 	const list = Array.isArray((body as { hits?: unknown[] })?.hits)
 		? ((body as { hits: HitIn[] }).hits ?? []).slice(0, 100)
 		: [body as HitIn];
@@ -261,7 +298,7 @@ export async function handleHit(request: Request, env: TrafficEnv, ctx: Executio
 		const ts = num(h?.ts);
 		rows.push([
 			ts && ts > 1_600_000_000_000 && ts < now + 300_000 ? ts : now,
-			site, path, num(h?.status), num(h?.ms),
+			site, path, num(h?.status), num(h?.ms) ?? num(h?.latency_ms),
 			c.kind, c.bot, r.group, r.source, r.host,
 			trim(h?.country, 8), trim(h?.region, 60), trim(h?.city, 60),
 			ua.slice(0, 300), await hashIP(trim(h?.ip, 60) || "", salt), trim(h?.method, 10) || "GET",
@@ -303,4 +340,39 @@ export async function ensureHitsTable(env: TrafficEnv): Promise<void> {
 			/* 이미 있음 */
 		}
 	}
+}
+
+/**
+ * 방문 기록 증분 내보내기 — 이상탐지 서버가 끌어간다.
+ * 호출 로그(/admin/api/export)와 같은 방식이다. id 기준이라 서버가 며칠 꺼져 있어도
+ * 복구되면 마지막 id 다음부터 밀린 만큼 따라잡는다.
+ */
+export async function exportHits(
+	env: TrafficEnv,
+	afterId: number,
+	limit: number,
+): Promise<{ rows: Record<string, unknown>[]; lastId: number; maxId: number; remaining: number }> {
+	const n = Math.max(1, Math.min(5000, limit || 1000));
+	const [rs, tail] = await withHits(env, () =>
+		Promise.all([
+			env.DB.prepare(
+				"SELECT id, ts, site, path, status, latency_ms, kind, bot, ref_group, ref_source," +
+					" ref_host, country, region, city, ip_hash, method FROM hits WHERE id > ?1" +
+					" ORDER BY id ASC LIMIT ?2",
+			)
+				.bind(afterId, n)
+				.all<Record<string, unknown>>(),
+			env.DB.prepare("SELECT MAX(id) AS mx, COUNT(*) AS n FROM hits WHERE id > ?1")
+				.bind(afterId)
+				.first<{ mx: number | null; n: number | null }>(),
+		]),
+	);
+	const rows = rs.results ?? [];
+	const lastId = rows.length ? Number(rows[rows.length - 1].id) : afterId;
+	return {
+		rows,
+		lastId,
+		maxId: tail?.mx ?? afterId,
+		remaining: Math.max(0, (tail?.n ?? 0) - rows.length),
+	};
 }

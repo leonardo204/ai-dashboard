@@ -22,8 +22,9 @@ import {
 } from "./stats";
 import {
 	escapeHtml, usd, kst, shortNum, shellAdmin, pageHead, filterTabs, sectionHead, delta,
-	svgTrend, svgMap, svgShare, svgDonut, svgHeat, svgLevels, svgTraffic, type AdminOpts,
+	svgTrend, svgMap, svgShare, svgDonut, svgHeat, svgLevels, svgF1, svgTraffic, type AdminOpts,
 } from "./ui";
+import { SITES, siteName } from "./traffic";
 
 /** 상단바 메뉴가 기간·앱 조건을 그대로 물고 가도록 붙이는 질의 문자열. */
 function navQuery(period: string, appFilter: string): string {
@@ -479,6 +480,26 @@ const SIGNAL_LABEL: Record<string, string> = {
 	new_ip_burst: "새 IP 다수 등장",
 	rate_limited: "호출 상한 초과(429)",
 	model_anomaly: "모델 이상 판정",
+	// 트래픽(서비스 방문)
+	traffic_drop: "방문 급감",
+	traffic_spike: "방문 급증",
+	search_bot_drop: "검색 크롤러 발길 끊김",
+	ai_bot_spike: "AI 크롤러 급증",
+	http_5xx: "서버 오류(5xx) 발생",
+	http_404: "없는 주소 요청(404) 급증",
+	new_bot: "새 크롤러 등장",
+};
+
+/** 학습을 다시 돌린 계기 — 화면에 읽히는 말로. */
+const TRIGGER_LABEL: Record<string, string> = {
+	interval: "정기 점검",
+	"first-run": "첫 학습",
+	"first-real": "실데이터 전환",
+	"new-labels": "새 판정 누적",
+	growth: "학습 구간 증가",
+	"low-precision": "정탐률 하락",
+	manual: "직접 실행",
+	auto: "자동 조건 충족",
 };
 
 const pct1 = (v: number | null | undefined) => (v === null || v === undefined ? "-" : `${(v * 100).toFixed(1)}%`);
@@ -662,8 +683,20 @@ function serverBar(a: AnomalyData): string {
 </div>`;
 }
 
+/** 이상탐지 갈래 고르기 — AI 호출과 서비스 방문은 보는 지표도 규모도 달라 따로 본다. */
+function scopeTabs(a: AnomalyData): string {
+	const t = (k: string, label: string) =>
+		`<a class="tab${a.scope === k ? " on" : ""}" href="/admin/anomaly?period=${a.period}&scope=${k}">${label}</a>`;
+	return `<div class="tabs">${t("ai", "AI 호출")}${t("traffic", "트래픽")}</div>`;
+}
+
+const SITE_TABS = Object.entries(SITES).map(([id, v]) => ({ id, name: v.name, active: true }));
+
 export function renderAnomaly(a: AnomalyData, opts: AdminOpts = {}): string {
-	const q = navQuery(a.period, a.appFilter);
+	const traffic = a.scope === "traffic";
+	const who = traffic ? "서비스" : "앱";
+	const nameOf = (k: string) => (k === "*" ? "전체" : traffic ? siteName(k) : k);
+	const q = `?period=${a.period}${a.appFilter ? `&app=${encodeURIComponent(a.appFilter)}` : ""}&scope=${a.scope}`;
 
 	const card = (l: string, v: string, tone = "", extra = "") =>
 		`<div class="m"><div class="l">${l}</div><div class="v ${tone}">${v}${extra}</div></div>`;
@@ -694,7 +727,7 @@ export function renderAnomaly(a: AnomalyData, opts: AdminOpts = {}): string {
 						`<tr><td class="mono" data-tip="${escapeHtml(`${kst(r.bucket)} · ${r.grain} 단위`)}">${bucketAt(r.bucket)}</td>` +
 						`<td>${sevTag(r.severity)}</td>` +
 						`<td>${escapeHtml(d.label)}</td>` +
-						`<td>${r.app === "*" ? "전체" : escapeHtml(r.app)}</td>` +
+						`<td>${escapeHtml(nameOf(r.app))}</td>` +
 						`<td class="n">${anomValue(r.observed, d.metric)}</td>` +
 						`<td class="n">${anomValue(r.baseline, d.metric)}` +
 						`${d.ratio ? ` <span class="sm">${d.ratio}배</span>` : ""}</td>` +
@@ -741,9 +774,13 @@ export function renderAnomaly(a: AnomalyData, opts: AdminOpts = {}): string {
 		dataset?: string; version?: string | null; tp?: number; fp?: number; fn?: number;
 		precision?: number; recall?: number; f1?: number; by_signal?: Record<string, number>;
 	};
-	const lab = anomState<LabelState>(a, "labels");
-	const ev = anomState<Record<string, EvalOne>>(a, "eval");
-	const proms = anomState<{ ran_at: string; version: string; baseline: string | null; decision: string; reason: string }[]>(a, "promotion") ?? [];
+	// 라벨·채점 요약은 갈래별로 따로 받는다. 없으면 예전 형식(전체 합계)으로 물러선다.
+	const labAll = anomState<Record<string, LabelState>>(a, "labels_by_scope");
+	const evAll = anomState<Record<string, Record<string, EvalOne>>>(a, "eval_by_scope");
+	const lab = (labAll?.[a.scope] as LabelState | undefined) ?? anomState<LabelState>(a, "labels");
+	const ev = (evAll?.[a.scope] as Record<string, EvalOne> | undefined) ?? anomState<Record<string, EvalOne>>(a, "eval");
+	const proms = (anomState<{ ran_at: string; version: string; baseline: string | null; decision: string; reason: string; scope?: string }[]>(a, "promotion") ?? [])
+		.filter((p) => (p.scope ?? "ai") === a.scope);
 	const alertState = anomState<{ suppressed?: number; sent?: number }>(a, "alerts");
 
 	const verdictRows = lab?.by_verdict && Object.keys(lab.by_verdict).length
@@ -792,11 +829,39 @@ export function renderAnomaly(a: AnomalyData, opts: AdminOpts = {}): string {
 				.join("")
 		: `<tr><td colspan="4">아직 승격 심사 기록이 없어요.</td></tr>`;
 
+	// 재학습 이력 — 언제 왜 다시 배웠고 성적이 어떻게 바뀌었나.
+	const f1 = (v: number | null) => (v === null || v === undefined ? "-" : `${(v * 100).toFixed(1)}%`);
+	const trainRows = a.trains.length
+		? a.trains
+				.map((t) => {
+					const moved =
+						t.f1_before !== null && t.f1_after !== null
+							? `<span class="${t.f1_after >= t.f1_before ? "g" : "r"}">${f1(t.f1_before)} → ${f1(t.f1_after)}</span>`
+							: f1(t.f1_after);
+					const dec =
+						t.status !== "ok"
+							? `<span class="pm hold">${t.status === "skipped" ? "건너뜀" : "실패"}</span>`
+							: t.decision === "promoted"
+								? `<span class="pm up">승격</span>`
+								: `<span class="pm hold">후보</span>`;
+					const tip = [t.message, t.source ? `학습 데이터 ${t.source}` : ""].filter(Boolean).join("\n");
+					return (
+						`<tr><td class="mono" data-tip="${escapeHtml(tip)}">${kst(t.started_at).slice(0, 11)}</td>` +
+						`<td>${escapeHtml(TRIGGER_LABEL[t.trigger ?? ""] ?? t.trigger ?? "-")}</td>` +
+						`<td class="mono">${escapeHtml(t.version ?? "-")}</td>` +
+						`<td class="n">${(t.train_rows ?? 0).toLocaleString()}</td>` +
+						`<td class="n">${moved}</td>` +
+						`<td>${dec}</td></tr>`
+					);
+				})
+				.join("")
+		: `<tr><td colspan="6">아직 학습 기록이 없어요.</td></tr>`;
+
 	const appRows = a.byApp.length
 		? a.byApp
 				.map(
 					(r) =>
-						`<tr><td>${escapeHtml(r.name)}</td><td class="n">${r.total.toLocaleString()}</td>` +
+						`<tr><td>${escapeHtml(traffic ? nameOf(r.key) : r.name)}</td><td class="n">${r.total.toLocaleString()}</td>` +
 						`<td class="n r">${r.critical.toLocaleString()}</td></tr>`,
 				)
 				.join("")
@@ -804,9 +869,23 @@ export function renderAnomaly(a: AnomalyData, opts: AdminOpts = {}): string {
 
 	return shellAdmin(
 		"이상탐지",
-		pageHead("이상탐지", `평소와 다른 호출 흐름 · ${sinceLabel(a.since)}`, a.appFilter) +
+		pageHead(
+			"이상탐지",
+			`${traffic ? "평소와 다른 방문 흐름" : "평소와 다른 호출 흐름"} · ${sinceLabel(a.since)}`,
+			a.appFilter,
+		) +
 			`<div id="hz-body">
-${filterTabs("/admin/anomaly", a.period, a.appFilter, a.apps, PERIODS)}
+${scopeTabs(a)}
+${filterTabs(
+	"/admin/anomaly",
+	a.period,
+	a.appFilter,
+	traffic ? SITE_TABS : a.apps,
+	PERIODS,
+	"",
+	"",
+	{ key: traffic ? "site" : "app", allLabel: traffic ? "전체 서비스" : "전체 앱", extra: `&scope=${a.scope}` },
+)}
 ${serverBar(a)}
 
 <div class="kpi2" style="margin-bottom:4px">
@@ -842,8 +921,8 @@ ${sectionHead("이상 신호 이력")}
   <section>${sectionHead("검증 결과")}
     <table><tr><th>판정</th><th class="n">건수</th><th class="n">비중</th></tr>${verdictRows}</table>
   </section>
-  <section>${sectionHead("앱별 이상 건수")}
-    <table><tr><th>앱</th><th class="n">전체</th><th class="n">심각</th></tr>${appRows}</table>
+  <section>${sectionHead(`${who}별 이상 건수`)}
+    <table><tr><th>${who}</th><th class="n">전체</th><th class="n">심각</th></tr>${appRows}</table>
   </section>
 </div>
 
@@ -856,10 +935,19 @@ ${sectionHead("이상 신호 이력")}
   </section>
 </div>
 
+${sectionHead("성적 흐름 (F1)")}
+${svgF1(a.evals)}
+
+${sectionHead("재학습 이력")}
+<div class="scroll"><table><tr><th>시각</th><th>계기</th><th>모델</th><th class="n">학습 구간</th><th class="n">F1 변화</th><th>결과</th></tr>${trainRows}</table></div>
+
 ${sectionHead("승격 심사")}
 <div class="scroll cap"><table><tr><th>시각</th><th>후보</th><th>결과</th><th>근거</th></tr>${promRows}</table></div>
 
 <p class="foot">판정은 이상탐지 서버(121.161.160.122)가 하고, 이 화면은 넘겨받은 결과만 보여줘요. 서버가 멈춰도 화면은 열리고 맨 위 상태줄에 표시돼요.<br>
+${traffic
+	? "트래픽에서는 <b>줄어드는 쪽</b>이 더 중요해요. 방문이 끊기면 서비스 장애이거나 색인 사고예요. 메일은 방문 급감 · 서버 오류(5xx) · 없는 주소(404)만 보내고, 급증이나 크롤러 변화는 화면에만 남겨요.<br>"
+	: ""}
 '평소'는 같은 요일·같은 시각의 과거 기록에서 뽑은 기준선이에요. 표본이 모자라면 최근 구간 전체로 대신하고, 그때는 등급을 한 단계 낮춰요.<br>
 심각·주의 신호는 ${escapeHtml("zerolive7@gmail.com")}으로 메일이 나가요. 같은 신호가 이어지면 일정 시간 동안 묶어서 한 번만 보내요.<br>
 '검증'은 판정 근거를 다시 읽고 정탐인지 오탐인지 가리는 단계예요. 오탐으로 판정되면 메일을 보내지 않아요. 심각 신호는 검증을 기다리지 않고 바로 보내요.<br>
@@ -1368,7 +1456,11 @@ function trafficBand(t: TrafficBrief, href: string): string {
     <div class="sub">고유 방문자 ${t.uniq.toLocaleString()}명 · 전체 ${t.total.toLocaleString()}건${delta(t.total, t.prevTotal)}<br>마지막 기록 ${t.lastTs ? ago(Date.now() - t.lastTs) : "-"}</div>
   </div>
   <div class="anb-r"><div class="scroll"><table class="mini"><tr><th>서비스</th><th class="n">방문</th><th class="n">AI 크롤러</th></tr>${rows}</table></div>
-    <div class="sub"><a href="${href}">서비스별 자세히 보기 →</a></div>
+    <div class="sub"><a href="${href}">서비스별 자세히 보기 →</a>${
+			t.anomalies
+				? ` · <a href="/admin/anomaly?scope=traffic">이상 신호 ${t.anomalies.toLocaleString()}건${t.anomalyCritical ? ` (심각 ${t.anomalyCritical})` : ""} 보기 →</a>`
+				: ""
+		}</div>
   </div>
 </div>`;
 }

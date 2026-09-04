@@ -94,6 +94,20 @@ export async function ensureSchema(env: StatsEnv): Promise<void> {
 		"ALTER TABLE anomalies ADD COLUMN verdict TEXT",
 		"ALTER TABLE anomalies ADD COLUMN verdict_reason TEXT",
 		"ALTER TABLE anomalies ADD COLUMN suppressed_reason TEXT",
+		// 판정 갈래 — ai(호출) · traffic(서비스 방문). 앱 이름과 사이트 이름이 한 칸에 섞이지 않게 나눈다.
+		"ALTER TABLE anomalies ADD COLUMN scope TEXT NOT NULL DEFAULT 'ai'",
+		"UPDATE anomalies SET scope='ai' WHERE scope IS NULL OR scope=''",
+		"UPDATE anomaly_models SET scope='ai' WHERE scope IS NULL OR scope='' OR scope='*'",
+		// 학습 이력 — 언제 왜 다시 배웠고 성적이 어떻게 바뀌었나.
+		"CREATE TABLE IF NOT EXISTS anomaly_trains (src_id INTEGER, scope TEXT NOT NULL DEFAULT 'ai'," +
+			" started_at INTEGER NOT NULL, finished_at INTEGER, status TEXT NOT NULL, version TEXT," +
+			" train_rows INTEGER, source TEXT, trigger TEXT, message TEXT," +
+			" f1_before REAL, f1_after REAL, decision TEXT, PRIMARY KEY (scope, src_id))",
+		// 채점 이력 — F1 흐름을 그린다.
+		"CREATE TABLE IF NOT EXISTS anomaly_evals (src_id INTEGER, scope TEXT NOT NULL DEFAULT 'ai'," +
+			" ran_at INTEGER NOT NULL, dataset TEXT, detector TEXT NOT NULL, version TEXT," +
+			" tp INTEGER, fp INTEGER, fn INTEGER, precision REAL, recall REAL, f1 REAL," +
+			" by_signal TEXT, PRIMARY KEY (scope, src_id))",
 		// 관리자 패스키(WebAuthn). 공개키만 보관하므로 이 표가 새어도 로그인에는 쓸 수 없다.
 		"CREATE TABLE IF NOT EXISTS passkeys (cred_id TEXT PRIMARY KEY, public_key TEXT NOT NULL, alg INTEGER NOT NULL DEFAULT -7, label TEXT, created_at INTEGER NOT NULL, last_used_at INTEGER, counter INTEGER NOT NULL DEFAULT 0)",
 	]) {
@@ -108,9 +122,13 @@ export async function ensureSchema(env: StatsEnv): Promise<void> {
 		"CREATE INDEX IF NOT EXISTS idx_calls_ip_ts ON calls(ip, ts)",
 		"CREATE INDEX IF NOT EXISTS idx_calls_app_ts ON calls(app, ts)",
 		"CREATE INDEX IF NOT EXISTS idx_calls_country_ts ON calls(country, ts)",
-		"CREATE UNIQUE INDEX IF NOT EXISTS idx_anom_uniq ON anomalies(grain, bucket, app, signal)",
+		"CREATE UNIQUE INDEX IF NOT EXISTS idx_anom_uniq2 ON anomalies(scope, grain, bucket, app, signal)",
+		"DROP INDEX IF EXISTS idx_anom_uniq",
 		"CREATE INDEX IF NOT EXISTS idx_anom_bucket ON anomalies(bucket)",
 		"CREATE INDEX IF NOT EXISTS idx_anom_sev ON anomalies(severity, bucket)",
+		"CREATE INDEX IF NOT EXISTS idx_anom_scope ON anomalies(scope, bucket)",
+		"CREATE INDEX IF NOT EXISTS idx_anom_evals ON anomaly_evals(scope, detector, ran_at)",
+		"CREATE INDEX IF NOT EXISTS idx_anom_trains ON anomaly_trains(scope, started_at)",
 	]) {
 		try {
 			await env.DB.prepare(sql).run();
@@ -919,13 +937,13 @@ async function collectSummaryInner(
 			"SELECT COUNT(*) AS n," +
 				" SUM(CASE WHEN severity='critical' THEN 1 ELSE 0 END) AS c," +
 				" SUM(CASE WHEN severity='warn' THEN 1 ELSE 0 END) AS w," +
-				" MAX(detected_at) AS last FROM anomalies WHERE bucket >= ?1" + appWhere,
+				" MAX(detected_at) AS last FROM anomalies WHERE bucket >= ?1" + " AND scope='ai'" + appWhere,
 		).first<{ n: number; c: number | null; w: number | null; last: number | null }>(),
 
 		p.days
 			? (appFilter
-					? env.DB.prepare("SELECT COUNT(*) AS n FROM anomalies WHERE bucket >= ?1 AND bucket < ?2 AND app = ?3").bind(prevSince, since, appFilter)
-					: env.DB.prepare("SELECT COUNT(*) AS n FROM anomalies WHERE bucket >= ?1 AND bucket < ?2").bind(prevSince, since)
+					? env.DB.prepare("SELECT COUNT(*) AS n FROM anomalies WHERE bucket >= ?1 AND bucket < ?2 AND scope='ai' AND app = ?3").bind(prevSince, since, appFilter)
+					: env.DB.prepare("SELECT COUNT(*) AS n FROM anomalies WHERE bucket >= ?1 AND bucket < ?2 AND scope='ai'").bind(prevSince, since)
 				).first<{ n: number }>()
 			: Promise.resolve(null),
 
@@ -933,7 +951,7 @@ async function collectSummaryInner(
 		// 요약 상단을 차지하면 실제로 봐야 할 신호가 가린다. 그다음 심각한 것, 그다음 최근 것.
 		bind(
 			"SELECT bucket, app, signal, severity, label, observed, baseline, detail, verdict, verdict_reason" +
-				" FROM anomalies WHERE bucket >= ?1" + appWhere +
+				" FROM anomalies WHERE bucket >= ?1 AND scope='ai'" + appWhere +
 				" ORDER BY CASE WHEN verdict IN ('rule_fp','model_fp','both_fp') THEN 1 ELSE 0 END," +
 				" CASE severity WHEN 'critical' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END, bucket DESC" +
 				` LIMIT ${SUMMARY_ANOMALY_RECENT}`,
@@ -1481,6 +1499,7 @@ export async function logsCsv(env: StatsEnv, f: LogFilter): Promise<string> {
 
 export interface AnomalyIn {
 	src_id?: number | null;
+	scope?: string | null;
 	detected_at?: number | null;
 	bucket: number;
 	grain: string;
@@ -1502,6 +1521,7 @@ export interface AnomalyIn {
 }
 export interface ModelIn {
 	version: string;
+	threshold?: number | null;
 	algo?: string | null;
 	scope?: string | null;
 	trained_at?: number | null;
@@ -1513,6 +1533,23 @@ export interface ModelIn {
 	note?: string | null;
 }
 
+export interface TrainIn {
+	src_id: number;
+	scope?: string | null;
+	started_at?: number | null; finished_at?: number | null;
+	status?: string | null; version?: string | null; train_rows?: number | null;
+	source?: string | null; trigger?: string | null; message?: string | null;
+	f1_before?: number | null; f1_after?: number | null; decision?: string | null;
+}
+export interface EvalIn {
+	src_id: number;
+	scope?: string | null;
+	ran_at?: number | null; dataset?: string | null; detector?: string | null; version?: string | null;
+	tp?: number | null; fp?: number | null; fn?: number | null;
+	precision?: number | null; recall?: number | null; f1?: number | null;
+	by_signal?: unknown;
+}
+
 const SEVERITIES = new Set(["info", "warn", "critical"]);
 
 /** 이상탐지 서버가 밀어 넣는 결과를 받는다. 같은 (구간·앱·신호)는 덮어쓴다. */
@@ -1521,6 +1558,8 @@ export async function pushAnomaly(
 	body: {
 		detections?: AnomalyIn[];
 		models?: ModelIn[];
+		trains?: TrainIn[];
+		evals?: EvalIn[];
 		state?: Record<string, unknown>;
 		/** 이상탐지 서버가 그 구간에 남겨 둔 판정 목록. 여기 없는 건 저쪽에서 지운 것이라 함께 지운다. */
 		prune?: { since?: number; ids?: number[]; models?: string[] };
@@ -1529,6 +1568,8 @@ export async function pushAnomaly(
 	const now = Date.now();
 	const dets = (body.detections ?? []).slice(0, 500);
 	const models = (body.models ?? []).slice(0, 200);
+	const trains = (body.trains ?? []).slice(0, 200);
+	const evals = (body.evals ?? []).slice(0, 400);
 	const state = body.state ?? {};
 
 	const stmts: D1PreparedStatement[] = [];
@@ -1538,9 +1579,9 @@ export async function pushAnomaly(
 			env.DB.prepare(
 				"INSERT INTO anomalies (src_id, detected_at, bucket, grain, app, signal, severity, score, observed," +
 					" baseline, label, detail, detector, model_version, notified_at, status," +
-					" verdict, verdict_reason, suppressed_reason)" +
-					" VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19)" +
-					" ON CONFLICT(grain, bucket, app, signal) DO UPDATE SET" +
+					" verdict, verdict_reason, suppressed_reason, scope)" +
+					" VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)" +
+					" ON CONFLICT(scope, grain, bucket, app, signal) DO UPDATE SET" +
 					" severity=excluded.severity, score=excluded.score, observed=excluded.observed," +
 					" baseline=excluded.baseline, label=excluded.label, detail=excluded.detail," +
 					" detector=excluded.detector, model_version=excluded.model_version," +
@@ -1553,7 +1594,7 @@ export async function pushAnomaly(
 				d.detail == null ? null : JSON.stringify(d.detail).slice(0, 2000),
 				d.detector ?? "rule", d.model_version ?? null, d.notified_at ?? null, d.status ?? "open",
 				d.verdict ?? null, (d.verdict_reason ?? null) && String(d.verdict_reason).slice(0, 400),
-				d.suppressed_reason ?? null,
+				d.suppressed_reason ?? null, d.scope === "traffic" ? "traffic" : "ai",
 			),
 		);
 	}
@@ -1567,10 +1608,48 @@ export async function pushAnomaly(
 					" trained_at=excluded.trained_at, train_from=excluded.train_from, train_to=excluded.train_to," +
 					" train_rows=excluded.train_rows, metrics=excluded.metrics, status=excluded.status, note=excluded.note",
 			).bind(
-				m.version, m.algo ?? null, m.scope ?? "*", m.trained_at ?? now, m.train_from ?? null,
+				m.version, m.algo ?? null, m.scope === "traffic" ? "traffic" : "ai", m.trained_at ?? now, m.train_from ?? null,
 				m.train_to ?? null, m.train_rows ?? 0,
 				m.metrics == null ? null : JSON.stringify(m.metrics).slice(0, 2000),
 				m.status ?? "candidate", m.note ?? null,
+			),
+		);
+	}
+	for (const t of trains) {
+		if (!t || !t.src_id) continue;
+		stmts.push(
+			env.DB.prepare(
+				"INSERT INTO anomaly_trains (src_id, scope, started_at, finished_at, status, version," +
+					" train_rows, source, trigger, message, f1_before, f1_after, decision)" +
+					" VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)" +
+					" ON CONFLICT(scope, src_id) DO UPDATE SET finished_at=excluded.finished_at," +
+					" status=excluded.status, version=excluded.version, train_rows=excluded.train_rows," +
+					" source=excluded.source, trigger=excluded.trigger, message=excluded.message," +
+					" f1_before=excluded.f1_before, f1_after=excluded.f1_after, decision=excluded.decision",
+			).bind(
+				t.src_id, t.scope === "traffic" ? "traffic" : "ai", t.started_at ?? now,
+				t.finished_at ?? null, t.status ?? "ok", t.version ?? null, t.train_rows ?? 0,
+				t.source ?? null, t.trigger ?? null, (t.message ?? null) && String(t.message).slice(0, 400),
+				t.f1_before ?? null, t.f1_after ?? null, t.decision ?? null,
+			),
+		);
+	}
+	for (const e of evals) {
+		if (!e || !e.src_id) continue;
+		stmts.push(
+			env.DB.prepare(
+				"INSERT INTO anomaly_evals (src_id, scope, ran_at, dataset, detector, version," +
+					" tp, fp, fn, precision, recall, f1, by_signal)" +
+					" VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)" +
+					" ON CONFLICT(scope, src_id) DO UPDATE SET ran_at=excluded.ran_at," +
+					" dataset=excluded.dataset, detector=excluded.detector, version=excluded.version," +
+					" tp=excluded.tp, fp=excluded.fp, fn=excluded.fn, precision=excluded.precision," +
+					" recall=excluded.recall, f1=excluded.f1, by_signal=excluded.by_signal",
+			).bind(
+				e.src_id, e.scope === "traffic" ? "traffic" : "ai", e.ran_at ?? now, e.dataset ?? null,
+				e.detector ?? "rule", e.version ?? null, e.tp ?? 0, e.fp ?? 0, e.fn ?? 0,
+				e.precision ?? 0, e.recall ?? 0, e.f1 ?? 0,
+				e.by_signal == null ? null : JSON.stringify(e.by_signal).slice(0, 1200),
 			),
 		);
 	}
@@ -1645,22 +1724,42 @@ export interface AnomalyData {
 	state: { key: string; value: string; updated_at: number }[];
 	/** 이상탐지 서버가 마지막으로 신호를 보낸 뒤 지난 시간(ms). 아직 한 번도 없으면 null. */
 	heartbeatAge: number | null;
+	/** 지금 보고 있는 갈래 — ai(호출) · traffic(서비스 방문) */
+	scope: string;
+	/** 재학습 이력 — 언제 왜 다시 배웠고 성적이 어떻게 바뀌었나 */
+	trains: {
+		src_id: number; started_at: number; finished_at: number | null; status: string;
+		version: string | null; train_rows: number | null; source: string | null;
+		trigger: string | null; message: string | null;
+		f1_before: number | null; f1_after: number | null; decision: string | null;
+	}[];
+	/** 채점 이력 — F1 흐름 */
+	evals: {
+		src_id: number; ran_at: number; dataset: string | null; detector: string;
+		version: string | null; precision: number; recall: number; f1: number;
+	}[];
 }
 
-export async function collectAnomaly(env: StatsEnv, period: string, appFilter: string): Promise<AnomalyData> {
-	return withSchema(env, () => collectAnomalyInner(env, period, appFilter));
+export async function collectAnomaly(
+	env: StatsEnv, period: string, appFilter: string, scope = "ai",
+): Promise<AnomalyData> {
+	return withSchema(env, () => collectAnomalyInner(env, period, appFilter, scope));
 }
 
-async function collectAnomalyInner(env: StatsEnv, period: string, appFilter: string): Promise<AnomalyData> {
+async function collectAnomalyInner(
+	env: StatsEnv, period: string, appFilter: string, scope: string,
+): Promise<AnomalyData> {
 	const { p, since, prevSince } = periodInfo(period);
 	const bexpr = bucketExpr(p.bucket, "bucket");
-	const appWhere = appFilter ? " AND app = ?2" : "";
+	// scope는 화면에서 고른 값이라 바인딩으로 넘긴다. app 조건은 있을 때만 붙는다.
+	const scopeWhere = " AND scope = ?2";
+	const appWhere = appFilter ? " AND app = ?3" : "";
 	const bind = (sql: string) => {
 		const st = env.DB.prepare(sql);
-		return appFilter ? st.bind(since, appFilter) : st.bind(since);
+		return appFilter ? st.bind(since, scope, appFilter) : st.bind(since, scope);
 	};
 
-	const [appsRs, sumRow, prevRow, bucketRs, sigRs, appRs, recentRs, modelRs, stateRs] = await Promise.all([
+	const [appsRs, sumRow, prevRow, bucketRs, sigRs, appRs, recentRs, modelRs, stateRs, trainRs, evalRs] = await Promise.all([
 		env.DB.prepare("SELECT id, name, active FROM apps ORDER BY name").all<{ id: string; name: string; active: number }>(),
 		bind(
 			"SELECT COUNT(*) AS n," +
@@ -1668,33 +1767,40 @@ async function collectAnomalyInner(env: StatsEnv, period: string, appFilter: str
 				" SUM(CASE WHEN severity='warn' THEN 1 ELSE 0 END) AS w," +
 				" SUM(CASE WHEN severity='info' THEN 1 ELSE 0 END) AS i," +
 				" SUM(CASE WHEN notified_at IS NOT NULL THEN 1 ELSE 0 END) AS nt," +
-				" MAX(detected_at) AS last FROM anomalies WHERE bucket >= ?1" + appWhere,
+				" MAX(detected_at) AS last FROM anomalies WHERE bucket >= ?1" + scopeWhere + appWhere,
 		).first<{ n: number; c: number; w: number; i: number; nt: number; last: number | null }>(),
 		(appFilter
-			? env.DB.prepare("SELECT COUNT(*) AS n FROM anomalies WHERE bucket >= ?1 AND bucket < ?2 AND app = ?3").bind(prevSince, since, appFilter)
-			: env.DB.prepare("SELECT COUNT(*) AS n FROM anomalies WHERE bucket >= ?1 AND bucket < ?2").bind(prevSince, since)
+			? env.DB.prepare("SELECT COUNT(*) AS n FROM anomalies WHERE bucket >= ?1 AND bucket < ?2 AND scope = ?3 AND app = ?4").bind(prevSince, since, scope, appFilter)
+			: env.DB.prepare("SELECT COUNT(*) AS n FROM anomalies WHERE bucket >= ?1 AND bucket < ?2 AND scope = ?3").bind(prevSince, since, scope)
 		).first<{ n: number }>(),
 		bind(
 			`SELECT ${bexpr} AS b, COUNT(*) AS n,` +
 				" SUM(CASE WHEN severity='critical' THEN 1 ELSE 0 END) AS c," +
 				" SUM(CASE WHEN severity='warn' THEN 1 ELSE 0 END) AS w," +
 				" SUM(CASE WHEN severity='info' THEN 1 ELSE 0 END) AS i" +
-				" FROM anomalies WHERE bucket >= ?1" + appWhere + " GROUP BY b ORDER BY b DESC LIMIT 60",
+				" FROM anomalies WHERE bucket >= ?1" + scopeWhere + appWhere + " GROUP BY b ORDER BY b DESC LIMIT 60",
 		).all<{ b: string; n: number; c: number; w: number; i: number }>(),
 		bind(
 			"SELECT signal AS k, MAX(label) AS label, COUNT(*) AS n," +
 				" SUM(CASE WHEN severity='critical' THEN 1 ELSE 0 END) AS c" +
-				" FROM anomalies WHERE bucket >= ?1" + appWhere + " GROUP BY signal ORDER BY n DESC LIMIT 12",
+				" FROM anomalies WHERE bucket >= ?1" + scopeWhere + appWhere + " GROUP BY signal ORDER BY n DESC LIMIT 12",
 		).all<{ k: string; label: string | null; n: number; c: number }>(),
 		bind(
 			"SELECT app AS k, COUNT(*) AS n, SUM(CASE WHEN severity='critical' THEN 1 ELSE 0 END) AS c" +
-				" FROM anomalies WHERE bucket >= ?1" + appWhere + " GROUP BY app ORDER BY n DESC LIMIT 12",
+				" FROM anomalies WHERE bucket >= ?1" + scopeWhere + appWhere + " GROUP BY app ORDER BY n DESC LIMIT 12",
 		).all<{ k: string; n: number; c: number }>(),
 		bind(
-			"SELECT * FROM anomalies WHERE bucket >= ?1" + appWhere + " ORDER BY bucket DESC, severity DESC LIMIT 120",
+			"SELECT * FROM anomalies WHERE bucket >= ?1" + scopeWhere + appWhere + " ORDER BY bucket DESC, severity DESC LIMIT 120",
 		).all<AnomalyRow>(),
-		env.DB.prepare("SELECT * FROM anomaly_models ORDER BY trained_at DESC LIMIT 20").all<AnomalyData["models"][number]>(),
+		env.DB.prepare("SELECT * FROM anomaly_models WHERE scope = ?1 ORDER BY trained_at DESC LIMIT 20").bind(scope).all<AnomalyData["models"][number]>(),
 		env.DB.prepare("SELECT key, value, updated_at FROM anomaly_state ORDER BY key").all<{ key: string; value: string; updated_at: number }>(),
+		env.DB.prepare(
+			"SELECT * FROM anomaly_trains WHERE scope = ?1 ORDER BY started_at DESC LIMIT 20",
+		).bind(scope).all<AnomalyData["trains"][number]>(),
+		env.DB.prepare(
+			"SELECT src_id, ran_at, dataset, detector, version, precision, recall, f1 FROM anomaly_evals" +
+				" WHERE scope = ?1 ORDER BY ran_at DESC LIMIT 60",
+		).bind(scope).all<AnomalyData["evals"][number]>(),
 	]);
 
 	const nameOf = new Map((appsRs.results ?? []).map((a) => [a.id, a.name]));
@@ -1726,6 +1832,9 @@ async function collectAnomalyInner(env: StatsEnv, period: string, appFilter: str
 		models: modelRs.results ?? [],
 		state,
 		heartbeatAge: newest ? Date.now() - newest : null,
+		scope,
+		trains: trainRs.results ?? [],
+		evals: (evalRs.results ?? []).slice().reverse(),
 	};
 }
 
@@ -1895,15 +2004,18 @@ export interface TrafficBrief {
 	total: number; human: number; ai: number; search: number; other: number;
 	uniq: number; prevTotal: number; lastTs: number;
 	sites: { key: string; name: string; total: number; prev: number; ai: number }[];
+	/** 이 기간에 트래픽 쪽에서 잡힌 이상 신호 — 요약 화면에서 한 줄로 알린다. */
+	anomalies: number; anomalyCritical: number;
 }
 
 export async function trafficBrief(env: StatsEnv, period: string): Promise<TrafficBrief> {
 	const { p, since, prevSince } = periodInfo(period);
 	const empty: TrafficBrief = {
 		total: 0, human: 0, ai: 0, search: 0, other: 0, uniq: 0, prevTotal: 0, lastTs: 0, sites: [],
+		anomalies: 0, anomalyCritical: 0,
 	};
 	try {
-		const [sumRow, siteRs, prevRow, prevSiteRs] = await Promise.all([
+		const [sumRow, siteRs, prevRow, prevSiteRs, anomRow] = await Promise.all([
 			env.DB.prepare(
 				`SELECT COUNT(*) AS n, ${kindSum("k_")}, COUNT(DISTINCT CASE WHEN kind='human' THEN ip_hash END) AS uq,` +
 					` MAX(ts) AS last FROM hits WHERE ts >= ?1`,
@@ -1918,6 +2030,11 @@ export async function trafficBrief(env: StatsEnv, period: string): Promise<Traff
 				? env.DB.prepare("SELECT site, COUNT(*) AS n FROM hits WHERE ts >= ?1 AND ts < ?2 GROUP BY site")
 						.bind(prevSince, since).all<{ site: string; n: number }>()
 				: Promise.resolve({ results: [] as { site: string; n: number }[] }),
+			// 트래픽 쪽 이상 신호 — 요약 화면에서 한 줄로 알린다.
+			env.DB.prepare(
+				"SELECT COUNT(*) AS n, SUM(CASE WHEN severity='critical' THEN 1 ELSE 0 END) AS c" +
+					" FROM anomalies WHERE scope='traffic' AND bucket >= ?1",
+			).bind(since).first<{ n: number; c: number | null }>(),
 		]);
 		const prevSite = new Map((prevSiteRs.results ?? []).map((r) => [r.site, r.n]));
 		return {
@@ -1932,6 +2049,8 @@ export async function trafficBrief(env: StatsEnv, period: string): Promise<Traff
 			sites: (siteRs.results ?? []).slice(0, 6).map((r) => ({
 				key: r.site, name: siteName(r.site), total: r.n, prev: prevSite.get(r.site) ?? 0, ai: r.a ?? 0,
 			})),
+			anomalies: anomRow?.n ?? 0,
+			anomalyCritical: anomRow?.c ?? 0,
 		};
 	} catch {
 		// hits 표가 아직 없는 경우 — 화면은 그대로 그리고 "기록 없음"으로 둔다.

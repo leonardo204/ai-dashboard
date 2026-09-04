@@ -1126,10 +1126,12 @@ export function filterTabs(
 	periods: Record<string, { label: string }>,
 	rightLink = "",
 	rightBelow = "",
-	opts: { key?: string; allLabel?: string } = {},
+	opts: { key?: string; allLabel?: string; extra?: string } = {},
 ): string {
 	const key = opts.key ?? "app";
-	const q = (p: string, a: string) => `${path}?period=${p}${a ? `&${key}=${encodeURIComponent(a)}` : ""}`;
+	// extra는 이 화면이 기간·앱 말고도 물고 다녀야 하는 조건이다(예: 이상탐지 갈래).
+	const q = (p: string, a: string) =>
+		`${path}?period=${p}${a ? `&${key}=${encodeURIComponent(a)}` : ""}${opts.extra ?? ""}`;
 	const periodTabs = Object.entries(periods)
 		.map(([k, v]) => `<a class="tab${k === period ? " on" : ""}" href="${q(k, appFilter)}">${v.label}</a>`)
 		.join("");
@@ -1488,4 +1490,69 @@ ${bubbles}
 ${points.length ? "" : `<div class="mapempty">아직 좌표가 있는 호출이 없어요.</div>`}
 </div>
 <p class="sm" style="margin:8px 2px 0">원 크기는 호출량이에요. 마우스를 올리면 지역·호출 수를 볼 수 있어요.${unknown ? ` 좌표가 없는 호출 ${unknown.toLocaleString()}건은 지도에 표시되지 않아요(이전 기록·미상 지역).` : ""}</p>`;
+}
+
+/**
+ * F1 흐름 — 재학습할 때마다 잰 성적을 시간순 꺾은선으로 본다.
+ * 규칙과 모델을 같은 자에 올려 두면 "모델이 규칙을 언제 넘어섰나"가 한눈에 잡힌다.
+ */
+export function svgF1(
+	rows: { ran_at: number; detector: string; version: string | null; f1: number; precision: number; recall: number }[],
+): string {
+	if (rows.length < 2) return `<div class="empty">채점 기록이 아직 모자라요. 두 번 이상 재학습하면 흐름이 그려져요.</div>`;
+
+	const W = 1000, H = 200, L = 44, R = 16, T = 14, B = 30;
+	const iw = W - L - R, ih = H - T - B;
+	const series = ["rule", "model"].map((d) => ({
+		key: d,
+		label: d === "rule" ? "규칙" : "모델",
+		color: d === "rule" ? "#925FF0" : "#C85A95",
+		pts: rows.filter((r) => r.detector === d),
+	})).filter((s) => s.pts.length > 0);
+	if (!series.length) return `<div class="empty">채점 기록이 없어요.</div>`;
+
+	const times = rows.map((r) => r.ran_at);
+	const t0 = Math.min(...times), t1 = Math.max(...times);
+	const span = Math.max(1, t1 - t0);
+	const x = (t: number) => L + ((t - t0) / span) * iw;
+	const y = (f: number) => T + ih - Math.max(0, Math.min(1, f)) * ih;
+
+	const grid = [0, 0.25, 0.5, 0.75, 1]
+		.map((f) => {
+			const yy = y(f);
+			return `<line x1="${L}" y1="${yy.toFixed(1)}" x2="${L + iw}" y2="${yy.toFixed(1)}" class="gl"/>` +
+				`<text x="${L - 8}" y="${(yy + 4).toFixed(1)}" class="ax end">${Math.round(f * 100)}%</text>`;
+		})
+		.join("");
+
+	const body = series
+		.map((s) => {
+			const pts = s.pts.map((r) => `${x(r.ran_at).toFixed(1)},${y(r.f1).toFixed(1)}`).join(" ");
+			const dots = s.pts
+				.map((r) => {
+					const tip = `${s.label} · ${r.version ?? "-"}\nF1 ${(r.f1 * 100).toFixed(1)}%` +
+						`\n정밀도 ${(r.precision * 100).toFixed(1)}% · 재현율 ${(r.recall * 100).toFixed(1)}%`;
+					return `<circle cx="${x(r.ran_at).toFixed(1)}" cy="${y(r.f1).toFixed(1)}" r="3.2"` +
+						` fill="#fff" stroke="${s.color}" stroke-width="1.8" data-tip="${escapeHtml(tip)}"/>`;
+				})
+				.join("");
+			return `<polyline points="${pts}" fill="none" stroke="${s.color}" stroke-width="2"` +
+				` stroke-linejoin="round" stroke-linecap="round"/>${dots}`;
+		})
+		.join("");
+
+	const lab = (t: number) => kst(t).slice(0, 11);
+	const xlab = `<text x="${L}" y="${H - 9}" class="ax">${escapeHtml(lab(t0))}</text>` +
+		`<text x="${L + iw}" y="${H - 9}" class="ax end">${escapeHtml(lab(t1))}</text>`;
+
+	const legend = series
+		.map((s) => `<span class="k"><i style="background:${s.color}"></i>${s.label}</span>`)
+		.join("");
+
+	return `<div class="chart lvl">
+<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="F1 흐름">
+${grid}${body}${xlab}
+</svg>
+<div class="lg">${legend}</div>
+</div>`;
 }

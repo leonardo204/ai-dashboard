@@ -19,6 +19,7 @@
  *  GET  /admin/guide      연결 가이드 (원문: /admin/guide.md)
  *       /admin/api/*      앱 관리·통계·모델 카탈로그 API
  *  GET  /admin/api/export 호출 로그 증분 내보내기(이상탐지 서버 수집용)
+ *  GET  /admin/api/export/hits 방문 기록 증분 내보내기(트래픽 이상탐지용)
  *  POST /admin/api/anomaly 이상탐지 결과·모델·서버 상태 받기
  *       /admin/api/passkey/*   관리자 패스키 등록·로그인 (WebAuthn)
  *  GET  /admin/anomaly    이상탐지 현황
@@ -37,7 +38,7 @@ import {
 	type AppConfig, type LogFilter,
 } from "./stats";
 import { handlePasskey, type PasskeyEnv } from "./passkey";
-import { handleHit, SITES, type TrafficEnv } from "./traffic";
+import { handleHit, exportHits, SITES, type TrafficEnv } from "./traffic";
 import { renderLogin } from "./ui";
 import {
 	renderSummary, renderUsage, renderTrend, renderGeo, renderAnomaly, renderTraffic, renderLogs, renderApps,
@@ -280,8 +281,7 @@ const STAT_PAGES: Record<string, (env: Env, period: string, app: string) => Prom
 	"/admin/usage": async (e, p, a) => renderUsage(await collectUsage(e, p, a), { session: true }),
 	"/admin/trend": async (e, p, a) => renderTrend(await collectTrend(e, p, a), { session: true }),
 	"/admin/geo": async (e, p, a) => renderGeo(await collectGeo(e, p, a), { session: true }),
-	"/admin/anomaly": async (e, p, a) => renderAnomaly(await collectAnomaly(e, p, a), { session: true }),
-	"/admin/anomaly/": async (e, p, a) => renderAnomaly(await collectAnomaly(e, p, a), { session: true }),
+
 };
 
 /** 주소에서 로그 검색 조건을 읽는다. */
@@ -522,13 +522,17 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 		// ── 증분 내보내기 (/admin/api/export) — 이상탐지 서버가 1분마다 끌어간다.
 		//    프록시가 밀어 넣지 않고 받아가게 두는 이유: 수집 서버가 꺼져 있어도 호출 경로가 멀쩡하고,
 		//    복구되면 마지막 id 다음부터 밀린 만큼 따라잡을 수 있다.
-		if (path === "/admin/api/export") {
+		if (path === "/admin/api/export" || path === "/admin/api/export/hits") {
 			if (!(await apiAuthorized(request, env, url))) {
 				return apiErr(401, "인증이 필요해요. Authorization: Bearer <ADMIN_API_KEY> 헤더를 넣어 주세요.");
 			}
 			const afterId = Math.max(0, Number(url.searchParams.get("after_id") || 0) || 0);
 			const limit = Number(url.searchParams.get("limit") || 1000) || 1000;
-			return apiJson(await exportCalls(env, afterId, limit));
+			return apiJson(
+				path.endsWith("/hits")
+					? await exportHits(env, afterId, limit)
+					: await exportCalls(env, afterId, limit),
+			);
 		}
 
 		// ── 이상탐지 결과 받기 (/admin/api/anomaly) — 이상탐지 서버가 밀어 넣는다.
@@ -596,6 +600,18 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 
 		// ── 통계 화면 (요약·사용량·추이·지역, 색인 제외)
 		//    화면마다 필요한 집계만 돈다. 예전처럼 한 장에서 전부 계산하지 않는다.
+		// ── 이상탐지 (/admin/anomaly) — 갈래(ai · traffic)를 함께 고른다.
+		if (path === "/admin/anomaly" || path === "/admin/anomaly/") {
+			const unauth = await requireAdmin(request, env, url);
+			if (unauth) return unauth;
+			const { period, appFilter } = statScope(url);
+			const scope = url.searchParams.get("scope") === "traffic" ? "traffic" : "ai";
+			return html(
+				renderAnomaly(await collectAnomaly(env, period, appFilter, scope), { session: true }),
+				{ cache: false },
+			);
+		}
+
 		if (STAT_PAGES[path]) {
 			const unauth = await requireAdmin(request, env, url);
 			if (unauth) return unauth;
