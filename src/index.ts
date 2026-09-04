@@ -19,6 +19,7 @@
  *       /admin/api/*      앱 관리·통계·모델 카탈로그 API
  *  GET  /admin/api/export 호출 로그 증분 내보내기(이상탐지 서버 수집용)
  *  POST /admin/api/anomaly 이상탐지 결과·모델·서버 상태 받기
+ *       /admin/api/passkey/*   관리자 패스키 등록·로그인 (WebAuthn)
  *  GET  /admin/anomaly    이상탐지 현황
  *
  * 도메인: ai.zerolive.co.kr   ·   문서: docs/PROXY-API.md
@@ -29,15 +30,16 @@ import { renderGuide, GUIDE_MD, GUIDE_FILENAME } from "./guide";
 import {
 	collectStats, collectSummary, collectUsage, collectTrend, collectGeo, queryLogs, logsCsv,
 	listApps, getApp, upsertApp, deleteApp, newToken, pulse, exportCalls, PERIODS, LOG_PAGE,
-	collectAnomaly, pushAnomaly,
+	collectAnomaly, pushAnomaly, listPasskeys, passkeyCount, deletePasskey,
 	type AppConfig, type LogFilter,
 } from "./stats";
+import { handlePasskey, type PasskeyEnv } from "./passkey";
 import { renderLogin } from "./ui";
 import {
 	renderSummary, renderUsage, renderTrend, renderGeo, renderAnomaly, renderLogs, renderApps,
 } from "./views";
 
-interface Env extends ProxyEnv {
+interface Env extends ProxyEnv, PasskeyEnv {
 	// ProxyEnv: DB(D1) · OPENROUTER_API_KEY(secret)
 	// 통계 대시보드(/admin) 로그인 — HTTP Basic 인증(secret)
 	ADMIN_USER: string;
@@ -158,7 +160,10 @@ async function handleLogin(request: Request, env: Env, url: URL): Promise<Respon
 	if (await validSession(env, request)) {
 		return new Response(null, { status: 303, headers: { Location: safeNext(url.searchParams.get("next")) } });
 	}
-	return html(renderLogin({ next: safeNext(url.searchParams.get("next")) }), { cache: false });
+	return html(
+		renderLogin({ next: safeNext(url.searchParams.get("next")), passkey: (await passkeyCount(env)) > 0 }),
+		{ cache: false },
+	);
 }
 
 /** 앱 관리 화면(/admin/apps)의 폼 처리 — 추가·저장·토큰 재발급·중지/재개·삭제. */
@@ -168,6 +173,13 @@ async function handleAppsPost(request: Request, env: Env): Promise<Response> {
 	const action = get("action");
 	const id = get("id");
 	const back = (msg: string) => Response.redirect(new URL(`/admin/apps?msg=${encodeURIComponent(msg)}`, request.url).toString(), 303);
+
+	if (action === "passkey-delete") {
+		const cred = get("cred");
+		if (!cred) return back("지울 패스키를 알려 주세요.");
+		await deletePasskey(env, cred);
+		return back("패스키를 지웠어요.");
+	}
 
 	if (!id) return back("앱 id가 필요해요.");
 	if (!/^[a-z0-9][a-z0-9-]{1,40}$/i.test(id)) return back("앱 id는 영문·숫자·하이픈만 쓸 수 있어요.");
@@ -526,6 +538,15 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 			return apiJson(await pushAnomaly(env, body as Parameters<typeof pushAnomaly>[1]));
 		}
 
+		// ── 패스키 (/admin/api/passkey/*) — 등록은 로그인 상태에서만, 로그인 확인은 누구나 부를 수 있다.
+		if (path.startsWith("/admin/api/passkey")) {
+			const res = await handlePasskey(request, env, url, {
+				hasSession: () => validSession(env, request),
+				sessionCookie: async (user) => sessionCookie(await makeSession(env, user), Math.floor(SESSION_TTL / 1000)),
+			});
+			if (res) return res;
+		}
+
 		// ── 앱 관리 API (/admin/api/apps) — 화면 없이 스크립트로
 		if (path === "/admin/api/apps" || path.startsWith("/admin/api/apps/")) {
 			return handleAppsApi(request, env, url);
@@ -554,7 +575,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 			if (unauth) return unauth;
 			if (request.method === "POST") return handleAppsPost(request, env);
 			return html(
-				renderApps(await listApps(env), {
+				renderApps(await listApps(env), await listPasskeys(env), {
 					session: true,
 					flash: url.searchParams.get("msg"),
 					token: url.searchParams.get("token"),

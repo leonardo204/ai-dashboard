@@ -92,6 +92,8 @@ export async function ensureSchema(env: StatsEnv): Promise<void> {
 		"ALTER TABLE anomalies ADD COLUMN verdict TEXT",
 		"ALTER TABLE anomalies ADD COLUMN verdict_reason TEXT",
 		"ALTER TABLE anomalies ADD COLUMN suppressed_reason TEXT",
+		// 관리자 패스키(WebAuthn). 공개키만 보관하므로 이 표가 새어도 로그인에는 쓸 수 없다.
+		"CREATE TABLE IF NOT EXISTS passkeys (cred_id TEXT PRIMARY KEY, public_key TEXT NOT NULL, alg INTEGER NOT NULL DEFAULT -7, label TEXT, created_at INTEGER NOT NULL, last_used_at INTEGER, counter INTEGER NOT NULL DEFAULT 0)",
 	]) {
 		try {
 			await env.DB.prepare(sql).run();
@@ -340,6 +342,65 @@ export async function exportCalls(
 		maxId: tail?.mx ?? afterId,
 		remaining: Math.max(0, (tail?.n ?? 0) - rows.length),
 	};
+}
+
+// ─────────────────────────────────────────────────────────────
+// 관리자 패스키 (WebAuthn)
+//   기기에 개인키가 남고 서버에는 공개키만 온다. 비밀번호처럼 훔쳐 쓸 값이 없다.
+// ─────────────────────────────────────────────────────────────
+export interface PasskeyRow {
+	cred_id: string;
+	public_key: string;   // SPKI DER을 base64url로
+	alg: number;          // COSE 알고리즘 (-7 ES256 · -257 RS256)
+	label: string | null;
+	created_at: number;
+	last_used_at: number | null;
+	counter: number;
+}
+
+export async function listPasskeys(env: StatsEnv): Promise<PasskeyRow[]> {
+	const rs = await withSchema(env, () =>
+		env.DB.prepare("SELECT * FROM passkeys ORDER BY created_at").all<PasskeyRow>(),
+	);
+	return rs.results ?? [];
+}
+
+/** 로그인 화면이 패스키 버튼을 띄울지 정할 때만 쓴다 — 공개키를 읽지 않는다. */
+export async function passkeyCount(env: StatsEnv): Promise<number> {
+	const row = await withSchema(env, () =>
+		env.DB.prepare("SELECT COUNT(*) AS n FROM passkeys").first<{ n: number }>(),
+	);
+	return row?.n ?? 0;
+}
+
+export async function getPasskey(env: StatsEnv, credId: string): Promise<PasskeyRow | null> {
+	return withSchema(env, () =>
+		env.DB.prepare("SELECT * FROM passkeys WHERE cred_id = ?1").bind(credId).first<PasskeyRow>(),
+	);
+}
+
+export async function addPasskey(
+	env: StatsEnv,
+	p: { credId: string; publicKey: string; alg: number; label: string | null },
+): Promise<void> {
+	await withSchema(env, () =>
+		env.DB.prepare(
+			"INSERT INTO passkeys (cred_id, public_key, alg, label, created_at, counter) VALUES (?1,?2,?3,?4,?5,0)" +
+				" ON CONFLICT(cred_id) DO UPDATE SET public_key=excluded.public_key, alg=excluded.alg, label=excluded.label",
+		).bind(p.credId, p.publicKey, p.alg, p.label, Date.now()).run(),
+	);
+}
+
+export async function deletePasskey(env: StatsEnv, credId: string): Promise<void> {
+	await withSchema(env, () => env.DB.prepare("DELETE FROM passkeys WHERE cred_id = ?1").bind(credId).run());
+}
+
+/** 로그인 성공 뒤 — 마지막 사용 시각과 서명 횟수를 갱신한다. */
+export async function touchPasskey(env: StatsEnv, credId: string, counter: number): Promise<void> {
+	await withSchema(env, () =>
+		env.DB.prepare("UPDATE passkeys SET last_used_at = ?2, counter = ?3 WHERE cred_id = ?1")
+			.bind(credId, Date.now(), counter).run(),
+	);
 }
 
 // ─────────────────────────────────────────────────────────────

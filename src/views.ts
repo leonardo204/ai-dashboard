@@ -14,7 +14,7 @@
 
 import {
 	PERIODS, MODEL_PRICES, DEFAULT_MODEL, countryName, LOG_PAGE, SUMMARY_RECENT,
-	type AppConfig, type GroupRow,
+	type AppConfig, type GroupRow, type PasskeyRow,
 	type SummaryData, type UsageData, type TrendData, type GeoData, type LogsData, type LogFilter,
 	type AnomalyBrief,
 	type AnomalyData, type AnomalyRow,
@@ -993,7 +993,22 @@ function appCard(a: AppConfig): string {
 </div>`;
 }
 
-export function renderApps(apps: AppConfig[], opts: AdminOpts = {}): string {
+/** 등록된 패스키 한 줄 — 이름·등록 시각·마지막 사용, 그리고 해제 버튼. */
+function passkeyRow(p: PasskeyRow): string {
+	return `<div class="pk1">
+  <div>
+    <div class="nm">${escapeHtml(p.label || "이름 없는 기기")}</div>
+    <div class="sm">등록 ${kst(p.created_at)} · ${p.last_used_at ? `마지막 사용 ${kst(p.last_used_at)}` : "아직 쓰지 않음"}</div>
+  </div>
+  <form method="post" action="/admin/apps" class="sm" onsubmit="return confirm('이 패스키를 지울까요? 그 기기로는 더 이상 로그인할 수 없어요.')">
+    <input type="hidden" name="action" value="passkey-delete">
+    <input type="hidden" name="cred" value="${escapeHtml(p.cred_id)}">
+    <button class="btn" type="submit">해제</button>
+  </form>
+</div>`;
+}
+
+export function renderApps(apps: AppConfig[], passkeys: PasskeyRow[] = [], opts: AdminOpts = {}): string {
 	const activeN = apps.filter((a) => a.active).length;
 	const list = apps.length
 		? `<div class="apps">${apps.map(appCard).join("")}</div>`
@@ -1032,6 +1047,16 @@ export function renderApps(apps: AppConfig[], opts: AdminOpts = {}): string {
 </div>
 
 ${list}
+
+<div class="lh" style="margin-top:26px">
+  <div class="t">패스키 <b>${passkeys.length}</b>개<span class="sm"> · 이 기기의 지문·얼굴·PIN으로 로그인해요</span></div>
+  <button type="button" class="btn p" id="pk-add">이 기기 등록</button>
+</div>
+<div class="err" id="pk-err" hidden style="margin-bottom:10px"></div>
+${passkeys.length
+	? `<div class="pks">${passkeys.map(passkeyRow).join("")}</div>`
+	: `<div class="empty">등록된 패스키가 없어요. <b>이 기기 등록</b>을 누르면 지금 쓰는 기기로 로그인할 수 있어요.</div>`}
+<p class="sm" style="margin:9px 2px 0">패스키는 기기마다 따로 등록해요. 비밀번호 로그인은 그대로 남아 있어서, 기기를 잃어도 들어올 수 있어요.</p>
 
 <div class="dt"><button type="button" class="dth" data-toggle="dt-howto">앱이 호출하는 방법</button>
 <div class="in code" id="dt-howto" hidden>POST https://ai.zerolive.co.kr/v1/ai          ← 채팅 · 비전 · 웹검색

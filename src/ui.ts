@@ -206,6 +206,23 @@ textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;
 .login .err{background:#fff1f1;border:1px solid #f6cfcf;color:#a9313a;border-radius:10px;
  padding:10px 12px;font-size:13px;font-weight:600;margin-bottom:14px;}
 .login .foot{text-align:center;margin-top:16px;font-size:11.5px;}
+/* 패스키 — 비밀번호 칸 위에 두되, 눈에 띄되 튀지 않게 테두리 버튼으로 */
+.login .btn.pk{display:flex;align-items:center;justify-content:center;gap:8px;margin:0 0 4px;
+ background:#fff;border:1.5px solid var(--accent);color:var(--accent);font-weight:800;}
+.login .btn.pk:hover{background:#f7f3ff;}
+.login .btn.pk svg{width:18px;height:18px;fill:currentColor;display:block;}
+.login .btn.pk[disabled]{opacity:.55;cursor:default;}
+.login .or{display:flex;align-items:center;gap:10px;margin:16px 0 14px;color:var(--muted);font-size:11.5px;font-weight:700;}
+.login .or::before,.login .or::after{content:"";flex:1;height:1px;background:var(--line);}
+
+/* 패스키 목록 (앱 관리 맨 아래) */
+.pks{display:flex;flex-direction:column;gap:8px;}
+.pk1{display:flex;align-items:center;gap:10px;background:#fafbfc;border:1px solid var(--line);
+ border-radius:11px;padding:10px 13px;}
+.pk1 .nm{font-weight:700;font-size:13px;}
+.pk1 .sm{margin-left:auto;white-space:nowrap;}
+.pk1 form{margin:0;}
+.pk1 .btn{padding:5px 11px;font-size:11.5px;}
 .copy{margin-left:6px;font-size:11px;font-weight:700;padding:2px 7px;border-radius:6px;border:1px solid var(--line);
  background:#fff;cursor:pointer;color:var(--muted);}
 .copy:hover{color:var(--ink);border-color:#cfd4dd;}
@@ -835,6 +852,124 @@ document.addEventListener('click', function(e){
   if (!w) return;
   b.textContent = w.classList.toggle('open') ? '가리기' : '보기';
 });
+
+// 패스키(WebAuthn) — 로그인 화면의 '패스키로 로그인', 앱 관리 화면의 '이 기기 등록'.
+// 브라우저는 값을 ArrayBuffer로 주고받으므로 base64url로 바꿔 서버와 오간다.
+(function(){
+  var login = document.getElementById('pk-login');
+  var add = document.getElementById('pk-add');
+  if (!login && !add) return;
+
+  function b64u(buf){
+    var b = new Uint8Array(buf), s = '';
+    for (var i = 0; i < b.length; i++) s += String.fromCharCode(b[i]);
+    var t = btoa(s).split('+').join('-').split('/').join('_');
+    while (t.charAt(t.length - 1) === '=') t = t.slice(0, -1);
+    return t;
+  }
+  function bin(s){
+    var p = String(s).split('-').join('+').split('_').join('/');
+    while (p.length % 4) p += '=';
+    var raw = atob(p), out = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+  function say(msg){
+    var e = document.getElementById('pk-err');
+    if (!e) { if (msg) alert(msg); return; }
+    if (!msg) { e.hidden = true; return; }
+    e.textContent = msg; e.hidden = false;
+  }
+  function post(path, body){
+    return fetch('/admin/api/passkey/' + path, {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {})
+    }).then(function(r){
+      return r.json().catch(function(){ return {}; }).then(function(j){ return { ok: r.ok, j: j }; });
+    });
+  }
+  // 사용자가 창을 닫거나 취소한 경우(NotAllowedError)는 오류가 아니라 그냥 그만둔 것이다.
+  function reason(e, fallback){
+    if (e && e.name === 'NotAllowedError') return '';
+    return (e && e.message) || fallback;
+  }
+  var supported = !!(window.PublicKeyCredential && navigator.credentials && navigator.credentials.get);
+
+  if (login) {
+    if (!supported) login.disabled = true;
+    login.addEventListener('click', function(){
+      say('');
+      var lb = login.querySelector('span');
+      var was = lb ? lb.textContent : '';
+      login.disabled = true;
+      if (lb) lb.textContent = '기기 확인 중…';
+      var stop = function(msg){ login.disabled = false; if (lb) lb.textContent = was; say(msg); };
+      post('login/options').then(function(r){
+        if (!r.ok) throw new Error(r.j.error || '준비하지 못했어요.');
+        return navigator.credentials.get({ publicKey: {
+          challenge: bin(r.j.challenge),
+          rpId: r.j.rpId,
+          userVerification: r.j.userVerification,
+          timeout: 60000
+        }});
+      }).then(function(c){
+        return post('login/verify', {
+          id: c.id,
+          clientDataJSON: b64u(c.response.clientDataJSON),
+          authenticatorData: b64u(c.response.authenticatorData),
+          signature: b64u(c.response.signature)
+        });
+      }).then(function(r){
+        if (!r.ok) throw new Error(r.j.error || '확인하지 못했어요.');
+        var nx = document.querySelector('input[name=next]');
+        location.href = (nx && nx.value) || '/admin';
+      }).catch(function(e){ stop(reason(e, '패스키로 로그인하지 못했어요.')); });
+    });
+  }
+
+  if (add) {
+    add.addEventListener('click', function(){
+      say('');
+      if (!supported || !navigator.credentials.create) { say('이 브라우저는 패스키를 지원하지 않아요.'); return; }
+      var label = prompt('이 기기를 뭐라고 부를까요?', '내 기기');
+      if (label === null) return;
+      var was = add.textContent;
+      add.disabled = true; add.textContent = '등록 중…';
+      var stop = function(msg){ add.disabled = false; add.textContent = was; say(msg); };
+      post('register/options').then(function(r){
+        if (!r.ok) throw new Error(r.j.error || '준비하지 못했어요.');
+        var o = r.j;
+        return navigator.credentials.create({ publicKey: {
+          challenge: bin(o.challenge),
+          rp: o.rp,
+          user: { id: bin(o.user.id), name: o.user.name, displayName: o.user.displayName },
+          pubKeyCredParams: o.pubKeyCredParams,
+          excludeCredentials: (o.excludeCredentials || []).map(function(c){
+            return { type: 'public-key', id: bin(c.id) };
+          }),
+          authenticatorSelection: o.authenticatorSelection,
+          timeout: 60000
+        }});
+      }).then(function(c){
+        var res = c.response;
+        // getPublicKey()가 SPKI 공개키를 그대로 준다. 없으면 서버가 CBOR을 풀어야 하는데 그 길은 두지 않았다.
+        var pub = res.getPublicKey ? res.getPublicKey() : null;
+        if (!pub) throw new Error('이 브라우저는 패스키 등록에 필요한 정보를 주지 않아요.');
+        return post('register/verify', {
+          id: c.id,
+          publicKey: b64u(pub),
+          alg: res.getPublicKeyAlgorithm ? res.getPublicKeyAlgorithm() : -7,
+          clientDataJSON: b64u(res.clientDataJSON),
+          label: label
+        });
+      }).then(function(r){
+        if (!r.ok) throw new Error(r.j.error || '등록하지 못했어요.');
+        location.href = '/admin/apps?msg=' + encodeURIComponent('패스키를 등록했어요.');
+      }).catch(function(e){ stop(reason(e, '패스키를 등록하지 못했어요.')); });
+    });
+  }
+})();
 `;
 
 // ─────────────────────────────────────────────────────────────
@@ -899,7 +1034,17 @@ ${flash}<script>${ADMIN_JS}${EXTRA_JS}</script></body></html>`;
 // ─────────────────────────────────────────────────────────────
 // 로그인 화면
 // ─────────────────────────────────────────────────────────────
-export function renderLogin(opts: { error?: string; user?: string; next?: string } = {}): string {
+export function renderLogin(
+	opts: { error?: string; user?: string; next?: string; passkey?: boolean } = {},
+): string {
+	// 패스키 버튼은 등록된 기기가 있을 때만 띄운다. 눌러도 아무 일이 없는 버튼은 두지 않는다.
+	const pk = opts.passkey
+		? `<button type="button" class="btn pk" id="pk-login">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 7a4 4 0 1 0-3.6 3.98L10 12.4V14H8.6L7 15.6V18h3.5l4.9-4.9A4 4 0 0 0 15 7Zm1.6 1.4a1.2 1.2 0 1 1-1.7 1.7 1.2 1.2 0 0 1 1.7-1.7Z"/></svg>
+    <span>패스키로 로그인</span></button>
+  <div class="or"><span>또는 비밀번호</span></div>`
+		: "";
+
 	return shellAdmin(
 		"로그인",
 		`<main class="login"><form class="box" method="post" action="/admin/login">
@@ -907,9 +1052,11 @@ export function renderLogin(opts: { error?: string; user?: string; next?: string
   <h1>AI Service 관리</h1>
   <p class="sub">호출 통계와 앱 토큰을 관리하는 화면이에요.</p>
   ${opts.error ? `<div class="err">${escapeHtml(opts.error)}</div>` : ""}
+  <div class="err" id="pk-err" hidden></div>
   <input type="hidden" name="next" value="${escapeHtml(opts.next ?? "/admin")}">
+  ${pk}
   <div class="fld"><label>아이디</label>
-    <input name="user" value="${escapeHtml(opts.user ?? "")}" autocomplete="username" autocapitalize="none" autofocus required></div>
+    <input name="user" value="${escapeHtml(opts.user ?? "")}" autocomplete="username" autocapitalize="none"${opts.passkey ? "" : " autofocus"} required></div>
   <div class="fld"><label>비밀번호</label>
     <input name="pass" type="password" autocomplete="current-password" required></div>
   <button class="btn p" type="submit">로그인</button>
