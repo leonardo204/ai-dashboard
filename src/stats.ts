@@ -38,6 +38,31 @@ export function priceOf(model: string | null | undefined) {
 	return (model && MODEL_PRICES[model]) || PRICE_FALLBACK;
 }
 /** 실제 청구액(있으면) + 아직 cost가 없는 과거 행은 단가표로 추정해 더한다. */
+/**
+ * 단가표로 추정해야 하는 행을 가리는 SQL 조건.
+ *
+ * 두 경우다.
+ *   cost IS NULL   예전 기록이라 청구액 칸이 아예 없다
+ *   cost = 0       내 키(BYOK)로 나가 OpenRouter 크레딧이 줄지 않은 호출.
+ *                  실제로는 모델 회사에 돈이 나가는데 0으로 온다.
+ * 무료 모델(:free)과 실패한 호출은 진짜 0이라 건드리지 않는다.
+ */
+const NEEDS_EST =
+	"(cost IS NULL OR (cost = 0 AND status = 'ok' AND COALESCE(model,'') NOT LIKE '%:free%'))";
+
+/** 행 하나의 비용 — 청구액이 없거나 0이면 단가표로 추정한다. */
+export function rowCost(
+	realCost: number | null | undefined,
+	model: string | null | undefined,
+	inTok: number,
+	outTok: number,
+	status = "ok",
+): number {
+	if (realCost) return realCost;
+	if (status !== "ok" || String(model ?? "").includes(":free")) return realCost ?? 0;
+	return costOf(model, inTok, outTok);
+}
+
 export function mergeCost(realCost: number, model: string | null | undefined, eIn: number, eOut: number): number {
 	return (realCost || 0) + (eIn || eOut ? costOf(model, eIn, eOut) : 0);
 }
@@ -364,7 +389,19 @@ export async function exportCalls(
 				.first<{ mx: number | null; n: number | null }>(),
 		]),
 	);
-	const rows = rs.results ?? [];
+	// 청구액이 0으로 온 호출(내 키로 나간 BYOK)은 여기서 단가표로 채워 보낸다.
+	// 이상탐지 서버가 비용 급증을 보려면 실제로 쓴 돈이 필요한데, 원본 0을 그대로
+	// 넘기면 저쪽에서는 "비용이 늘 0인 서비스"로 배운다.
+	const rows: Record<string, unknown>[] = (rs.results ?? []).map((r) => ({
+		...r,
+		cost: rowCost(
+			r.cost as number | null,
+			r.model as string | null,
+			Number(r.in_tokens ?? 0),
+			Number(r.out_tokens ?? 0),
+			String(r.status ?? "ok"),
+		),
+	}));
 	const lastId = rows.length ? Number(rows[rows.length - 1].id) : afterId;
 	return {
 		rows,
@@ -533,14 +570,14 @@ async function collectStatsInner(env: StatsEnv, period: string, appFilter: strin
 			bind(
 				"SELECT COALESCE(app,'(미상)') AS app, kind, model, COUNT(*) AS total," +
 					" SUM(status='ok') AS ok, SUM(status='error') AS error," +
-					" COALESCE(SUM(in_tokens),0) AS inTok, COALESCE(SUM(out_tokens),0) AS outTok, COALESCE(SUM(cost),0) AS realCost, COALESCE(SUM(CASE WHEN cost IS NULL THEN in_tokens ELSE 0 END),0) AS eIn, COALESCE(SUM(CASE WHEN cost IS NULL THEN out_tokens ELSE 0 END),0) AS eOut," +
+					" COALESCE(SUM(in_tokens),0) AS inTok, COALESCE(SUM(out_tokens),0) AS outTok, COALESCE(SUM(cost),0) AS realCost, COALESCE(SUM(CASE WHEN " + NEEDS_EST + " THEN in_tokens ELSE 0 END),0) AS eIn, COALESCE(SUM(CASE WHEN " + NEEDS_EST + " THEN out_tokens ELSE 0 END),0) AS eOut," +
 					" COALESCE(SUM(latency_ms),0) AS lat" +
 					` FROM calls WHERE ts >= ?1${appWhere} GROUP BY app, kind, model`,
 			).all<{ app: string; kind: string; model: string | null; total: number; ok: number | null; error: number | null; inTok: number; outTok: number; realCost: number; eIn: number; eOut: number; lat: number }>(),
 
 			bind(
 				`SELECT ${bexpr} AS b, model, COUNT(*) AS total, SUM(status='ok') AS ok, SUM(status='error') AS error,` +
-					" COALESCE(SUM(in_tokens),0) AS inTok, COALESCE(SUM(out_tokens),0) AS outTok, COALESCE(SUM(cost),0) AS realCost, COALESCE(SUM(CASE WHEN cost IS NULL THEN in_tokens ELSE 0 END),0) AS eIn, COALESCE(SUM(CASE WHEN cost IS NULL THEN out_tokens ELSE 0 END),0) AS eOut" +
+					" COALESCE(SUM(in_tokens),0) AS inTok, COALESCE(SUM(out_tokens),0) AS outTok, COALESCE(SUM(cost),0) AS realCost, COALESCE(SUM(CASE WHEN " + NEEDS_EST + " THEN in_tokens ELSE 0 END),0) AS eIn, COALESCE(SUM(CASE WHEN " + NEEDS_EST + " THEN out_tokens ELSE 0 END),0) AS eOut" +
 					` FROM calls WHERE ts >= ?1${appWhere} GROUP BY b, model ORDER BY b DESC`,
 			).all<{ b: string; model: string | null; total: number; ok: number | null; error: number | null; inTok: number; outTok: number; realCost: number; eIn: number; eOut: number }>(),
 
@@ -554,7 +591,7 @@ async function collectStatsInner(env: StatsEnv, period: string, appFilter: strin
 			bind(
 				"SELECT COALESCE(NULLIF(country,''),'(미상)') AS c, model, COUNT(*) AS total," +
 					" SUM(status='ok') AS ok, SUM(status='error') AS error," +
-					" COALESCE(SUM(in_tokens),0) AS inTok, COALESCE(SUM(out_tokens),0) AS outTok, COALESCE(SUM(cost),0) AS realCost, COALESCE(SUM(CASE WHEN cost IS NULL THEN in_tokens ELSE 0 END),0) AS eIn, COALESCE(SUM(CASE WHEN cost IS NULL THEN out_tokens ELSE 0 END),0) AS eOut," +
+					" COALESCE(SUM(in_tokens),0) AS inTok, COALESCE(SUM(out_tokens),0) AS outTok, COALESCE(SUM(cost),0) AS realCost, COALESCE(SUM(CASE WHEN " + NEEDS_EST + " THEN in_tokens ELSE 0 END),0) AS eIn, COALESCE(SUM(CASE WHEN " + NEEDS_EST + " THEN out_tokens ELSE 0 END),0) AS eOut," +
 					" COALESCE(SUM(latency_ms),0) AS lat" +
 					` FROM calls WHERE ts >= ?1${appWhere} GROUP BY c, model`,
 			).all<{ c: string; model: string | null; total: number; ok: number | null; error: number | null; inTok: number; outTok: number; realCost: number; eIn: number; eOut: number; lat: number }>(),
@@ -567,7 +604,7 @@ async function collectStatsInner(env: StatsEnv, period: string, appFilter: strin
 				"SELECT COALESCE(NULLIF(country,''),'(미상)') AS c, COALESCE(NULLIF(region,''),'-') AS rg," +
 					" COALESCE(NULLIF(city,''),'-') AS ct, model, COUNT(*) AS total," +
 					" SUM(status='ok') AS ok, SUM(status='error') AS error," +
-					" COALESCE(SUM(in_tokens),0) AS inTok, COALESCE(SUM(out_tokens),0) AS outTok, COALESCE(SUM(cost),0) AS realCost, COALESCE(SUM(CASE WHEN cost IS NULL THEN in_tokens ELSE 0 END),0) AS eIn, COALESCE(SUM(CASE WHEN cost IS NULL THEN out_tokens ELSE 0 END),0) AS eOut," +
+					" COALESCE(SUM(in_tokens),0) AS inTok, COALESCE(SUM(out_tokens),0) AS outTok, COALESCE(SUM(cost),0) AS realCost, COALESCE(SUM(CASE WHEN " + NEEDS_EST + " THEN in_tokens ELSE 0 END),0) AS eIn, COALESCE(SUM(CASE WHEN " + NEEDS_EST + " THEN out_tokens ELSE 0 END),0) AS eOut," +
 					" COUNT(DISTINCT ip) AS ips," +
 					" AVG(lat) AS la, AVG(lon) AS lo, SUM(lat IS NOT NULL) AS geoN" +
 					` FROM calls WHERE ts >= ?1${appWhere} GROUP BY c, rg, ct, model`,
@@ -727,7 +764,7 @@ async function collectStatsInner(env: StatsEnv, period: string, appFilter: strin
 		recent: (recentRows.results ?? []).map((r) => ({
 			ts: r.ts, app: r.app, kind: r.kind, model: r.model, status: r.status,
 			http: r.http, latency_ms: r.latency_ms, tokens: r.inTok + r.outTok,
-			cost: r.realCost ?? costOf(r.model, r.inTok, r.outTok), err: r.err, meta: r.meta,
+			cost: rowCost(r.realCost, r.model, r.inTok, r.outTok, r.status), err: r.err, meta: r.meta,
 			country: r.country ?? "", region: r.region ?? "", city: r.city ?? "",
 		})),
 	};
@@ -782,8 +819,8 @@ const AGG =
 	" COUNT(*) AS total, SUM(status='ok') AS ok, SUM(status='error') AS error," +
 	" COALESCE(SUM(in_tokens),0) AS inTok, COALESCE(SUM(out_tokens),0) AS outTok," +
 	" COALESCE(SUM(cost),0) AS realCost," +
-	" COALESCE(SUM(CASE WHEN cost IS NULL THEN in_tokens ELSE 0 END),0) AS eIn," +
-	" COALESCE(SUM(CASE WHEN cost IS NULL THEN out_tokens ELSE 0 END),0) AS eOut," +
+	" COALESCE(SUM(CASE WHEN " + NEEDS_EST + " THEN in_tokens ELSE 0 END),0) AS eIn," +
+	" COALESCE(SUM(CASE WHEN " + NEEDS_EST + " THEN out_tokens ELSE 0 END),0) AS eOut," +
 	" COALESCE(SUM(latency_ms),0) AS lat";
 
 interface AggRow {
@@ -1380,7 +1417,7 @@ function toLogRow(r: RawLogRow): LogRow {
 	return {
 		id: r.id, ts: r.ts, app: r.app, kind: r.kind, model: r.model, status: r.status,
 		http: r.http, latency_ms: r.latency_ms, inTok: r.inTok, outTok: r.outTok,
-		cost: r.realCost ?? costOf(r.model, r.inTok, r.outTok),
+		cost: rowCost(r.realCost, r.model, r.inTok, r.outTok, r.status),
 		err: r.err, meta: r.meta, ip: r.ip,
 		country: r.country ?? "", region: r.region ?? "", city: r.city ?? "",
 	};
@@ -1482,7 +1519,7 @@ export async function logsCsv(env: StatsEnv, f: LogFilter): Promise<string> {
 	for (const r of rs.results ?? []) {
 		const ts = Number(r.ts);
 		const model = (r.model as string | null) ?? null;
-		const cost = (r.realCost as number | null) ?? costOf(model, Number(r.inTok), Number(r.outTok));
+		const cost = rowCost(r.realCost as number | null, model, Number(r.inTok), Number(r.outTok), String(r.status ?? "ok"));
 		lines.push(
 			[
 				r.id,

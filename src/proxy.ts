@@ -125,10 +125,25 @@ function pickModel(app: AppConfig, kind: string, requested: unknown): string {
 	return app.models[kind] || app.models.default || DEFAULT_MODEL;
 }
 
-/** OpenRouter가 실어주는 실제 청구액. 없으면 null(호출부가 단가표로 추정). */
+/**
+ * 이 호출에 실제로 든 돈.
+ *
+ * 값이 두 군데에 나뉘어 온다.
+ *   usage.cost                              OpenRouter 크레딧에서 빠진 금액
+ *   usage.cost_details.upstream_inference_cost   내 키(BYOK)로 모델 회사에 직접 청구된 금액
+ *
+ * 내 Google·OpenAI 키를 OpenRouter에 붙여 두면(BYOK) 크레딧이 줄지 않아 usage.cost가 0으로 온다.
+ * 그 0을 그대로 적으면 실제로 돈을 쓰고 있는데 대시보드에는 $0으로 보인다.
+ * 그래서 둘을 더한다 — 한쪽만 있으면 그 값이 그대로 나오고, 웹검색처럼 두 곳에
+ * 나뉘어 붙는 경우에도 합계가 맞는다.
+ */
 function costOfUsage(u: unknown): number | null {
-	const c = (u as { cost?: unknown })?.cost;
-	return typeof c === "number" && Number.isFinite(c) ? c : null;
+	const usage = u as { cost?: unknown; cost_details?: { upstream_inference_cost?: unknown } } | undefined;
+	const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null);
+	const credit = num(usage?.cost);
+	const byok = num(usage?.cost_details?.upstream_inference_cost);
+	if (credit === null && byok === null) return null;
+	return (credit ?? 0) + (byok ?? 0);
 }
 
 /** OpenRouter 공통 헤더. */
@@ -263,7 +278,10 @@ export async function handleChat(request: Request, env: ProxyEnv, ctx: Execution
 
 	let parsed: {
 		choices?: { message?: { content?: string } }[];
-		usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number };
+		usage?: {
+			prompt_tokens?: number; completion_tokens?: number; cost?: number;
+			is_byok?: boolean; cost_details?: { upstream_inference_cost?: number };
+		};
 	};
 	try {
 		parsed = JSON.parse(outText);
@@ -351,7 +369,8 @@ export async function handleEmbeddings(request: Request, env: ProxyEnv, ctx: Exe
 	let inTok = 0;
 	let cost: number | null = null;
 	try {
-		const o = JSON.parse(outText) as { usage?: { prompt_tokens?: number; total_tokens?: number; cost?: number } };
+		const o = JSON.parse(outText) as { usage?: { prompt_tokens?: number; total_tokens?: number; cost?: number;
+			             cost_details?: { upstream_inference_cost?: number } } };
 		inTok = o.usage?.prompt_tokens ?? o.usage?.total_tokens ?? 0;
 		cost = costOfUsage(o.usage);
 	} catch {

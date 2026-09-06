@@ -58,7 +58,9 @@ function tableFilter(tableId: string, placeholder: string): string {
 const FOOT_GEO =
 	"국가·지역은 Cloudflare가 요청에 붙여주는 값이라 외부 조회 없이 기록돼요. VPN·통신사 경로에 따라 실제와 다를 수 있어요.";
 const FOOT_COST =
-	"비용은 OpenRouter가 응답에 실어주는 실제 청구액이에요(* = 단가 미등록 모델은 기본 단가로 추정한 과거 기록). 최종 청구액은 OpenRouter 대시보드가 기준이에요.";
+	"비용은 OpenRouter가 응답에 실어주는 실제 청구액이에요. 내 키를 붙여 쓰는(BYOK) 호출은 "
+	"OpenRouter 크레딧이 줄지 않아 청구액이 0으로 오는데, 그때는 모델 회사가 알려준 금액을 쓰고 "
+	"그것도 없으면 단가표로 추정해요(* = 단가 미등록 모델). 최종 청구액은 OpenRouter와 모델 회사 대시보드가 기준이에요.";
 
 // ═════════════════════════════════════════════════════════════
 // 요약 (/admin)
