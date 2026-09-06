@@ -574,11 +574,14 @@ const EXTRA_CSS = `
 .sevd svg path{cursor:default;}
 .sevd .cv{text-anchor:middle;font-size:19px;font-weight:900;fill:var(--ink);font-variant-numeric:tabular-nums;}
 .sevd .cl{text-anchor:middle;font-size:10px;font-weight:700;fill:var(--muted);}
-.sevd .lgs{min-width:0;}
-.sevd .lg{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:700;padding:2px 0;}
-.sevd .lg i{width:9px;height:9px;border-radius:3px;flex:0 0 9px;display:block;}
-.sevd .lg .nm{color:var(--muted);}
-.sevd .lg b{font-size:14px;font-weight:900;font-variant-numeric:tabular-nums;}
+.sevd .lgs{min-width:0;flex:1 1 auto;}
+/* 이름은 왼쪽, 숫자는 오른쪽 한 줄로 세운다. 값이 커져도 자릿수가 흔들리지 않는다. */
+.sevd .lg{display:grid;grid-template-columns:9px minmax(0,1fr) auto;align-items:center;gap:6px;
+ font-size:12px;font-weight:700;padding:2px 0;cursor:default;}
+.sevd .lg i{width:9px;height:9px;border-radius:3px;display:block;}
+.sevd .lg .nm{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.sevd .lg b{font-size:12.5px;font-weight:800;font-variant-numeric:tabular-nums;
+ justify-self:end;white-space:nowrap;}
 .anb .sub{margin-top:8px;font-size:11.5px;color:var(--muted);}
 .anb .sub a{color:var(--accent);font-weight:700;text-decoration:none;}
 .anb .sub a:hover{text-decoration:underline;}

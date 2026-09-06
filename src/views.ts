@@ -793,7 +793,7 @@ function smallDonut(rows: { label: string; v: number; color: string }[], total: 
 	let acc = -Math.PI / 2;
 	const arcs =
 		parts.length === 1
-			? `<circle cx="${C}" cy="${C}" r="${(R + r) / 2}" fill="none" stroke="${parts[0].color}" stroke-width="${R - r}" data-tip="${escapeHtml(`${parts[0].label} ${parts[0].v}건 (100%)`)}"/>`
+			? `<circle cx="${C}" cy="${C}" r="${(R + r) / 2}" fill="none" stroke="${parts[0].color}" stroke-width="${R - r}" data-tip="${escapeHtml(`${parts[0].label} ${parts[0].v.toLocaleString()}건 (100%)`)}"/>`
 			: parts
 					.map((s) => {
 						const ang = (s.v / sum) * Math.PI * 2;
@@ -807,23 +807,32 @@ function smallDonut(rows: { label: string; v: number; color: string }[], total: 
 					})
 					.join("");
 
+	// 방문 수는 몇십만까지 커진다. 도넛 가운데는 자리가 좁아서 다섯 자리가 넘으면
+	// 줄여 쓰고(12.3k · 1.2M) 글자도 한 단계씩 줄인다. 정확한 값은 마우스를 올리면 나온다.
+	const center = donutNum(total);
+	const cvSize = center.length <= 4 ? 19 : center.length <= 5 ? 17 : center.length <= 6 ? 15 : 13;
+
 	const legend = parts
 		.map(
 			(s) =>
-				`<div class="lg"><i style="background:${s.color}"></i>` +
-				`<span class="nm">${s.label}</span><b>${s.v.toLocaleString()}</b></div>`,
+				`<div class="lg" data-tip="${escapeHtml(`${s.label} ${s.v.toLocaleString()}건 (${((s.v / sum) * 100).toFixed(0)}%)`)}">` +
+				`<i style="background:${s.color}"></i>` +
+				`<span class="nm">${s.label}</span><b>${escapeHtml(donutNum(s.v))}</b></div>`,
 		)
 		.join("");
 
 	return `<div class="sevd">
-  <svg viewBox="0 0 ${C * 2} ${C * 2}" role="img" aria-label="${escapeHtml(aria)}">
+  <svg viewBox="0 0 ${C * 2} ${C * 2}" role="img" aria-label="${escapeHtml(aria)}" data-tip="${escapeHtml(`전체 ${total.toLocaleString()}건`)}">
     ${arcs}
-    <text x="${C}" y="${C - 1}" class="cv">${total.toLocaleString()}</text>
+    <text x="${C}" y="${C - 1}" class="cv" font-size="${cvSize}">${escapeHtml(center)}</text>
     <text x="${C}" y="${C + 13}" class="cl">건</text>
   </svg>
   <div class="lgs">${legend}</div>
 </div>`;
 }
+
+/** 좁은 자리에 넣을 숫자 — 다섯 자리까지는 그대로, 그보다 크면 줄여 쓴다. */
+const donutNum = (v: number) => (v < 100_000 ? v.toLocaleString() : shortNum(v));
 
 /**
  * 요약 화면에 얹는 이상탐지 칸.
