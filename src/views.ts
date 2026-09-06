@@ -786,7 +786,8 @@ function smallDonut(rows: { label: string; v: number; color: string }[], total: 
 	const parts = rows.filter((r) => r.v > 0);
 	const sum = parts.reduce((x, y) => x + y.v, 0) || 1;
 
-	const C = 48, R = 42, r = 28;
+	// 고리를 얇게 잡아 가운데 구멍을 넓힌다. 숫자가 다섯 자리를 넘어도 좌우에 여백이 남는다.
+	const C = 48, R = 44, r = 32;
 	const pt = (ang: number, rad: number) =>
 		`${(C + rad * Math.cos(ang)).toFixed(2)},${(C + rad * Math.sin(ang)).toFixed(2)}`;
 
@@ -810,7 +811,7 @@ function smallDonut(rows: { label: string; v: number; color: string }[], total: 
 	// 방문 수는 몇십만까지 커진다. 도넛 가운데는 자리가 좁아서 다섯 자리가 넘으면
 	// 줄여 쓰고(12.3k · 1.2M) 글자도 한 단계씩 줄인다. 정확한 값은 마우스를 올리면 나온다.
 	const center = donutNum(total);
-	const cvSize = center.length <= 4 ? 19 : center.length <= 5 ? 17 : center.length <= 6 ? 15 : 13;
+	const cvSize = center.length <= 4 ? 18 : center.length <= 5 ? 16 : center.length <= 6 ? 14 : 12;
 
 	const legend = parts
 		.map(
@@ -824,8 +825,8 @@ function smallDonut(rows: { label: string; v: number; color: string }[], total: 
 	return `<div class="sevd">
   <svg viewBox="0 0 ${C * 2} ${C * 2}" role="img" aria-label="${escapeHtml(aria)}" data-tip="${escapeHtml(`전체 ${total.toLocaleString()}건`)}">
     ${arcs}
-    <text x="${C}" y="${C - 1}" class="cv" font-size="${cvSize}">${escapeHtml(center)}</text>
-    <text x="${C}" y="${C + 13}" class="cl">건</text>
+    <text x="${C}" y="${C - 2}" class="cv" style="font-size:${cvSize}px">${escapeHtml(center)}</text>
+    <text x="${C}" y="${C + 12}" class="cl">건</text>
   </svg>
   <div class="lgs">${legend}</div>
 </div>`;
