@@ -1801,7 +1801,10 @@ export function svgMap(
 	unknown: number,
 	hits: { country: string; lat: number; lon: number; total: number; human: number; ai: number; search: number; ips: number }[] = [],
 	hitUnknown = 0,
+	/** 방문 계층이 한 서비스만 담고 있으면 그 이름. 범례·툴팁에 적어 무엇이 걸린 화면인지 알린다. */
+	hitLabel = "",
 ): string {
+	const hitWhat = hitLabel ? `${hitLabel} 방문` : "서비스 방문";
 	const max = Math.max(1, ...points.map((p) => p.total));
 	const bubbles = points
 		.map((p) => {
@@ -1824,7 +1827,7 @@ export function svgMap(
 			// 크기까지 같으면 뒤에 깔린 쪽이 통째로 가린다. 크기는 색깔끼리만 견준다.
 			const r = 7 + Math.sqrt(h.total / hmax) * 18;
 			const bots = h.ai + h.search;
-			const title = `${countryName(h.country)}\n서비스 방문 ${h.total.toLocaleString()}건 · 고유 방문자 ${h.ips.toLocaleString()}\n사람 ${h.human.toLocaleString()} · 크롤러 ${bots.toLocaleString()}\n(나라 가운데에 모아 찍은 자리예요)`;
+			const title = `${countryName(h.country)}\n${hitWhat} ${h.total.toLocaleString()}건 · 고유 방문자 ${h.ips.toLocaleString()}\n사람 ${h.human.toLocaleString()} · 크롤러 ${bots.toLocaleString()}\n(나라 가운데에 모아 찍은 자리예요)`;
 			return `<g class="bub hit" data-tip="${escapeHtml(title)}">` +
 				`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r.toFixed(1)}" class="bo"/>` +
 				`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${Math.max(1.8, r * 0.26).toFixed(1)}" class="bi"/></g>`;
@@ -1834,13 +1837,13 @@ export function svgMap(
 	const hitSum = hits.reduce((n, h) => n + h.total, 0);
 	const legend = hits.length
 		? `<div class="maplg"><span class="k"><i class="s-call"></i>AI 호출 ${points.reduce((n, p) => n + p.total, 0).toLocaleString()}건</span>` +
-			`<span class="k"><i class="s-hit"></i>서비스 방문 ${hitSum.toLocaleString()}건</span></div>`
+			`<span class="k"><i class="s-hit"></i>${escapeHtml(hitWhat)} ${hitSum.toLocaleString()}건</span></div>`
 		: "";
 
 	const notes = [
 		"원 크기는 각 색 안에서만 견줘요. 마우스를 올리면 지역·건수를 볼 수 있어요.",
 		unknown ? `좌표가 없는 호출 ${unknown.toLocaleString()}건은 지도에 표시되지 않아요(이전 기록·미상 지역).` : "",
-		hits.length ? "서비스 방문은 도시 좌표가 없어 나라 가운데에 모아 찍어요." : "",
+		hits.length ? `${hitWhat}은 도시 좌표가 없어 나라 가운데에 모아 찍어요.` : "",
 		hitUnknown ? `나라를 모르는 방문 ${hitUnknown.toLocaleString()}건은 빠져 있어요.` : "",
 	].filter(Boolean);
 

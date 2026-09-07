@@ -116,6 +116,8 @@ export async function ensureSchema(env: StatsEnv): Promise<void> {
 		"CREATE TABLE IF NOT EXISTS anomaly_models (version TEXT PRIMARY KEY, algo TEXT, scope TEXT, trained_at INTEGER, train_from INTEGER, train_to INTEGER, train_rows INTEGER, metrics TEXT, status TEXT, note TEXT)",
 		"CREATE TABLE IF NOT EXISTS anomaly_state (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)",
 		// 검증 에이전트가 붙인 판정. 이미 있으면 조용히 실패한다(D1엔 ADD COLUMN IF NOT EXISTS가 없다).
+		// 앱이 어느 서비스(트래픽) 화면과 짝인지. 지역 탭에서 앱을 고르면 그 서비스 방문만 함께 본다.
+		"ALTER TABLE apps ADD COLUMN site TEXT",
 		"ALTER TABLE anomalies ADD COLUMN verdict TEXT",
 		"ALTER TABLE anomalies ADD COLUMN verdict_reason TEXT",
 		"ALTER TABLE anomalies ADD COLUMN suppressed_reason TEXT",
@@ -203,11 +205,14 @@ export interface AppConfig {
 	active: boolean;
 	note: string | null;
 	createdAt: number;
+	/** 짝이 되는 트래픽 서비스 키(SITES). 비어 있으면 연결하지 않은 앱이다. */
+	site: string | null;
 }
 
 interface AppRow {
 	id: string; name: string; token: string; models: string;
 	per_min: number; per_day: number; active: number; note: string | null; created_at: number;
+	site: string | null;
 }
 
 function toApp(r: AppRow): AppConfig {
@@ -222,6 +227,7 @@ function toApp(r: AppRow): AppConfig {
 		id: r.id, name: r.name, token: r.token, models,
 		perMin: r.per_min, perDay: r.per_day, active: r.active === 1,
 		note: r.note, createdAt: r.created_at,
+		site: siteKey(r.site),
 	};
 }
 
@@ -266,14 +272,14 @@ export function newToken(): string {
 
 export async function upsertApp(
 	env: StatsEnv,
-	a: { id: string; name: string; token: string; models: string; perMin: number; perDay: number; active: boolean; note: string | null },
+	a: { id: string; name: string; token: string; models: string; perMin: number; perDay: number; active: boolean; note: string | null; site?: string | null },
 ): Promise<void> {
 	await ensureSchema(env);
 	await env.DB.prepare(
-		"INSERT INTO apps (id,name,token,models,per_min,per_day,active,note,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)" +
-			" ON CONFLICT(id) DO UPDATE SET name=?2, token=?3, models=?4, per_min=?5, per_day=?6, active=?7, note=?8",
+		"INSERT INTO apps (id,name,token,models,per_min,per_day,active,note,created_at,site) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)" +
+			" ON CONFLICT(id) DO UPDATE SET name=?2, token=?3, models=?4, per_min=?5, per_day=?6, active=?7, note=?8, site=?10",
 	)
-		.bind(a.id, a.name, a.token, a.models, a.perMin, a.perDay, a.active ? 1 : 0, a.note, Date.now())
+		.bind(a.id, a.name, a.token, a.models, a.perMin, a.perDay, a.active ? 1 : 0, a.note, Date.now(), siteKey(a.site))
 		.run();
 	clearAppCache();
 }
@@ -537,6 +543,17 @@ export const countryPoint = (code: string): [number, number] | null => COUNTRY_L
 export function countryName(code: string): string {
 	if (!code || code === "(미상)") return "(미상)";
 	return COUNTRY_KO[code] ? `${COUNTRY_KO[code]} (${code})` : code;
+}
+
+/**
+ * 앱에 적어 둔 서비스 키를 다듬는다.
+ *
+ * 목록(SITES)에 없는 값은 없는 것으로 본다 — 서비스를 지우거나 이름을 바꿔도
+ * 옛 값이 남아 엉뚱한 화면을 가리키지 않게 한다.
+ */
+export function siteKey(v: unknown): string | null {
+	const k = typeof v === "string" ? v.trim() : "";
+	return k && SITES[k] ? k : null;
 }
 
 export interface GroupRow {
@@ -816,6 +833,8 @@ export interface AppBrief {
 	id: string;
 	name: string;
 	active: boolean;
+	/** 짝이 되는 트래픽 서비스 키. 없으면 null. */
+	site?: string | null;
 }
 
 export interface Bucket {
@@ -840,12 +859,13 @@ export const bucketLabelOf = (b: "day" | "week" | "month") => (b === "day" ? "�
 
 /** 화면마다 필요한 기간·앱 탭용 앱 목록. 토큰까지 읽지 않는다. */
 async function appBriefs(env: StatsEnv): Promise<AppBrief[]> {
-	const rs = await env.DB.prepare("SELECT id, name, active FROM apps ORDER BY created_at ASC").all<{
+	const rs = await env.DB.prepare("SELECT id, name, active, site FROM apps ORDER BY created_at ASC").all<{
 		id: string;
 		name: string;
 		active: number;
+		site: string | null;
 	}>();
-	return (rs.results ?? []).map((r) => ({ id: r.id, name: r.name, active: !!r.active }));
+	return (rs.results ?? []).map((r) => ({ id: r.id, name: r.name, active: !!r.active, site: siteKey(r.site) }));
 }
 
 /** 집계 SELECT 절 — 호출 수·성공·실패·토큰·비용·지연을 한 번에 뽑는다. */
@@ -1304,6 +1324,10 @@ export interface GeoData {
 	hitTotal: number;
 	/** 나라를 모르거나 지도 좌표가 없어 지도에 못 찍는 방문 수. */
 	hitUnknown: number;
+	/** 방문 계층이 어느 서비스 것인지 — 앱을 고르면 그 앱과 짝인 서비스만 본다. 전체면 "". */
+	hitSite: string;
+	/** 앱을 골랐는데 짝인 서비스가 지정되지 않았으면 true(방문 계층을 그리지 않는다). */
+	hitUnlinked: boolean;
 }
 
 export interface HitPoint {
@@ -1326,12 +1350,20 @@ async function collectGeoInner(env: StatsEnv, period: string, appFilter: string)
 		return appFilter ? st.bind(since, appFilter) : st.bind(since);
 	};
 
-	// 서비스 방문은 앱과 무관한 기록이라, 앱을 하나 골라 본 화면에서는 함께 보여주지 않는다.
+	// 방문 기록은 앱이 아니라 서비스 단위다. 앱을 하나 골랐으면 그 앱에 적어 둔 서비스의
+	// 방문만 함께 본다(짝은 앱 관리 화면에서 지정한다). 짝이 없으면 방문 계층을 비운다 —
 	// 걸러진 호출 옆에 걸러지지 않은 방문을 나란히 놓으면 같은 조건으로 읽히기 때문이다.
-	const wantHits = !appFilter;
+	const apps = await appBriefs(env);
+	const hitSite = appFilter ? apps.find((a) => a.id === appFilter)?.site ?? "" : "";
+	const hitUnlinked = !!appFilter && !hitSite;
+	const wantHits = !hitUnlinked;
+	const siteWhere = hitSite ? " AND site = ?2" : "";
+	const bindHits = (sql: string) => {
+		const st = env.DB.prepare(sql);
+		return hitSite ? st.bind(since, hitSite) : st.bind(since);
+	};
 
-	const [apps, cRows, cIpRows, rRows, hitRows] = await Promise.all([
-		appBriefs(env),
+	const [cRows, cIpRows, rRows, hitRows] = await Promise.all([
 		bind(
 			`SELECT COALESCE(NULLIF(country,''),'(미상)') AS c, model,${AGG} FROM calls WHERE ts >= ?1${appWhere} GROUP BY c, model`,
 		).all<AggRow & { c: string; model: string | null }>(),
@@ -1348,12 +1380,12 @@ async function collectGeoInner(env: StatsEnv, period: string, appFilter: string)
 
 		// 서비스 방문 — 나라별로만 모은다(방문 기록에는 도시 좌표가 없다).
 		wantHits
-			? env.DB.prepare(
+			? bindHits(
 					"SELECT COALESCE(NULLIF(country,''),'(미상)') AS c, COUNT(*) AS n," +
 						" SUM(kind='human') AS h, SUM(kind='ai') AS a, SUM(kind='search') AS s," +
-						" COUNT(DISTINCT ip_hash) AS ips FROM hits WHERE ts >= ?1 GROUP BY c ORDER BY n DESC",
+						" COUNT(DISTINCT ip_hash) AS ips FROM hits WHERE ts >= ?1" + siteWhere +
+						" GROUP BY c ORDER BY n DESC",
 				)
-					.bind(since)
 					.all<{ c: string; n: number; h: number | null; a: number | null; s: number | null; ips: number }>()
 					.catch(() => ({ results: [] as { c: string; n: number; h: number | null; a: number | null; s: number | null; ips: number }[] }))
 			: Promise.resolve({ results: [] as { c: string; n: number; h: number | null; a: number | null; s: number | null; ips: number }[] }),
@@ -1437,7 +1469,7 @@ async function collectGeoInner(env: StatsEnv, period: string, appFilter: string)
 
 	return {
 		period, appFilter, since, apps, byCountry, byRegion, points, geoUnknown,
-		hitPoints, hitCountries, hitTotal, hitUnknown,
+		hitPoints, hitCountries, hitTotal, hitUnknown, hitSite, hitUnlinked,
 	};
 }
 

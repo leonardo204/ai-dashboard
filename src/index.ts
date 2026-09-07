@@ -224,11 +224,12 @@ async function handleAppsPost(request: Request, env: Env): Promise<Response> {
 	const perDay = Math.max(1, parseInt(get("per_day") || "300", 10) || 300);
 	const name = get("name") || id;
 	const note = get("note") || null;
+	const site = get("site") || null;
 
 	if (action === "create") {
 		if (existing) return back("이미 있는 앱 id예요.");
 		const token = newToken();
-		await upsertApp(env, { id, name, token, models: JSON.stringify(models), perMin, perDay, active: true, note });
+		await upsertApp(env, { id, name, token, models: JSON.stringify(models), perMin, perDay, active: true, note, site });
 		return Response.redirect(
 			new URL(`/admin/apps?msg=${encodeURIComponent(`${name} 앱을 추가했어요.`)}&token=${encodeURIComponent(token)}`, request.url).toString(),
 			303,
@@ -236,7 +237,7 @@ async function handleAppsPost(request: Request, env: Env): Promise<Response> {
 	}
 	if (action === "save") {
 		if (!existing) return back("없는 앱이에요.");
-		await upsertApp(env, { id, name, token: existing.token, models: JSON.stringify(models), perMin, perDay, active: existing.active, note });
+		await upsertApp(env, { id, name, token: existing.token, models: JSON.stringify(models), perMin, perDay, active: existing.active, note, site });
 		return back(`${name} 앱 설정을 저장했어요.`);
 	}
 	return back("알 수 없는 동작이에요.");
@@ -338,13 +339,18 @@ function validateAppInput(b: Record<string, unknown>, forCreate: boolean): strin
 	for (const k of ["perMin", "perDay"] as const) {
 		if (b[k] !== undefined && (!Number.isFinite(Number(b[k])) || Number(b[k]) < 1)) return `${k}는 1 이상의 숫자여야 해요.`;
 	}
+	// 짝이 되는 서비스 — 목록에 없는 이름을 적어 두면 지역 화면이 빈 채로 열린다. 미리 막는다.
+	if (b.site !== undefined && b.site !== null && String(b.site).trim()) {
+		const k = String(b.site).trim();
+		if (!SITES[k]) return `site는 ${Object.keys(SITES).join(" · ")} 중 하나여야 해요(연결하지 않으려면 빈 값).`;
+	}
 	return null;
 }
 
 function appJson(a: AppConfig) {
 	return {
 		id: a.id, name: a.name, token: a.token, models: a.models,
-		perMin: a.perMin, perDay: a.perDay, active: a.active, note: a.note,
+		perMin: a.perMin, perDay: a.perDay, active: a.active, note: a.note, site: a.site,
 	};
 }
 
@@ -395,6 +401,7 @@ async function handleAppsApi(request: Request, env: Env, url: URL): Promise<Resp
 				perDay: Number(b.perDay ?? 300),
 				active: b.active === undefined ? true : !!b.active,
 				note: b.note === undefined || b.note === null ? null : String(b.note),
+				site: b.site === undefined || b.site === null ? null : String(b.site),
 			});
 			const created = await getApp(env, newId);
 			return apiJson({ app: created ? appJson(created) : null }, 201);
@@ -430,6 +437,7 @@ async function handleAppsApi(request: Request, env: Env, url: URL): Promise<Resp
 			perDay: b.perDay === undefined ? app.perDay : Number(b.perDay),
 			active: b.active === undefined ? app.active : !!b.active,
 			note: b.note === undefined ? app.note : b.note === null ? null : String(b.note),
+			site: b.site === undefined ? app.site : b.site === null ? null : String(b.site),
 		});
 		const after = await getApp(env, app.id);
 		return apiJson({ app: after ? appJson(after) : null });

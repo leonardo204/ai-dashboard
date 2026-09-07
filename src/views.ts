@@ -409,15 +409,19 @@ export function renderGeo(g: GeoData, opts: AdminOpts = {}): string {
 						`<td class="n o1">${r.ai.toLocaleString()}</td>` +
 						`<td class="n o1">${r.search.toLocaleString()}</td>` +
 						`<td class="bar hit o2"><span style="width:${Math.round((r.total / maxHit) * 100)}%"></span></td>` +
-						`<td>${r.key === "(미상)" ? "" : `<a href="/admin/traffic?period=${g.period}">트래픽 →</a>`}</td></tr>`,
+						`<td>${r.key === "(미상)" ? "" : `<a href="/admin/traffic?period=${g.period}${g.hitSite ? `&site=${encodeURIComponent(g.hitSite)}` : ""}">트래픽 →</a>`}</td></tr>`,
 				)
 				.join("")
 		: `<tr><td colspan="8">아직 들어온 방문 기록이 없어요.</td></tr>`;
 
-	const hitSection = g.appFilter
-		? `<p class="sm" style="margin:18px 2px 0">서비스 방문 지역은 앱과 상관없는 기록이라, 앱을 고른 화면에서는 보여주지 않아요. ` +
-			`<a href="/admin/geo?period=${g.period}">전체 앱으로 보기 →</a></p>`
-		: `<div class="sh2"><h2>서비스 방문 지역</h2><a href="/admin/traffic?period=${g.period}">트래픽에서 보기 →</a></div>
+	// 앱을 골랐는데 짝인 서비스를 지정하지 않았으면 방문 계층을 그릴 수 없다.
+	// 아무 서비스나 얹으면 걸러진 호출 옆에 걸러지지 않은 방문이 나란히 놓여 잘못 읽힌다.
+	const hitTitle = g.hitSite ? `${siteName(g.hitSite)} 방문 지역` : "서비스 방문 지역";
+	const trafficHref = `/admin/traffic?period=${g.period}${g.hitSite ? `&site=${encodeURIComponent(g.hitSite)}` : ""}`;
+	const hitSection = g.hitUnlinked
+		? `<p class="sm" style="margin:18px 2px 0">이 앱에는 짝이 되는 서비스가 지정되어 있지 않아 방문 지역을 함께 보여주지 못해요. ` +
+			`<a href="/admin/apps">앱 관리에서 연결하기 →</a> · <a href="/admin/geo?period=${g.period}">전체 앱으로 보기 →</a></p>`
+		: `<div class="sh2"><h2>${escapeHtml(hitTitle)}</h2><a href="${trafficHref}">트래픽에서 보기 →</a></div>
 <table class="fx" id="tb-hitgeo">${cols("", "78", "72", "84:o1", "82:o1", "88:o1", "110:o2", "62")}<thead><tr><th>국가</th><th class="n">방문</th><th class="n">사람</th><th class="n o1">고유 방문자</th><th class="n o1">AI 크롤러</th><th class="n o1">검색 크롤러</th><th class="o2">비중</th><th></th></tr></thead><tbody>${hitRows}</tbody></table>`;
 
 	return shellAdmin(
@@ -425,7 +429,7 @@ export function renderGeo(g: GeoData, opts: AdminOpts = {}): string {
 		pageHead("호출 지역", `국가 · 도시별 호출·방문 분포 · ${sinceLabel(g.since)}`, g.appFilter) +
 			`<div id="hz-body">
 ${filterTabs("/admin/geo", g.period, g.appFilter, g.apps, PERIODS)}
-${svgMap(g.points, g.geoUnknown, g.hitPoints, g.hitUnknown)}
+${svgMap(g.points, g.geoUnknown, g.hitPoints, g.hitUnknown, g.hitSite ? siteName(g.hitSite) : "")}
 
 <div class="sh2"><h2>국가별 AI 호출</h2><span class="sm">${g.byCountry.filter((c) => c.key !== "(미상)").length}개국</span></div>
 <table class="fx" id="tb-country">${cols("", "88", "70:o1", "70", "78", "84:o1", "84", "86:o2", "110:o2", "58")}<thead><tr><th>국가</th><th class="n">호출</th><th class="n o1">성공</th><th class="n">실패</th><th class="n">고유 IP</th><th class="n o1">토큰</th><th class="n">비용</th><th class="n o2">평균 지연</th><th class="o2">비중</th><th></th></tr></thead><tbody>${countryRows}</tbody></table>
@@ -436,7 +440,8 @@ ${hitSection}
 <table class="fx" id="tb-region">${cols("92", "", "", "84", "70:o1", "70", "78:o1", "84:o2", "84")}<thead><tr><th>국가</th><th>지역</th><th>도시</th><th class="n">호출</th><th class="n o1">성공</th><th class="n">실패</th><th class="n o1">고유 IP</th><th class="n o2">토큰</th><th class="n">비용</th></tr></thead><tbody>${regionRows}</tbody></table>
 
 <p class="foot">${FOOT_GEO}<br>
-지도의 <b>보라색</b>은 AI 호출, <b>분홍색</b>은 서비스 방문이에요. 방문은 도시 좌표가 없어 나라 가운데에 모아 찍고, 자세한 내용은 트래픽 탭에서 봐요.</p>
+지도의 <b>보라색</b>은 AI 호출, <b>분홍색</b>은 서비스 방문이에요. 방문은 도시 좌표가 없어 나라 가운데에 모아 찍고, 자세한 내용은 트래픽 탭에서 봐요.<br>
+앱을 고르면 그 앱의 호출과, 앱 관리에서 짝지어 둔 서비스의 방문만 함께 보여요.</p>
 </div>`,
 		{ ...opts, tab: "geo" },
 	);
@@ -1603,6 +1608,20 @@ function modelChips(models: Record<string, string>): string {
 }
 
 /** 앱 1개 카드 — 평소엔 요약만 보여주고, 편집은 눌렀을 때만 펼친다. */
+/**
+ * 앱과 짝지을 서비스 고르기.
+ *
+ * 앱(AI 호출)과 서비스(방문 기록)는 이름이 서로 달라서(portfoliolive ↔ me) 규칙으로 맞출 수 없다.
+ * 그래서 코드에 박아 두지 않고 여기서 골라 저장한다. 지역 탭에서 앱을 고르면 이 짝을 따라간다.
+ */
+function siteSelect(cur: string | null): string {
+	const opt = (v: string, label: string) =>
+		`<option value="${escapeHtml(v)}"${v === (cur ?? "") ? " selected" : ""}>${escapeHtml(label)}</option>`;
+	return `<select name="site">${opt("", "연결 안 함")}` +
+		Object.entries(SITES).map(([k, v]) => opt(k, v.name)).join("") +
+		`</select>`;
+}
+
 function appCard(a: AppConfig): string {
 	const ed = `ed-${a.id}`;
 	const post = (action: string) =>
@@ -1635,6 +1654,10 @@ function appCard(a: AppConfig): string {
     <div class="af"><div class="k">호출 상한 (IP 기준)</div>
       <div class="v">분당 <b>${a.perMin.toLocaleString()}</b>회 · 하루 <b>${a.perDay.toLocaleString()}</b>회</div></div>
     <div class="af wide"><div class="k">용도별 모델</div><div class="v">${modelChips(a.models)}</div></div>
+    <div class="af"><div class="k">짝이 되는 서비스</div>
+      <div class="v">${a.site
+		? `<a href="/admin/geo?period=month&app=${encodeURIComponent(a.id)}">${escapeHtml(siteName(a.site))}</a>`
+		: `<span class="sm">연결 안 함</span>`}</div></div>
     ${a.note ? `<div class="af wide"><div class="k">메모</div><div class="v">${escapeHtml(a.note)}</div></div>` : ""}
   </div>
   <div class="aedit" id="${escapeHtml(ed)}" hidden>
@@ -1649,6 +1672,8 @@ function appCard(a: AppConfig): string {
         <div class="fld"><label>분당 상한 (IP 기준)</label><input class="n" name="per_min" value="${a.perMin}"></div>
         <div class="fld"><label>일일 상한 (IP 기준)</label><input class="n" name="per_day" value="${a.perDay}"></div>
       </div>
+      <div class="fld"><label>짝이 되는 서비스 — 지역 탭에서 이 앱을 고르면 이 서비스의 방문도 함께 보여요</label>
+        ${siteSelect(a.site)}</div>
       <div class="eacts"><button class="btn p" type="submit">저장</button>
         <button type="button" class="btn" data-toggle="${escapeHtml(ed)}">취소</button></div>
     </form>
@@ -1703,7 +1728,10 @@ export function renderApps(apps: AppConfig[], passkeys: PasskeyRow[] = [], opts:
       <div class="fld"><label>분당 상한</label><input class="n" name="per_min" value="20"></div>
       <div class="fld"><label>일일 상한</label><input class="n" name="per_day" value="300"></div>
     </div>
-    <div class="fld"><label>메모</label><input name="note" placeholder="용도·비고"></div>
+    <div class="grid2">
+      <div class="fld"><label>메모</label><input name="note" placeholder="용도·비고"></div>
+      <div class="fld"><label>짝이 되는 서비스 (선택)</label>${siteSelect("")}</div>
+    </div>
     <div class="eacts"><button class="btn p" type="submit">추가 (토큰 자동 발급)</button>
       <button type="button" class="btn" data-toggle="new-app" data-on="닫기" data-off="새 앱 추가">취소</button></div>
   </form>
