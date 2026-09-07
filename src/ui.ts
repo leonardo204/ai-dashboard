@@ -808,10 +808,15 @@ table.recent td.err{max-width:260px;overflow:hidden;text-overflow:ellipsis;}
 .scroll{overflow-x:auto;border-radius:14px;}
 /* 줄이 계속 늘어나는 표 — 높이를 묶어 두 칸 배치가 한쪽으로 길어지지 않게 한다. */
 .scroll.cap{max-height:420px;overflow-y:auto;border:1px solid var(--line);background:var(--panel);}
+/* 줄이 많은 표는 화면을 끝없이 밀어내지 않게 높이를 묶고 그 안에서만 스크롤한다.
+   머리글은 붙박이라 한참 내려가도 어느 칸인지 알 수 있다.
+   tall은 그 표가 화면의 본문인 경우(로그·판정 상세)에 쓴다. */
+.cap.tall{max-height:min(620px,72vh);}
 /* 표만 있는 칸도 같은 높이로 맞춘다 — 두 칸 배치에서 한쪽만 길어지면 아래가 어긋난다 */
 .cap:not(.scroll){max-height:420px;overflow:auto;border-radius:14px;}
 .cap table{border-radius:14px;}
 .cap thead th{position:sticky;top:0;z-index:1;background:#fafbfc;}
+.cap table tr:first-child th{position:sticky;top:0;z-index:1;background:#fafbfc;}
 
 /* 방문 종류 · 유입 경로 태그 — 트래픽 화면에서 쓴다 */
 .kd,.rg{display:inline-flex;font-weight:800;font-size:11.5px;border-radius:999px;padding:2px 9px;white-space:nowrap;

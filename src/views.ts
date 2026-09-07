@@ -302,14 +302,14 @@ ${filterTabs("/admin/usage", u.period, u.appFilter, u.apps, PERIODS)}
   <div class="m"><div class="l">호출당 비용</div><div class="v">${u.total ? usd(u.cost / u.total) : "-"}</div></div>
 </div>
 
-<div class="sh2"><h2>앱별</h2></div>
-<table class="fx" id="tb-app">${cols("", "96", "74:o1", "74", "84:o1", "84", "86:o2", "92:o2", "58")}<thead><tr><th>앱</th><th class="n">호출</th><th class="n o1">성공</th><th class="n">실패</th><th class="n o1">토큰</th><th class="n">비용</th><th class="n o2">평균 지연</th><th class="n o2">호출당 비용</th><th></th></tr></thead><tbody>${appRows}</tbody></table>
+<div class="sh2"><h2>앱별 <span class="sm">${u.byApp.length}개</span></h2></div>
+<div class="cap"><table class="fx" id="tb-app">${cols("", "96", "74:o1", "74", "84:o1", "84", "86:o2", "92:o2", "58")}<thead><tr><th>앱</th><th class="n">호출</th><th class="n o1">성공</th><th class="n">실패</th><th class="n o1">토큰</th><th class="n">비용</th><th class="n o2">평균 지연</th><th class="n o2">호출당 비용</th><th></th></tr></thead><tbody>${appRows}</tbody></table></div>
 
 <div class="sh2" id="model"><h2>모델별 <span class="sm" id="tb-model-cnt">${u.byModel.length}개</span></h2>${tableFilter("tb-model", "모델 이름으로 걸러보기")}</div>
-<table class="fx" id="tb-model">${cols("", "96", "74", "90:o1", "90:o1", "84", "86:o2", "58")}<thead><tr><th>모델</th><th class="n">호출</th><th class="n">실패</th><th class="n o1">입력 토큰</th><th class="n o1">출력 토큰</th><th class="n">비용</th><th class="n o2">평균 지연</th><th></th></tr></thead><tbody>${modelRows}</tbody></table>
+<div class="cap"><table class="fx" id="tb-model">${cols("", "96", "74", "90:o1", "90:o1", "84", "86:o2", "58")}<thead><tr><th>모델</th><th class="n">호출</th><th class="n">실패</th><th class="n o1">입력 토큰</th><th class="n o1">출력 토큰</th><th class="n">비용</th><th class="n o2">평균 지연</th><th></th></tr></thead><tbody>${modelRows}</tbody></table></div>
 
-<div class="sh2"><h2>용도별</h2></div>
-<table class="fx" id="tb-kind">${cols("", "96", "74:o1", "74", "84:o1", "84", "86:o2", "58")}<thead><tr><th>용도</th><th class="n">호출</th><th class="n o1">성공</th><th class="n">실패</th><th class="n o1">토큰</th><th class="n">비용</th><th class="n o2">평균 지연</th><th></th></tr></thead><tbody>${kindRows}</tbody></table>
+<div class="sh2"><h2>용도별 <span class="sm">${u.byKind.length}개</span></h2></div>
+<div class="cap"><table class="fx" id="tb-kind">${cols("", "96", "74:o1", "74", "84:o1", "84", "86:o2", "58")}<thead><tr><th>용도</th><th class="n">호출</th><th class="n o1">성공</th><th class="n">실패</th><th class="n o1">토큰</th><th class="n">비용</th><th class="n o2">평균 지연</th><th></th></tr></thead><tbody>${kindRows}</tbody></table></div>
 
 <p class="foot">용도는 앱이 보낸 <span class="mono">X-Ai-Kind</span> 값이에요.<br>${FOOT_COST}</p>
 </div>`,
@@ -352,7 +352,7 @@ ${svgTrend(t.buckets)}
 ${svgHeat(t.heat)}
 
 <div class="sh2"><h2>구간별 상세</h2><span class="sm">전체 ${t.total.toLocaleString()}건 · ${usd(t.cost)}</span></div>
-<div class="scroll"><table id="tb-bucket"><thead><tr><th>구간</th><th>비중</th><th class="n">호출</th><th class="n">성공</th><th class="n">실패</th><th class="n">토큰</th><th class="n">비용</th></tr></thead><tbody>${rows}</tbody></table></div>
+<div class="scroll cap"><table id="tb-bucket"><thead><tr><th>구간</th><th>비중</th><th class="n">호출</th><th class="n">성공</th><th class="n">실패</th><th class="n">토큰</th><th class="n">비용</th></tr></thead><tbody>${rows}</tbody></table></div>
 
 <p class="foot">구간은 한국 시간(KST) 기준으로 끊어요.<br>${FOOT_COST}</p>
 </div>`,
@@ -422,7 +422,7 @@ export function renderGeo(g: GeoData, opts: AdminOpts = {}): string {
 		? `<p class="sm" style="margin:18px 2px 0">이 앱에는 짝이 되는 서비스가 지정되어 있지 않아 방문 지역을 함께 보여주지 못해요. ` +
 			`<a href="/admin/apps">앱 관리에서 연결하기 →</a> · <a href="/admin/geo?period=${g.period}">전체 앱으로 보기 →</a></p>`
 		: `<div class="sh2"><h2>${escapeHtml(hitTitle)}</h2><a href="${trafficHref}">트래픽에서 보기 →</a></div>
-<table class="fx" id="tb-hitgeo">${cols("", "78", "72", "84:o1", "82:o1", "88:o1", "110:o2", "62")}<thead><tr><th>국가</th><th class="n">방문</th><th class="n">사람</th><th class="n o1">고유 방문자</th><th class="n o1">AI 크롤러</th><th class="n o1">검색 크롤러</th><th class="o2">비중</th><th></th></tr></thead><tbody>${hitRows}</tbody></table>`;
+<div class="cap"><table class="fx" id="tb-hitgeo">${cols("", "78", "72", "84:o1", "82:o1", "88:o1", "110:o2", "62")}<thead><tr><th>국가</th><th class="n">방문</th><th class="n">사람</th><th class="n o1">고유 방문자</th><th class="n o1">AI 크롤러</th><th class="n o1">검색 크롤러</th><th class="o2">비중</th><th></th></tr></thead><tbody>${hitRows}</tbody></table></div>`;
 
 	return shellAdmin(
 		"지역",
@@ -432,12 +432,12 @@ ${filterTabs("/admin/geo", g.period, g.appFilter, g.apps, PERIODS)}
 ${svgMap(g.points, g.geoUnknown, g.hitPoints, g.hitUnknown, g.hitSite ? siteName(g.hitSite) : "")}
 
 <div class="sh2"><h2>국가별 AI 호출</h2><span class="sm">${g.byCountry.filter((c) => c.key !== "(미상)").length}개국</span></div>
-<table class="fx" id="tb-country">${cols("", "88", "70:o1", "70", "78", "84:o1", "84", "86:o2", "110:o2", "58")}<thead><tr><th>국가</th><th class="n">호출</th><th class="n o1">성공</th><th class="n">실패</th><th class="n">고유 IP</th><th class="n o1">토큰</th><th class="n">비용</th><th class="n o2">평균 지연</th><th class="o2">비중</th><th></th></tr></thead><tbody>${countryRows}</tbody></table>
+<div class="cap"><table class="fx" id="tb-country">${cols("", "88", "70:o1", "70", "78", "84:o1", "84", "86:o2", "110:o2", "58")}<thead><tr><th>국가</th><th class="n">호출</th><th class="n o1">성공</th><th class="n">실패</th><th class="n">고유 IP</th><th class="n o1">토큰</th><th class="n">비용</th><th class="n o2">평균 지연</th><th class="o2">비중</th><th></th></tr></thead><tbody>${countryRows}</tbody></table></div>
 
 ${hitSection}
 
 <div class="sh2"><h2>지역 · 도시별 (상위 ${g.byRegion.length})</h2>${tableFilter("tb-region", "도시·지역 이름으로 걸러보기")}</div>
-<table class="fx" id="tb-region">${cols("92", "", "", "84", "70:o1", "70", "78:o1", "84:o2", "84")}<thead><tr><th>국가</th><th>지역</th><th>도시</th><th class="n">호출</th><th class="n o1">성공</th><th class="n">실패</th><th class="n o1">고유 IP</th><th class="n o2">토큰</th><th class="n">비용</th></tr></thead><tbody>${regionRows}</tbody></table>
+<div class="cap"><table class="fx" id="tb-region">${cols("92", "", "", "84", "70:o1", "70", "78:o1", "84:o2", "84")}<thead><tr><th>국가</th><th>지역</th><th>도시</th><th class="n">호출</th><th class="n o1">성공</th><th class="n">실패</th><th class="n o1">고유 IP</th><th class="n o2">토큰</th><th class="n">비용</th></tr></thead><tbody>${regionRows}</tbody></table></div>
 
 <p class="foot">${FOOT_GEO}<br>
 지도의 <b>보라색</b>은 AI 호출, <b>분홍색</b>은 서비스 방문이에요. 방문은 도시 좌표가 없어 나라 가운데에 모아 찍고, 자세한 내용은 트래픽 탭에서 봐요.<br>
@@ -1276,7 +1276,7 @@ ${sectionHead("성적 흐름 (F1)")}
 ${svgF1(a.evals)}
 
 ${sectionHead("재학습 이력")}
-<div class="scroll"><table><tr><th>시각</th><th>계기</th><th>모델</th><th class="n">학습 구간</th><th class="n">F1 변화</th><th>결과</th></tr>${trainRows}</table></div>
+<div class="scroll cap"><table><tr><th>시각</th><th>계기</th><th>모델</th><th class="n">학습 구간</th><th class="n">F1 변화</th><th>결과</th></tr>${trainRows}</table></div>
 
 ${sectionHead("승격 심사")}
 <div class="scroll cap"><table><tr><th>시각</th><th>후보</th><th>결과</th><th>근거</th></tr>${promRows}</table></div>
@@ -1377,7 +1377,7 @@ ${serverBarOf(d.state, d.heartbeatAge)}
 </div>
 
 ${sectionHead("보낸 메일 내역", "/admin/anomaly?period=" + d.period, "이상 신호 보기 →")}
-<div class="scroll"><table class="recent mail"><tr><th>보낸 시각</th><th>종류</th><th>갈래</th><th>등급</th><th>제목</th><th class="n">결과</th></tr>${rows}</table></div>
+<div class="scroll cap"><table class="recent mail"><tr><th>보낸 시각</th><th>종류</th><th>갈래</th><th>등급</th><th>제목</th><th class="n">결과</th></tr>${rows}</table></div>
 
 <p class="foot">줄을 누르면 실제로 보낸 본문이 펼쳐져요. ‘받은 그대로 보기’는 메일함에서 보이는 모습 그대로 새 창에 띄워요.<br>
 같은 신호가 이어지면 정해진 시간 동안 묶어서 한 번만 보내요. 검증에서 잘못 잡은 것으로 판정된 신호는 아예 보내지 않고, 이상탐지 화면에 ‘보내지 않음’으로 남아요.<br>
@@ -1464,9 +1464,9 @@ ${serverBarOf(d.state, d.heartbeatAge)}
 </div>
 
 ${sectionHead("판정 상세", `/admin/anomaly?period=${d.period}&scope=${d.forScope}`, "요약으로 돌아가기 →")}
-<table class="anb2">
+<div class="cap tall"><table class="anb2">
 <colgroup><col class="c-when"><col class="c-sev"><col class="c-sig"><col class="c-app"><col><col class="c-vd"><col class="c-ml"></colgroup>
-<tr><th>구간</th><th>등급</th><th>신호</th><th>${traffic ? "서비스" : "앱"}</th><th>무슨 일인가</th><th>검증</th><th class="n">메일</th></tr>${rows}</table>
+<tr><th>구간</th><th>등급</th><th>신호</th><th>${traffic ? "서비스" : "앱"}</th><th>무슨 일인가</th><th>검증</th><th class="n">메일</th></tr>${rows}</table></div>
 
 <p class="foot">줄을 누르면 검증 에이전트의 판단과 확인할 일, 수치가 펼쳐져요.<br>
 검증에서 잘못 잡은 것으로 본 줄은 흐리게 보이고 아래로 밀려요. 급하게 볼 것은 없지만 근거는 남겨 둬요.<br>
@@ -1577,7 +1577,7 @@ export function renderLogs(l: LogsData, opts: AdminOpts = {}): string {
   <span class="nav"><a class="btn" href="/admin/logs.csv${logQuery(f, { before: 0 })}">CSV 내려받기</a></span>
 </div>
 
-<table class="log calls" id="tb-log"><colgroup><col class="c-ts"><col class="c-app"><col class="c-kind"><col class="c-model"><col class="c-st"><col class="c-http"><col class="c-lat"><col class="c-tok"><col class="c-cost"><col class="c-geo"><col class="c-err"></colgroup><thead><tr><th>시각</th><th>앱</th><th>용도</th><th>모델</th><th>상태</th><th class="n">HTTP</th><th class="n">지연</th><th class="n">토큰</th><th class="n">비용</th><th>지역</th><th>오류 · 메타</th></tr></thead><tbody>${rows}</tbody></table>
+<div class="cap tall"><table class="log calls" id="tb-log"><colgroup><col class="c-ts"><col class="c-app"><col class="c-kind"><col class="c-model"><col class="c-st"><col class="c-http"><col class="c-lat"><col class="c-tok"><col class="c-cost"><col class="c-geo"><col class="c-err"></colgroup><thead><tr><th>시각</th><th>앱</th><th>용도</th><th>모델</th><th>상태</th><th class="n">HTTP</th><th class="n">지연</th><th class="n">토큰</th><th class="n">비용</th><th>지역</th><th>오류 · 메타</th></tr></thead><tbody>${rows}</tbody></table></div>
 
 <div class="pg">
   <span class="cnt">${f.before ? "이어서 보는 중" : "가장 최근부터"}</span>
@@ -2036,7 +2036,7 @@ ${sectionHead(`없는 주소 요청 (404) · ${t.notFound.total.toLocaleString()
 ${notFoundPanel(t)}
 
 ${sectionHead("최근 크롤러 방문")}
-<div class="scroll"><table class="recent"><tr><th>시각</th><th>서비스</th><th>종류</th><th>크롤러</th><th>경로</th><th class="n">응답</th></tr>${recentRows}</table></div>
+<div class="scroll cap"><table class="recent"><tr><th>시각</th><th>서비스</th><th>종류</th><th>크롤러</th><th>경로</th><th class="n">응답</th></tr>${recentRows}</table></div>
 
 <p class="foot">없는 주소 요청은 대부분 자동 스캐너예요. 워드프레스·PHP·관리 도구처럼 흔히 뚫리는 것을 차례로 두드려 보고 하나라도 열리면 파고들어요. 우리 서비스는 Cloudflare Workers와 Next.js로만 돌아가고 그런 소프트웨어가 없어서 전부 없는 주소로 끝나요.<br>
 막는 설정을 따로 넣지 않아도 돼요 — 없는 주소는 이미 404로 끝나고, 스캐너를 막아도 IP만 바꿔 다시 와요. ‘우리 쪽 깨진 링크’로 잡힌 것만 고쳐 주면 충분해요.<br>
