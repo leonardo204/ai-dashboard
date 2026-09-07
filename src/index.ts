@@ -225,11 +225,12 @@ async function handleAppsPost(request: Request, env: Env): Promise<Response> {
 	const name = get("name") || id;
 	const note = get("note") || null;
 	const site = get("site") || null;
+	const internal = get("internal") === "1";
 
 	if (action === "create") {
 		if (existing) return back("이미 있는 앱 id예요.");
 		const token = newToken();
-		await upsertApp(env, { id, name, token, models: JSON.stringify(models), perMin, perDay, active: true, note, site });
+		await upsertApp(env, { id, name, token, models: JSON.stringify(models), perMin, perDay, active: true, note, site, internal });
 		return Response.redirect(
 			new URL(`/admin/apps?msg=${encodeURIComponent(`${name} 앱을 추가했어요.`)}&token=${encodeURIComponent(token)}`, request.url).toString(),
 			303,
@@ -237,7 +238,7 @@ async function handleAppsPost(request: Request, env: Env): Promise<Response> {
 	}
 	if (action === "save") {
 		if (!existing) return back("없는 앱이에요.");
-		await upsertApp(env, { id, name, token: existing.token, models: JSON.stringify(models), perMin, perDay, active: existing.active, note, site });
+		await upsertApp(env, { id, name, token: existing.token, models: JSON.stringify(models), perMin, perDay, active: existing.active, note, site, internal });
 		return back(`${name} 앱 설정을 저장했어요.`);
 	}
 	return back("알 수 없는 동작이에요.");
@@ -351,6 +352,7 @@ function appJson(a: AppConfig) {
 	return {
 		id: a.id, name: a.name, token: a.token, models: a.models,
 		perMin: a.perMin, perDay: a.perDay, active: a.active, note: a.note, site: a.site,
+		internal: a.internal,
 	};
 }
 
@@ -402,6 +404,7 @@ async function handleAppsApi(request: Request, env: Env, url: URL): Promise<Resp
 				active: b.active === undefined ? true : !!b.active,
 				note: b.note === undefined || b.note === null ? null : String(b.note),
 				site: b.site === undefined || b.site === null ? null : String(b.site),
+				internal: !!b.internal,
 			});
 			const created = await getApp(env, newId);
 			return apiJson({ app: created ? appJson(created) : null }, 201);
@@ -438,6 +441,7 @@ async function handleAppsApi(request: Request, env: Env, url: URL): Promise<Resp
 			active: b.active === undefined ? app.active : !!b.active,
 			note: b.note === undefined ? app.note : b.note === null ? null : String(b.note),
 			site: b.site === undefined ? app.site : b.site === null ? null : String(b.site),
+			internal: b.internal === undefined ? app.internal : !!b.internal,
 		});
 		const after = await getApp(env, app.id);
 		return apiJson({ app: after ? appJson(after) : null });

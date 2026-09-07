@@ -58,8 +58,8 @@ function tableFilter(tableId: string, placeholder: string): string {
 const FOOT_GEO =
 	"국가·지역은 Cloudflare가 요청에 붙여주는 값이라 외부 조회 없이 기록돼요. VPN·통신사 경로에 따라 실제와 다를 수 있어요.";
 const FOOT_COST =
-	"비용은 OpenRouter가 응답에 실어주는 실제 청구액이에요. 내 키를 붙여 쓰는(BYOK) 호출은 "
-	"OpenRouter 크레딧이 줄지 않아 청구액이 0으로 오는데, 그때는 모델 회사가 알려준 금액을 쓰고 "
+	"비용은 OpenRouter가 응답에 실어주는 실제 청구액이에요. 내 키를 붙여 쓰는(BYOK) 호출은 " +
+	"OpenRouter 크레딧이 줄지 않아 청구액이 0으로 오는데, 그때는 모델 회사가 알려준 금액을 쓰고 " +
 	"그것도 없으면 단가표로 추정해요(* = 단가 미등록 모델). 최종 청구액은 OpenRouter와 모델 회사 대시보드가 기준이에요.";
 
 // ═════════════════════════════════════════════════════════════
@@ -216,7 +216,7 @@ ${sectionHead("트래픽", `/admin/traffic?period=${s.period}`, "트래픽에서
 ${trafficBand(s.traffic, `/admin/traffic?period=${s.period}`)}
 
 ${sectionHead(`최근 호출 (${SUMMARY_RECENT}건)`, `/admin/logs${q}`, "로그에서 더 보기 →")}
-<table class="recent calls"><colgroup><col class="c-ts"><col class="c-app"><col class="c-kind"><col class="c-model"><col class="c-st"><col class="c-http"><col class="c-lat"><col class="c-tok"><col class="c-cost"><col class="c-geo"><col class="c-err"></colgroup><tr><th>시각</th><th>앱</th><th>용도</th><th>모델</th><th>상태</th><th class="n">HTTP</th><th class="n">지연</th><th class="n">토큰</th><th class="n">비용</th><th>지역</th><th>오류 · 메타</th></tr>${recentRows}</table>
+<table class="recent calls lite"><colgroup><col class="c-ts"><col class="c-app"><col class="c-kind"><col class="c-model"><col class="c-st"><col class="c-http"><col class="c-lat"><col class="c-tok"><col class="c-cost"><col class="c-geo"><col class="c-err"></colgroup><tr><th>시각</th><th>앱</th><th>용도</th><th>모델</th><th>상태</th><th class="n">HTTP</th><th class="n">지연</th><th class="n">토큰</th><th class="n">비용</th><th>지역</th><th>오류 · 메타</th></tr>${recentRows}</table>
 
 ${sectionHead(`추이 (${s.bucketLabel} 단위)`, `/admin/trend${q}`)}
 ${svgTrend(s.buckets)}
@@ -378,7 +378,7 @@ export function renderGeo(g: GeoData, opts: AdminOpts = {}): string {
 						`<td class="n o1">${(r.inTok + r.outTok).toLocaleString()}</td><td class="n">${usd(r.cost)}</td>` +
 						`<td class="n o2">${avgLat(r)}ms</td>` +
 						`<td class="bar o2"><span style="width:${Math.round((r.total / maxCountry) * 100)}%"></span></td>` +
-						`<td>${r.key === "(미상)" ? "" : `<a href="/admin/logs${q}&country=${encodeURIComponent(r.key)}">로그 →</a>`}</td></tr>`,
+						`<td class="lk">${r.key === "(미상)" ? "" : `<a href="/admin/logs${q}&country=${encodeURIComponent(r.key)}">로그 →</a>`}</td></tr>`,
 				)
 				.join("")
 		: `<tr><td colspan="10">데이터 없음</td></tr>`;
@@ -409,7 +409,7 @@ export function renderGeo(g: GeoData, opts: AdminOpts = {}): string {
 						`<td class="n o1">${r.ai.toLocaleString()}</td>` +
 						`<td class="n o1">${r.search.toLocaleString()}</td>` +
 						`<td class="bar hit o2"><span style="width:${Math.round((r.total / maxHit) * 100)}%"></span></td>` +
-						`<td>${r.key === "(미상)" ? "" : `<a href="/admin/traffic?period=${g.period}${g.hitSite ? `&site=${encodeURIComponent(g.hitSite)}` : ""}">트래픽 →</a>`}</td></tr>`,
+						`<td class="lk">${r.key === "(미상)" ? "" : `<a href="/admin/traffic?period=${g.period}${g.hitSite ? `&site=${encodeURIComponent(g.hitSite)}` : ""}">트래픽 →</a>`}</td></tr>`,
 				)
 				.join("")
 		: `<tr><td colspan="8">아직 들어온 방문 기록이 없어요.</td></tr>`;
@@ -422,7 +422,7 @@ export function renderGeo(g: GeoData, opts: AdminOpts = {}): string {
 		? `<p class="sm" style="margin:18px 2px 0">이 앱에는 짝이 되는 서비스가 지정되어 있지 않아 방문 지역을 함께 보여주지 못해요. ` +
 			`<a href="/admin/apps">앱 관리에서 연결하기 →</a> · <a href="/admin/geo?period=${g.period}">전체 앱으로 보기 →</a></p>`
 		: `<div class="sh2"><h2>${escapeHtml(hitTitle)}</h2><a href="${trafficHref}">트래픽에서 보기 →</a></div>
-<div class="cap"><table class="fx" id="tb-hitgeo">${cols("", "78", "72", "84:o1", "82:o1", "88:o1", "110:o2", "62")}<thead><tr><th>국가</th><th class="n">방문</th><th class="n">사람</th><th class="n o1">고유 방문자</th><th class="n o1">AI 크롤러</th><th class="n o1">검색 크롤러</th><th class="o2">비중</th><th></th></tr></thead><tbody>${hitRows}</tbody></table></div>`;
+<div class="cap"><table class="fx" id="tb-hitgeo">${cols("160", "78", "72", "84:o1", "82:o1", "88:o1", ":o2", "78")}<thead><tr><th>국가</th><th class="n">방문</th><th class="n">사람</th><th class="n o1">고유 방문자</th><th class="n o1">AI 크롤러</th><th class="n o1">검색 크롤러</th><th class="o2">비중</th><th></th></tr></thead><tbody>${hitRows}</tbody></table></div>`;
 
 	return shellAdmin(
 		"지역",
@@ -432,7 +432,7 @@ ${filterTabs("/admin/geo", g.period, g.appFilter, g.apps, PERIODS)}
 ${svgMap(g.points, g.geoUnknown, g.hitPoints, g.hitUnknown, g.hitSite ? siteName(g.hitSite) : "")}
 
 <div class="sh2"><h2>국가별 AI 호출</h2><span class="sm">${g.byCountry.filter((c) => c.key !== "(미상)").length}개국</span></div>
-<div class="cap"><table class="fx" id="tb-country">${cols("", "88", "70:o1", "70", "78", "84:o1", "84", "86:o2", "110:o2", "58")}<thead><tr><th>국가</th><th class="n">호출</th><th class="n o1">성공</th><th class="n">실패</th><th class="n">고유 IP</th><th class="n o1">토큰</th><th class="n">비용</th><th class="n o2">평균 지연</th><th class="o2">비중</th><th></th></tr></thead><tbody>${countryRows}</tbody></table></div>
+<div class="cap"><table class="fx" id="tb-country">${cols("160", "88", "70:o1", "70", "78", "84:o1", "84", "86:o2", ":o2", "66")}<thead><tr><th>국가</th><th class="n">호출</th><th class="n o1">성공</th><th class="n">실패</th><th class="n">고유 IP</th><th class="n o1">토큰</th><th class="n">비용</th><th class="n o2">평균 지연</th><th class="o2">비중</th><th></th></tr></thead><tbody>${countryRows}</tbody></table></div>
 
 ${hitSection}
 
@@ -934,7 +934,9 @@ function serverBarOf(state: { key: string; value: string; updated_at: number }[]
 					? "이상탐지 서버 신호가 늦어지고 있어요."
 					: "이상탐지 서버가 정상 동작 중이에요.";
 
-	const jobs = state
+	// 작업 뱃지는 정상인 것을 한 덩이로 접는다. 열두 개를 영문 이름 그대로 늘어놓으면
+	// 첫 화면에서 판정보다 먼저 눈에 들어오는데, 정작 보는 사람은 "다 도는가"만 알면 된다.
+	const jobRows = state
 		.filter((s) => s.key.startsWith("job:"))
 		.map((s) => {
 			let v: { ok?: boolean; error?: string; result?: unknown } = {};
@@ -944,10 +946,15 @@ function serverBarOf(state: { key: string; value: string; updated_at: number }[]
 				/* 형식이 달라지면 이름만 보여준다 */
 			}
 			const name = s.key.slice(4);
-			const title = v.ok === false ? `실패: ${v.error ?? ""}` : `${ago(Date.now() - s.updated_at)} 실행`;
-			return `<span class="job${v.ok === false ? " bad" : ""}" data-tip="${escapeHtml(`${name}\n${title}`)}">${escapeHtml(name)}</span>`;
-		})
-		.join("");
+			const when = `${ago(Date.now() - s.updated_at)} 실행`;
+			return { name, ok: v.ok !== false, tip: v.ok === false ? `${name} · 실패: ${v.error ?? ""}` : `${name} · ${when}` };
+		});
+	const okJobs = jobRows.filter((j) => j.ok);
+	const jobs =
+		(okJobs.length
+			? `<span class="job ok" data-tip="${escapeHtml(okJobs.map((j) => j.tip).join("\n"))}">작업 ${okJobs.length}개 정상</span>`
+			: "") +
+		jobRows.filter((j) => !j.ok).map((j) => `<span class="job bad" data-tip="${escapeHtml(j.tip)}">${escapeHtml(j.name)} 실패</span>`).join("");
 
 	return `<div class="srv ${cls}"><span class="dot"></span>
   <span class="t">${msg}</span>
@@ -1062,10 +1069,16 @@ export function renderAnomaly(a: AnomalyData, opts: AdminOpts = {}): string {
 						`<td>${sevTag(r.severity)}</td>` +
 						`<td>${escapeHtml(d.label)}</td>` +
 						`<td>${escapeHtml(nameOf(r.app))}</td>` +
-						`<td class="n">${anomValue(r.observed, d.metric)}</td>` +
-						`<td class="n">${anomValue(r.baseline, d.metric)}` +
-						`${d.ratio ? ` <span class="sm">${d.ratio}배</span>` : ""}</td>` +
-						`<td class="n">${r.score === null ? "-" : r.score.toFixed(1)}</td>` +
+						(r.detector === "model"
+							// 모델 판정은 지표 하나를 짚은 게 아니라 구간 전체를 본 결과다.
+							// 관측 자리에 구간 크기, 평소 자리에 벌어진 지표, 점수 자리에 "점수 / 기준"을 적는다.
+							? `<td class="n" data-tip="이 구간의 ${traffic ? "방문" : "호출"} 수">${r.observed === null ? "-" : `${Math.round(r.observed).toLocaleString()}건`}</td>` +
+								`<td class="sm" data-tip="평소와 가장 많이 벌어진 지표">${escapeHtml(anomTopMetrics(r) || "-")}</td>` +
+								`<td class="n" data-tip="모델 이상 점수 / 판정 기준">${r.score === null ? "-" : `${r.score.toFixed(2)}<span class="sm"> / ${(r.baseline ?? 0).toFixed(2)}</span>`}</td>`
+							: `<td class="n">${anomValue(r.observed, d.metric)}</td>` +
+								`<td class="n">${anomValue(r.baseline, d.metric)}` +
+								`${d.ratio ? ` <span class="sm">${d.ratio}배</span>` : ""}</td>` +
+								`<td class="n">${r.score === null ? "-" : r.score.toFixed(1)}</td>`) +
 						`<td>${r.detector === "model"
 							? `<span data-tip="${escapeHtml(r.model_version ?? "")}">모델</span>`
 							: "규칙"}</td>` +
@@ -1228,18 +1241,9 @@ ${warmupNotice(a)}
 <div class="kpi2" style="margin-bottom:4px">
   ${card("이상 신호", a.total.toLocaleString(), "", delta(a.total, a.prevTotal, true) + `<span class="sm"> · 24시간 ${a.recent24.toLocaleString()}</span>`)}
   ${card("심각", a.critical.toLocaleString(), a.critical ? "r" : "", `<span class="sm"> · 24시간 ${a.critical24.toLocaleString()}</span>`)}
-  ${card("주의", a.warn.toLocaleString())}
-  ${card("참고", a.info.toLocaleString())}
+  ${card("주의", a.warn.toLocaleString(), "", a.info ? `<span class="sm"> · 참고 ${a.info.toLocaleString()}</span>` : "")}
   ${card("메일 발송", a.notified.toLocaleString(), "", alertState?.suppressed ? `<span class="sm"> · 억제 ${alertState.suppressed}</span>` : "")}
   ${card("마지막 탐지", a.lastDetected ? ago(Date.now() - a.lastDetected) : "-")}
-</div>
-
-<div class="kpi2" style="margin-bottom:4px">
-  ${card("검증된 판정", (lab?.total ?? 0).toLocaleString())}
-  ${card("규칙 정탐률", pct1(lab?.rule?.rate), (lab?.rule?.rate ?? 1) < 0.5 ? "r" : "")}
-  ${card("모델 정탐률", pct1(lab?.model?.rate), (lab?.model?.rate ?? 1) < 0.5 ? "r" : "")}
-  ${card("검증셋 규칙 F1", pct1(ev?.rule?.f1))}
-  ${card("검증셋 모델 F1", pct1(ev?.model?.f1))}
   ${card("쓰는 모델", escapeHtml(a.models.find((m) => m.status === "active")?.version ?? "규칙만"))}
 </div>
 
@@ -1265,6 +1269,7 @@ ${sectionHead("이상 신호 이력")}
 
 <div class="two">
   <section>${sectionHead("탐지기 성적 비교")}
+    <div class="statline">검증된 판정 <b>${(lab?.total ?? 0).toLocaleString()}</b>건 · 정탐률 규칙 <b class="${(lab?.rule?.rate ?? 1) < 0.5 ? "r" : ""}">${pct1(lab?.rule?.rate)}</b> · 모델 <b class="${(lab?.model?.rate ?? 1) < 0.5 ? "r" : ""}">${pct1(lab?.model?.rate)}</b><br>검증셋 F1 규칙 <b>${pct1(ev?.rule?.f1)}</b> · 모델 <b>${pct1(ev?.model?.f1)}</b></div>
     <div class="scroll cap"><table class="tight"><tr><th>구분</th><th class="n">규칙 정밀도</th><th class="n">규칙 재현율</th><th class="n">모델 정밀도</th><th class="n">모델 재현율</th></tr>${compareRows}</table></div>
   </section>
   <section><div class="sh2"><h2>탐지 모델</h2>${a.models.length > MODEL_SHOWN ? `<span class="sm">최근 ${MODEL_SHOWN}개만 · 전체 ${a.models.length}개</span>` : ""}</div>
@@ -1454,16 +1459,7 @@ ${anomalyViewRow(nav, sevTabs)}
 ${anomalyAppRow(nav, apps, traffic)}
 ${serverBarOf(d.state, d.heartbeatAge)}
 
-<div class="kpi2" style="margin-bottom:4px">
-  ${card("판정", d.total.toLocaleString())}
-  ${card("심각", d.critical.toLocaleString(), d.critical ? "r" : "")}
-  ${card("주의", d.warn.toLocaleString())}
-  ${card("참고", d.info.toLocaleString())}
-  ${card("최근 24시간 심각", d.critical24.toLocaleString(), d.critical24 ? "r" : "")}
-  ${card("보이는 줄", `${d.rows.length.toLocaleString()}건`)}
-</div>
-
-${sectionHead("판정 상세", `/admin/anomaly?period=${d.period}&scope=${d.forScope}`, "요약으로 돌아가기 →")}
+<div class="sh2"><h2>판정 상세 <span class="sm">${d.rows.length.toLocaleString()}건${d.total > d.rows.length ? ` / ${d.total.toLocaleString()}건` : ""}${d.critical24 ? ` · 최근 24시간 심각 <b class="r">${d.critical24.toLocaleString()}</b>건` : ""}</span></h2><a href="/admin/anomaly?period=${d.period}&scope=${d.forScope}">요약으로 돌아가기 →</a></div>
 <div class="cap tall"><table class="anb2">
 <colgroup><col class="c-when"><col class="c-sev"><col class="c-sig"><col class="c-app"><col><col class="c-vd"><col class="c-ml"></colgroup>
 <tr><th>구간</th><th>등급</th><th>신호</th><th>${traffic ? "서비스" : "앱"}</th><th>무슨 일인가</th><th>검증</th><th class="n">메일</th></tr>${rows}</table></div>
@@ -1629,7 +1625,7 @@ function appCard(a: AppConfig): string {
 
 	return `<div class="app${a.active ? "" : " off"}">
   <div class="ah">
-    <div class="nm"><b>${escapeHtml(a.name)}</b><span class="st ${a.active ? "on" : "off"}">${a.active ? "사용 중" : "중지됨"}</span>
+    <div class="nm"><b>${escapeHtml(a.name)}</b><span class="st ${a.active ? "on" : "off"}">${a.active ? "사용 중" : "중지됨"}</span>${a.internal ? `<span class="st in" data-tip="내부용 앱 — 앱 탭에서 뒤로 물리고 요약의 최근 호출에서 빼요">내부용</span>` : ""}
       <div class="id mono">${escapeHtml(a.id)}</div></div>
     <div class="acts">
       <button type="button" class="btn" data-toggle="${escapeHtml(ed)}" data-on="편집 닫기" data-off="편집">편집</button>
@@ -1674,6 +1670,7 @@ function appCard(a: AppConfig): string {
       </div>
       <div class="fld"><label>짝이 되는 서비스 — 지역 탭에서 이 앱을 고르면 이 서비스의 방문도 함께 보여요</label>
         ${siteSelect(a.site)}</div>
+      <label class="chk"><input type="checkbox" name="internal" value="1"${a.internal ? " checked" : ""}> 내부용 앱 — 검증 에이전트처럼 우리 쪽이 부르는 앱이에요. 앱 탭에서 뒤로 물리고, 요약의 최근 호출에서는 빼요.</label>
       <div class="eacts"><button class="btn p" type="submit">저장</button>
         <button type="button" class="btn" data-toggle="${escapeHtml(ed)}">취소</button></div>
     </form>
@@ -1732,6 +1729,7 @@ export function renderApps(apps: AppConfig[], passkeys: PasskeyRow[] = [], opts:
       <div class="fld"><label>메모</label><input name="note" placeholder="용도·비고"></div>
       <div class="fld"><label>짝이 되는 서비스 (선택)</label>${siteSelect("")}</div>
     </div>
+    <label class="chk"><input type="checkbox" name="internal" value="1"> 내부용 앱(우리 쪽이 부르는 앱)</label>
     <div class="eacts"><button class="btn p" type="submit">추가 (토큰 자동 발급)</button>
       <button type="button" class="btn" data-toggle="new-app" data-on="닫기" data-off="새 앱 추가">취소</button></div>
   </form>
@@ -1828,22 +1826,6 @@ function botTable(rows: { bot: string; n: number; last: number; paths: number }[
 				.join("")
 		: `<tr><td colspan="4">${escapeHtml(empty)}</td></tr>`;
 	return `<div class="cap"><table><thead><tr><th>크롤러</th><th class="n">방문</th><th class="n">읽은 경로</th><th>마지막 방문</th></tr></thead><tbody>${body}</tbody></table></div>`;
-}
-
-/**
- * 추적 중인 서비스 바로가기 줄.
- * 숫자를 보다가 "지금 그 화면이 어떤데?"로 바로 넘어갈 수 있게 실제 주소를 걸어 둔다.
- * 지금 걸러 보고 있는 서비스는 도드라지게 둔다.
- */
-function siteLinks(current: string): string {
-	const links = Object.entries(SITES)
-		.map(
-			([id, v]) =>
-				`<a class="${current === id ? "on" : ""}" href="https://${v.host}/" target="_blank" rel="noopener"` +
-				` data-tip="${escapeHtml(v.host)}">${escapeHtml(v.name)} ↗</a>`,
-		)
-		.join("");
-	return `<div class="golinks"><span class="l">바로가기</span>${links}</div>`;
 }
 
 /**
@@ -1987,8 +1969,12 @@ export function renderTraffic(t: TrafficData, opts: AdminOpts = {}): string {
 		"트래픽",
 		pageHead("트래픽", `서비스 방문 · ${sinceLabel(t.since)}`, t.siteFilter) +
 			`<div id="hz-body">
-${filterTabs("/admin/traffic", t.period, t.siteFilter, t.sites, PERIODS, "", "", { key: "site", allLabel: "전체 서비스" })}
-${siteLinks(t.siteFilter)}
+${filterTabs("/admin/traffic", t.period, t.siteFilter, t.sites, PERIODS, "",
+	t.siteFilter && siteUrl(t.siteFilter)
+		? `<a class="tab alt" href="${siteUrl(t.siteFilter)}" target="_blank" rel="noopener">${escapeHtml(siteName(t.siteFilter))} 열기 ↗</a>`
+		: "",
+	{ key: "site", allLabel: "전체 서비스" },
+)}
 
 <div class="kpi2" style="margin-bottom:4px">
   ${card("방문", t.total.toLocaleString(), "", delta(t.total, t.prevTotal))}
@@ -2015,7 +2001,7 @@ ${svgTraffic(t.buckets)}
 </div>
 
 <div class="two">
-  <section>${sectionHead("사람이 들어온 경로")}<span class="sm">AI 답변 ${aiRefs.toLocaleString()}건 · 검색 ${searchRefs.toLocaleString()}건</span>
+  <section><div class="sh2"><h2>사람이 들어온 경로</h2><span class="sm">AI 답변 ${aiRefs.toLocaleString()}건 · 검색 ${searchRefs.toLocaleString()}건</span></div>
     <div class="cap"><table><thead><tr><th>구분</th><th>출처</th><th class="n">방문</th></tr></thead><tbody>${refRows}</tbody></table></div>
   </section>
   <section>${sectionHead("AI 크롤러가 읽어간 경로")}

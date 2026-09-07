@@ -24,6 +24,8 @@ h1{font-size:20px;margin:0 0 4px;}h2{font-size:14px;margin:26px 0 9px;color:var(
  background:var(--panel);color:var(--ink);text-decoration:none;}
 .tab.on{background:var(--accent);border-color:var(--accent);color:#fff;}
 .tab.alt{background:#f0eaff;border-color:#ddd0fb;color:#5E3A9E;}
+.tab.dim{color:var(--muted);border-style:dashed;background:transparent;}
+.tab.dim.on{background:#e9e6f2;border-color:#d7d2e6;color:#4b4462;border-style:solid;}
 /* ── 요약 지표: 큰 카드 3 + 작은 카드 6 (줄바꿈이 어정쩡하게 남지 않도록 열 수를 고정) */
 .kpi{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;}
 .k1{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px 18px 14px;
@@ -182,6 +184,10 @@ textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;
 .topbar nav a.on{background:#f0eaff;color:#5E3A9E;}
 .topbar .sp{flex:1}
 .topbar .who{font-size:12px;color:var(--muted);}
+.topbar .lo .ic{display:none;}
+/* 메뉴가 옆으로 밀릴 때 오른쪽 끝을 흐리게 — 끝까지 밀면(.end) 걷는다 */
+.topbar nav.more{-webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 36px),transparent);mask-image:linear-gradient(90deg,#000 calc(100% - 36px),transparent);}
+.topbar nav.more.end{-webkit-mask-image:none;mask-image:none;}
 /* 자리가 모자라면 메뉴가 먼저 줄어들며 옆으로 밀린다. 로그아웃 단추는 줄지 않는다 —
    줄어들면 글자가 한 자씩 세로로 쌓여 상단바 밖으로 삐져나온다. */
 .topbar nav{flex:1 1 auto;min-width:0;}
@@ -562,6 +568,11 @@ const EXTRA_CSS = `
 @media(max-width:640px){.warm .sm{margin-left:0;}}
 
 .srv .job.bad{background:#fdecec;border-color:#f6cfcf;color:#a9313a;}
+.srv .job.ok{background:#f2fbf4;border-color:#cfe8d4;color:#0a7d33;cursor:default;}
+/* 섹션 머리 아래 한 줄 통계 — 카드로 세우기엔 가벼운 숫자들 */
+.statline{font-size:12.5px;color:var(--muted);margin:-4px 0 8px;line-height:1.7;}
+.statline b{color:var(--ink);font-weight:800;font-variant-numeric:tabular-nums;}
+.statline b.r{color:var(--r);}
 /* 검증 에이전트 판정 태그 */
 .vd{display:inline-flex;align-items:center;font-weight:800;font-size:11.5px;
  border-radius:999px;padding:2px 9px;white-space:nowrap;border:1px solid transparent;}
@@ -606,13 +617,6 @@ const EXTRA_CSS = `
 .anb.quiet .t{font-size:13px;font-weight:700;}
 @media(max-width:860px){.anb{grid-template-columns:1fr}}
 
-/* 서비스 바로가기 줄 — 트래픽 화면에서 실제 사이트로 바로 넘어간다 */
-.golinks{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:-4px 0 14px;}
-.golinks .l{font-size:11.5px;font-weight:800;color:var(--muted);margin-right:2px;}
-.golinks a{font-size:12px;font-weight:700;padding:4px 10px;border-radius:999px;
- border:1px solid var(--line);background:#fafbfc;color:var(--muted);text-decoration:none;}
-.golinks a:hover{background:#f0eaff;border-color:#ddd0fb;color:#5E3A9E;}
-.golinks a.on{background:#f0eaff;border-color:#ddd0fb;color:#5E3A9E;}
 a.go{font-weight:700;color:var(--accent);text-decoration:none;white-space:nowrap;}
 a.go:hover{text-decoration:underline;}
 
@@ -737,6 +741,7 @@ table.fx th,table.fx td{white-space:normal;word-break:break-word;overflow-wrap:a
  vertical-align:middle;padding:8px 9px;}
 table.fx td.n,table.fx th.n{white-space:nowrap;}
 table.fx td.mono{font-size:11.5px;}
+table.fx td.lk{white-space:nowrap;}
 @media(max-width:1040px){table.fx .o1{display:none;}table.fx col.o1{width:0;}}
 @media(max-width:860px){table.fx .o2{display:none;}table.fx col.o2{width:0;}}
 
@@ -758,14 +763,14 @@ table.calls th,table.calls td{white-space:nowrap;overflow:hidden;text-overflow:e
 /* 앱·모델만 너비를 비워 둔다. 나머지를 값이 딱 들어갈 만큼만 잡아 두면
    남는 폭이 전부 이 두 칸으로 가서 이름이 잘리지 않는다. */
 table.calls col.c-ts{width:126px;}
-table.calls col.c-kind{width:62px;}
+table.calls col.c-kind{width:72px;}
 table.calls col.c-st{width:52px;}
-table.calls col.c-http{width:50px;}
+table.calls col.c-http{width:56px;}
 table.calls col.c-lat{width:76px;}
 table.calls col.c-tok{width:62px;}
 table.calls col.c-cost{width:76px;}
 table.calls col.c-geo{width:72px;}
-table.calls col.c-err{width:206px;}
+table.calls col.c-err{width:190px;}
 table.calls td.mono{font-size:11.5px;}
 table.calls td.n{white-space:nowrap;}
 table.calls td.err{max-width:none;font-size:11.5px;color:var(--muted);}
@@ -850,6 +855,9 @@ table.tight td,table.tight th{white-space:nowrap;padding:7px 10px;}
 .st{display:inline-block;font-size:11px;font-weight:800;border-radius:999px;padding:2px 9px;margin-left:8px;
  position:relative;top:-1px;}
 .st.on{background:#eaf7ee;color:var(--g);}
+.st.in{background:#f1f2f6;color:var(--muted);}
+label.chk{display:flex;gap:8px;align-items:flex-start;font-size:12.5px;color:var(--muted);margin:2px 0 12px;line-height:1.5;}
+label.chk input{margin-top:3px;flex:0 0 auto;}
 .st.off{background:#ffecec;color:var(--r);}
 .ab{display:grid;grid-template-columns:1fr 1fr;gap:11px 20px;margin-top:13px;
  border-top:1px solid var(--line);padding-top:12px;}
@@ -967,6 +975,10 @@ table.tight td,table.tight th{white-space:nowrap;padding:7px 10px;}
  /* 요약 칸(이상탐지·트래픽) 안의 표는 카드도 한 단계 작게 */
  .anb table.mbc tr{padding:6px 10px;margin-bottom:6px;}
  .anb table.mbc td{font-size:12px;padding:4px 0;}
+ /* 요약의 최근 호출 — 훑어보는 자리라 카드에서는 시각·앱·모델·지연·비용 다섯 줄만 남긴다.
+    나머지(용도·상태·HTTP·토큰·지역·오류)는 로그 탭에서 본다. */
+ table.mbc.lite td:nth-child(3),table.mbc.lite td:nth-child(5),table.mbc.lite td:nth-child(6),
+ table.mbc.lite td:nth-child(8),table.mbc.lite td:nth-child(10),table.mbc.lite td:nth-child(11){display:none !important;}
  .anb table.mbc td.mb-key{font-size:12.5px;}
 
  /* 카드 안에서는 접어 뒀던 칸도 다시 보여준다 — 세로라 자리가 넉넉하다 */
@@ -987,7 +999,24 @@ table.tight td,table.tight th{white-space:nowrap;padding:7px 10px;}
  /* 메일 본문 */
  .mailbody{font-size:11.5px;padding:11px 12px;}
 }
-@media(max-width:400px){
+@media(max-width:640px){
+ /* 로그아웃은 아이콘만 */
+ .topbar .lo .tx{display:none;}
+ .topbar .lo .ic{display:block;}
+ .topbar .lo{padding:7px 9px;line-height:0;}
+ /* 차트 축 글자 — viewBox 1000 기준이라 휴대폰 폭에선 3px이 된다. 크게 그려 실제 9~10px로 맞춘다. */
+ .chart .ax{font-size:24px;font-weight:700;}
+ .chart{padding:14px 18px 8px 22px;}
+ .chart svg{min-height:150px;}
+ /* 판정 상세·메일 제목 칸 — 설명과 부속 줄이 좌우로 갈리지 않게 세로로 쌓는다 */
+ table.mbc td.w{display:block !important;}
+ table.mbc td.w::before{display:block;margin-bottom:2px;}
+ /* 요약의 최근 호출 카드 — 훑어보는 화면이라 시각·앱·모델·지연·비용만 남긴다(전부는 로그 탭) */
+ table.recent.calls.mbc td:nth-child(3),table.recent.calls.mbc td:nth-child(5),
+ table.recent.calls.mbc td:nth-child(6),table.recent.calls.mbc td:nth-child(8),
+ table.recent.calls.mbc td:nth-child(10),table.recent.calls.mbc td:nth-child(11){display:none !important;}
+}
+@media(max-width:360px){
  .kpi2{grid-template-columns:1fr;}
  .anb .nums{grid-template-columns:repeat(2,1fr);}
 }
@@ -1197,6 +1226,23 @@ window.hzMobileTables = function(){
 };
 window.hzMobileTables();
 
+// 상단 메뉴가 옆으로 밀릴 만큼 길면 오른쪽 끝을 흐리게 해 "더 있음"을 보인다. 끝까지 밀면 걷는다.
+(function(){
+  var nav = document.querySelector('.topbar nav');
+  if (!nav) return;
+  function upd(){
+    var more = nav.scrollWidth - nav.clientWidth > 4;
+    nav.classList.toggle('more', more);
+    nav.classList.toggle('end', !more || nav.scrollLeft + nav.clientWidth >= nav.scrollWidth - 4);
+  }
+  nav.addEventListener('scroll', upd, { passive: true });
+  window.addEventListener('resize', upd);
+  upd();
+  // 지금 보는 메뉴가 가려져 있으면 보이는 자리로 밀어 둔다.
+  var on = nav.querySelector('a.on');
+  if (on && on.offsetLeft + on.offsetWidth > nav.clientWidth) nav.scrollLeft = on.offsetLeft - 12;
+})();
+
 // 토큰 보기/가리기 — 평소엔 가운데를 가려 둔다.
 document.addEventListener('click', function(e){
   var b = e.target && e.target.closest ? e.target.closest('[data-reveal]') : null;
@@ -1371,7 +1417,7 @@ export function shellAdmin(title: string, body: string, opts: AdminOpts = {}): s
   <span class="bd"><i></i><span>AI Service</span></span>
   <nav>${nav}</nav>
   <span class="sp"></span>
-  ${opts.session ? `<form method="post" action="/admin/logout"><button class="btn" type="submit">로그아웃</button></form>` : ""}
+  ${opts.session ? `<form method="post" action="/admin/logout"><button class="btn lo" type="submit" aria-label="로그아웃" data-tip="로그아웃"><svg class="ic" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg><span class="tx">로그아웃</span></button></form>` : ""}
 </div></header>`;
 	const flash =
 		opts.flash || opts.token
@@ -1454,12 +1500,14 @@ export function filterTabs(
 	path: string,
 	period: string,
 	appFilter: string,
-	apps: { id: string; name: string; active: boolean }[],
+	apps: { id: string; name: string; active: boolean; internal?: boolean }[],
 	periods: Record<string, { label: string }>,
 	rightLink = "",
 	rightBelow = "",
 	opts: { key?: string; allLabel?: string; extra?: string } = {},
 ): string {
+	// 내부용 앱(검증 에이전트 등)은 맨 뒤로 보내고 흐리게 둔다. 실제 앱을 먼저 찾게.
+	apps = [...apps.filter((a) => !a.internal), ...apps.filter((a) => a.internal)];
 	const key = opts.key ?? "app";
 	// extra는 이 화면이 기간·앱 말고도 물고 다녀야 하는 조건이다(예: 이상탐지 갈래).
 	const q = (p: string, a: string) =>
@@ -1472,7 +1520,7 @@ export function filterTabs(
 		apps
 			.map(
 				(a) =>
-					`<a class="tab${appFilter === a.id ? " on" : ""}" href="${q(period, a.id)}">${escapeHtml(a.name)}${a.active ? "" : " (중지)"}</a>`,
+					`<a class="tab${appFilter === a.id ? " on" : ""}${a.internal ? " dim" : ""}" href="${q(period, a.id)}"${a.internal ? ' data-tip="내부용 앱"' : ""}>${escapeHtml(a.name)}${a.active ? "" : " (중지)"}</a>`,
 			)
 			.join("");
 	return (

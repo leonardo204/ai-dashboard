@@ -118,6 +118,8 @@ export async function ensureSchema(env: StatsEnv): Promise<void> {
 		// 검증 에이전트가 붙인 판정. 이미 있으면 조용히 실패한다(D1엔 ADD COLUMN IF NOT EXISTS가 없다).
 		// 앱이 어느 서비스(트래픽) 화면과 짝인지. 지역 탭에서 앱을 고르면 그 서비스 방문만 함께 본다.
 		"ALTER TABLE apps ADD COLUMN site TEXT",
+		// 내부용 앱(검증 에이전트 등). 화면에서는 뒤로 물리고 요약의 최근 호출에서는 뺀다.
+		"ALTER TABLE apps ADD COLUMN internal INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE anomalies ADD COLUMN verdict TEXT",
 		"ALTER TABLE anomalies ADD COLUMN verdict_reason TEXT",
 		"ALTER TABLE anomalies ADD COLUMN suppressed_reason TEXT",
@@ -207,12 +209,14 @@ export interface AppConfig {
 	createdAt: number;
 	/** 짝이 되는 트래픽 서비스 키(SITES). 비어 있으면 연결하지 않은 앱이다. */
 	site: string | null;
+	/** 내부용 앱(검증 에이전트처럼 우리 쪽이 부르는 것). 화면에서 뒤로 물리고 요약 최근 호출에서 뺀다. */
+	internal: boolean;
 }
 
 interface AppRow {
 	id: string; name: string; token: string; models: string;
 	per_min: number; per_day: number; active: number; note: string | null; created_at: number;
-	site: string | null;
+	site: string | null; internal: number | null;
 }
 
 function toApp(r: AppRow): AppConfig {
@@ -228,6 +232,7 @@ function toApp(r: AppRow): AppConfig {
 		perMin: r.per_min, perDay: r.per_day, active: r.active === 1,
 		note: r.note, createdAt: r.created_at,
 		site: siteKey(r.site),
+		internal: r.internal === 1,
 	};
 }
 
@@ -272,14 +277,14 @@ export function newToken(): string {
 
 export async function upsertApp(
 	env: StatsEnv,
-	a: { id: string; name: string; token: string; models: string; perMin: number; perDay: number; active: boolean; note: string | null; site?: string | null },
+	a: { id: string; name: string; token: string; models: string; perMin: number; perDay: number; active: boolean; note: string | null; site?: string | null; internal?: boolean },
 ): Promise<void> {
 	await ensureSchema(env);
 	await env.DB.prepare(
-		"INSERT INTO apps (id,name,token,models,per_min,per_day,active,note,created_at,site) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)" +
-			" ON CONFLICT(id) DO UPDATE SET name=?2, token=?3, models=?4, per_min=?5, per_day=?6, active=?7, note=?8, site=?10",
+		"INSERT INTO apps (id,name,token,models,per_min,per_day,active,note,created_at,site,internal) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)" +
+			" ON CONFLICT(id) DO UPDATE SET name=?2, token=?3, models=?4, per_min=?5, per_day=?6, active=?7, note=?8, site=?10, internal=?11",
 	)
-		.bind(a.id, a.name, a.token, a.models, a.perMin, a.perDay, a.active ? 1 : 0, a.note, Date.now(), siteKey(a.site))
+		.bind(a.id, a.name, a.token, a.models, a.perMin, a.perDay, a.active ? 1 : 0, a.note, Date.now(), siteKey(a.site), a.internal ? 1 : 0)
 		.run();
 	clearAppCache();
 }
@@ -835,6 +840,8 @@ export interface AppBrief {
 	active: boolean;
 	/** 짝이 되는 트래픽 서비스 키. 없으면 null. */
 	site?: string | null;
+	/** 내부용 앱 — 탭에서 뒤로 물리고 흐리게 둔다. */
+	internal?: boolean;
 }
 
 export interface Bucket {
@@ -859,13 +866,16 @@ export const bucketLabelOf = (b: "day" | "week" | "month") => (b === "day" ? "�
 
 /** 화면마다 필요한 기간·앱 탭용 앱 목록. 토큰까지 읽지 않는다. */
 async function appBriefs(env: StatsEnv): Promise<AppBrief[]> {
-	const rs = await env.DB.prepare("SELECT id, name, active, site FROM apps ORDER BY created_at ASC").all<{
+	const rs = await env.DB.prepare("SELECT id, name, active, site, internal FROM apps ORDER BY created_at ASC").all<{
 		id: string;
 		name: string;
 		active: number;
 		site: string | null;
+		internal: number | null;
 	}>();
-	return (rs.results ?? []).map((r) => ({ id: r.id, name: r.name, active: !!r.active, site: siteKey(r.site) }));
+	return (rs.results ?? []).map((r) => ({
+		id: r.id, name: r.name, active: !!r.active, site: siteKey(r.site), internal: r.internal === 1,
+	}));
 }
 
 /** 집계 SELECT 절 — 호출 수·성공·실패·토큰·비용·지연을 한 번에 뽑는다. */
@@ -1027,9 +1037,13 @@ async function collectSummaryInner(
 			: Promise.resolve({ results: [] as (AggRow & { model: string | null })[] }),
 
 		// 맨 아래 "최근 호출" — id 역순 몇 건. 인덱스로 바로 잡혀서 행 수와 무관하게 가볍다.
+		// 내부용 앱(검증 에이전트 등)은 뺀다. 그 호출이 대부분을 차지해 정작 보고 싶은 앱이 밀린다.
 		(appFilter
 			? env.DB.prepare(`SELECT ${LOG_COLS} FROM calls WHERE app = ?1 ORDER BY id DESC LIMIT ?2`).bind(appFilter, SUMMARY_RECENT)
-			: env.DB.prepare(`SELECT ${LOG_COLS} FROM calls ORDER BY id DESC LIMIT ?1`).bind(SUMMARY_RECENT)
+			: env.DB.prepare(
+					`SELECT ${LOG_COLS} FROM calls WHERE app IS NULL OR app NOT IN (SELECT id FROM apps WHERE internal = 1)` +
+						" ORDER BY id DESC LIMIT ?1",
+				).bind(SUMMARY_RECENT)
 		).all<RawLogRow>(),
 
 		// ── 이상탐지 요약. 전용 탭과 같은 표를 읽되 개수와 최근 몇 건만 본다.
