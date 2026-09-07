@@ -396,20 +396,47 @@ export function renderGeo(g: GeoData, opts: AdminOpts = {}): string {
 				.join("")
 		: `<tr><td colspan="9">데이터 없음</td></tr>`;
 
+	// 서비스 방문 지역 — 앱을 하나 골라 본 화면에서는 내보내지 않는다(앱과 무관한 기록이라서).
+	const maxHit = Math.max(1, ...g.hitCountries.map((c) => c.total));
+	const hitRows = g.hitCountries.length
+		? g.hitCountries
+				.map(
+					(r) =>
+						`<tr><td>${escapeHtml(countryName(r.key))}</td>` +
+						`<td class="n">${r.total.toLocaleString()}</td>` +
+						`<td class="n">${r.human.toLocaleString()}</td>` +
+						`<td class="n o1">${r.ips.toLocaleString()}</td>` +
+						`<td class="n o1">${r.ai.toLocaleString()}</td>` +
+						`<td class="n o1">${r.search.toLocaleString()}</td>` +
+						`<td class="bar hit o2"><span style="width:${Math.round((r.total / maxHit) * 100)}%"></span></td>` +
+						`<td>${r.key === "(미상)" ? "" : `<a href="/admin/traffic?period=${g.period}">트래픽 →</a>`}</td></tr>`,
+				)
+				.join("")
+		: `<tr><td colspan="8">아직 들어온 방문 기록이 없어요.</td></tr>`;
+
+	const hitSection = g.appFilter
+		? `<p class="sm" style="margin:18px 2px 0">서비스 방문 지역은 앱과 상관없는 기록이라, 앱을 고른 화면에서는 보여주지 않아요. ` +
+			`<a href="/admin/geo?period=${g.period}">전체 앱으로 보기 →</a></p>`
+		: `<div class="sh2"><h2>서비스 방문 지역</h2><a href="/admin/traffic?period=${g.period}">트래픽에서 보기 →</a></div>
+<table class="fx" id="tb-hitgeo">${cols("", "78", "72", "84:o1", "82:o1", "88:o1", "110:o2", "62")}<thead><tr><th>국가</th><th class="n">방문</th><th class="n">사람</th><th class="n o1">고유 방문자</th><th class="n o1">AI 크롤러</th><th class="n o1">검색 크롤러</th><th class="o2">비중</th><th></th></tr></thead><tbody>${hitRows}</tbody></table>`;
+
 	return shellAdmin(
 		"지역",
-		pageHead("호출 지역", `국가 · 도시별 호출 분포 · ${sinceLabel(g.since)}`, g.appFilter) +
+		pageHead("호출 지역", `국가 · 도시별 호출·방문 분포 · ${sinceLabel(g.since)}`, g.appFilter) +
 			`<div id="hz-body">
 ${filterTabs("/admin/geo", g.period, g.appFilter, g.apps, PERIODS)}
-${svgMap(g.points, g.geoUnknown)}
+${svgMap(g.points, g.geoUnknown, g.hitPoints, g.hitUnknown)}
 
-<div class="sh2"><h2>국가별</h2><span class="sm">${g.byCountry.filter((c) => c.key !== "(미상)").length}개국</span></div>
+<div class="sh2"><h2>국가별 AI 호출</h2><span class="sm">${g.byCountry.filter((c) => c.key !== "(미상)").length}개국</span></div>
 <table class="fx" id="tb-country">${cols("", "88", "70:o1", "70", "78", "84:o1", "84", "86:o2", "110:o2", "58")}<thead><tr><th>국가</th><th class="n">호출</th><th class="n o1">성공</th><th class="n">실패</th><th class="n">고유 IP</th><th class="n o1">토큰</th><th class="n">비용</th><th class="n o2">평균 지연</th><th class="o2">비중</th><th></th></tr></thead><tbody>${countryRows}</tbody></table>
+
+${hitSection}
 
 <div class="sh2"><h2>지역 · 도시별 (상위 ${g.byRegion.length})</h2>${tableFilter("tb-region", "도시·지역 이름으로 걸러보기")}</div>
 <table class="fx" id="tb-region">${cols("92", "", "", "84", "70:o1", "70", "78:o1", "84:o2", "84")}<thead><tr><th>국가</th><th>지역</th><th>도시</th><th class="n">호출</th><th class="n o1">성공</th><th class="n">실패</th><th class="n o1">고유 IP</th><th class="n o2">토큰</th><th class="n">비용</th></tr></thead><tbody>${regionRows}</tbody></table>
 
-<p class="foot">${FOOT_GEO}</p>
+<p class="foot">${FOOT_GEO}<br>
+지도의 <b>보라색</b>은 AI 호출, <b>분홍색</b>은 서비스 방문이에요. 방문은 도시 좌표가 없어 나라 가운데에 모아 찍고, 자세한 내용은 트래픽 탭에서 봐요.</p>
 </div>`,
 		{ ...opts, tab: "geo" },
 	);

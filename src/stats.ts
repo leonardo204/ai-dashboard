@@ -500,6 +500,40 @@ const COUNTRY_KO: Record<string, string> = {
 	PH: "필리핀", MY: "말레이시아", RU: "러시아", TR: "튀르키예", AE: "아랍에미리트",
 	SA: "사우디아라비아", ZA: "남아프리카공화국",
 };
+/**
+ * 국가 대표 좌표(경도, 위도) — 서비스 방문 기록을 지도에 찍는 데 쓴다.
+ *
+ * AI 호출 로그에는 Cloudflare가 준 도시 좌표가 함께 담기지만, 방문 기록에는 국가·도시 이름만
+ * 있고 좌표가 없다. 도시까지 정확히 찍으려면 서비스 일곱 곳을 모두 고쳐 다시 올려야 하는데,
+ * 방문은 대부분 크롤러라 나라 단위면 충분하다. 그래서 나라 가운데에 하나로 모아 찍는다.
+ */
+const COUNTRY_LL: Record<string, [number, number]> = {
+	KR: [127.8, 36.5], JP: [138.0, 36.5], CN: [104.2, 35.9], TW: [121.0, 23.7],
+	HK: [114.1, 22.4], SG: [103.8, 1.4], MO: [113.5, 22.2],
+	US: [-98.5, 39.8], CA: [-106.3, 56.1], MX: [-102.5, 23.6], BR: [-51.9, -14.2],
+	AR: [-63.6, -38.4], CL: [-71.5, -35.7], CO: [-74.3, 4.6], PE: [-75.0, -9.2],
+	GB: [-2.0, 54.0], IE: [-8.2, 53.1], FR: [2.2, 46.2], DE: [10.4, 51.2],
+	NL: [5.3, 52.1], BE: [4.5, 50.5], LU: [6.1, 49.8], CH: [8.2, 46.8],
+	AT: [14.6, 47.5], ES: [-3.7, 40.4], PT: [-8.2, 39.4], IT: [12.6, 41.9],
+	SE: [18.6, 60.1], NO: [8.5, 60.5], FI: [25.7, 61.9], DK: [9.5, 56.3],
+	IS: [-19.0, 65.0], PL: [19.1, 51.9], CZ: [15.5, 49.8], SK: [19.7, 48.7],
+	HU: [19.5, 47.2], RO: [25.0, 45.9], BG: [25.5, 42.7], GR: [21.8, 39.1],
+	HR: [15.2, 45.1], SI: [15.0, 46.2], RS: [21.0, 44.0], UA: [31.2, 48.4],
+	BY: [28.0, 53.7], MD: [28.4, 47.4], EE: [25.0, 58.6], LV: [24.6, 56.9],
+	LT: [23.9, 55.2], RU: [105.3, 61.5], KZ: [66.9, 48.0], TR: [35.2, 39.0],
+	IL: [34.9, 31.0], AE: [53.8, 23.4], SA: [45.1, 23.9], QA: [51.2, 25.4],
+	KW: [47.5, 29.3], IR: [53.7, 32.4], IQ: [43.7, 33.2],
+	IN: [78.9, 20.6], PK: [69.3, 30.4], BD: [90.4, 23.7], LK: [80.8, 7.9],
+	NP: [84.1, 28.4], TH: [101.0, 15.9], VN: [108.3, 14.1], PH: [121.8, 12.9],
+	MY: [102.0, 4.2], ID: [113.9, -0.8], AU: [133.8, -25.3], NZ: [174.9, -40.9],
+	ZA: [22.9, -30.6], EG: [30.8, 26.8], MA: [-7.1, 31.8], TN: [9.5, 33.9],
+	DZ: [1.7, 28.0], NG: [8.7, 9.1], KE: [37.9, 0.0], GH: [-1.0, 8.0],
+	ET: [40.5, 9.2], TZ: [34.9, -6.4],
+};
+
+/** 지도에 찍을 수 있는 나라인지. 모르면 null(지도에서 빼고 "표시 못 함"으로 센다). */
+export const countryPoint = (code: string): [number, number] | null => COUNTRY_LL[code] ?? null;
+
 export function countryName(code: string): string {
 	if (!code || code === "(미상)") return "(미상)";
 	return COUNTRY_KO[code] ? `${COUNTRY_KO[code]} (${code})` : code;
@@ -1264,6 +1298,20 @@ export interface GeoData {
 	byRegion: { country: string; region: string; city: string; total: number; ok: number; error: number; tokens: number; cost: number; ips: number }[];
 	points: StatsSummary["points"];
 	geoUnknown: number;
+	/** 서비스 방문(트래픽) 지역 — 호출과 다른 색으로 같은 지도에 얹는다. */
+	hitPoints: HitPoint[];
+	hitCountries: HitCountry[];
+	hitTotal: number;
+	/** 나라를 모르거나 지도 좌표가 없어 지도에 못 찍는 방문 수. */
+	hitUnknown: number;
+}
+
+export interface HitPoint {
+	country: string; lat: number; lon: number;
+	total: number; human: number; ai: number; search: number; ips: number;
+}
+export interface HitCountry {
+	key: string; total: number; human: number; ai: number; search: number; other: number; ips: number;
 }
 
 export async function collectGeo(env: StatsEnv, period: string, appFilter: string): Promise<GeoData> {
@@ -1278,7 +1326,11 @@ async function collectGeoInner(env: StatsEnv, period: string, appFilter: string)
 		return appFilter ? st.bind(since, appFilter) : st.bind(since);
 	};
 
-	const [apps, cRows, cIpRows, rRows] = await Promise.all([
+	// 서비스 방문은 앱과 무관한 기록이라, 앱을 하나 골라 본 화면에서는 함께 보여주지 않는다.
+	// 걸러진 호출 옆에 걸러지지 않은 방문을 나란히 놓으면 같은 조건으로 읽히기 때문이다.
+	const wantHits = !appFilter;
+
+	const [apps, cRows, cIpRows, rRows, hitRows] = await Promise.all([
 		appBriefs(env),
 		bind(
 			`SELECT COALESCE(NULLIF(country,''),'(미상)') AS c, model,${AGG} FROM calls WHERE ts >= ?1${appWhere} GROUP BY c, model`,
@@ -1293,7 +1345,43 @@ async function collectGeoInner(env: StatsEnv, period: string, appFilter: string)
 				", COUNT(DISTINCT ip) AS ips, AVG(lat) AS la, AVG(lon) AS lo, SUM(lat IS NOT NULL) AS geoN" +
 				` FROM calls WHERE ts >= ?1${appWhere} GROUP BY c, rg, ct, model`,
 		).all<AggRow & { c: string; rg: string; ct: string; model: string | null; ips: number; la: number | null; lo: number | null; geoN: number }>(),
+
+		// 서비스 방문 — 나라별로만 모은다(방문 기록에는 도시 좌표가 없다).
+		wantHits
+			? env.DB.prepare(
+					"SELECT COALESCE(NULLIF(country,''),'(미상)') AS c, COUNT(*) AS n," +
+						" SUM(kind='human') AS h, SUM(kind='ai') AS a, SUM(kind='search') AS s," +
+						" COUNT(DISTINCT ip_hash) AS ips FROM hits WHERE ts >= ?1 GROUP BY c ORDER BY n DESC",
+				)
+					.bind(since)
+					.all<{ c: string; n: number; h: number | null; a: number | null; s: number | null; ips: number }>()
+					.catch(() => ({ results: [] as { c: string; n: number; h: number | null; a: number | null; s: number | null; ips: number }[] }))
+			: Promise.resolve({ results: [] as { c: string; n: number; h: number | null; a: number | null; s: number | null; ips: number }[] }),
 	]);
+
+	const hitCountries: HitCountry[] = (hitRows.results ?? []).map((r) => ({
+		key: r.c,
+		total: r.n,
+		human: r.h ?? 0,
+		ai: r.a ?? 0,
+		search: r.s ?? 0,
+		other: r.n - (r.h ?? 0) - (r.a ?? 0) - (r.s ?? 0),
+		ips: r.ips ?? 0,
+	}));
+	const hitTotal = hitCountries.reduce((n, r) => n + r.total, 0);
+	const hitPoints: HitPoint[] = [];
+	let hitUnknown = 0;
+	for (const r of hitCountries) {
+		const ll = countryPoint(r.key);
+		if (!ll) {
+			hitUnknown += r.total;
+			continue;
+		}
+		hitPoints.push({
+			country: r.key, lon: ll[0], lat: ll[1],
+			total: r.total, human: r.human, ai: r.ai, search: r.search, ips: r.ips,
+		});
+	}
 
 	const cIp = new Map((cIpRows.results ?? []).map((r) => [r.c, r.n]));
 	const byCountryMap = new Map<string, GroupRow>();
@@ -1347,7 +1435,10 @@ async function collectGeoInner(env: StatsEnv, period: string, appFilter: string)
 			total: r.total, ok: r.ok, error: r.error, tokens: r.tokens, cost: r.cost, ips: r.ips,
 		}));
 
-	return { period, appFilter, since, apps, byCountry, byRegion, points, geoUnknown };
+	return {
+		period, appFilter, since, apps, byCountry, byRegion, points, geoUnknown,
+		hitPoints, hitCountries, hitTotal, hitUnknown,
+	};
 }
 
 // ── 로그 화면 ────────────────────────────────────────────────

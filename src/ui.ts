@@ -82,8 +82,18 @@ h1{font-size:20px;margin:0 0 4px;}h2{font-size:14px;margin:26px 0 9px;color:var(
 .mapwrap .bo{fill:rgba(146,95,240,.28);stroke:var(--accent);stroke-width:1.2;}
 .mapwrap .bi{fill:var(--accent);}
 .mapwrap .bub{cursor:default;}
-.mapwrap .bub:hover .bo{fill:rgba(200,90,149,.34);stroke:#C85A95;}
-.mapwrap .bub:hover .bi{fill:#C85A95;}
+/* 서비스 방문 — 호출과 다른 색(보조색)으로 얹는다. 겹쳐도 서로 비치게 옅게 칠한다. */
+.mapwrap .bub.hit .bo{fill:rgba(200,90,149,.13);stroke:#C85A95;stroke-width:1.6;}
+.mapwrap .bub.hit .bi{fill:#C85A95;}
+/* 마우스를 올린 원만 진해진다. 색을 바꾸면 어느 쪽 기록인지 헷갈린다. */
+.mapwrap .bub:hover .bo{fill-opacity:1;stroke-width:2;}
+.mapwrap .bub:hover .bi{r:4;}
+.mapwrap .maplg{display:flex;gap:14px;justify-content:center;padding:9px 0 2px;
+ font-size:11.5px;color:var(--muted);font-weight:700;}
+.mapwrap .maplg .k{display:inline-flex;align-items:center;gap:6px;}
+.mapwrap .maplg i{width:9px;height:9px;border-radius:50%;display:block;}
+.mapwrap .maplg .s-call{background:var(--accent);}
+.mapwrap .maplg .s-hit{background:#C85A95;}
 .mapempty{position:absolute;inset:0;display:grid;place-items:center;color:var(--muted);font-size:13px;
  background:rgba(255,255,255,.72);}
 
@@ -108,6 +118,8 @@ tr:last-child td{border-bottom:none;}
 .n{text-align:right;font-variant-numeric:tabular-nums;}
 .g{color:var(--g);}.r{color:var(--r);}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;}
 td.bar{width:30%;}td.bar span{display:block;height:9px;background:var(--accent);border-radius:5px;min-width:2px;}
+/* 서비스 방문 표는 지도와 같은 보조색을 쓴다 — 어느 쪽 기록인지 색만 봐도 알게. */
+td.bar.hit span{background:#C85A95;}
 td.err{color:var(--muted);font-size:11px;max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .foot{margin-top:22px;color:var(--muted);font-size:12px;}
 .sm{font-size:11px;color:var(--muted);}
@@ -1784,27 +1796,64 @@ export function svgShare(rows: { label: string; value: number; sub: string }[], 
 const SHARE_COLORS = ["#925FF0", "#C85A95", "#35A7FF", "#44AB42", "#F0A93B", "#7A7590"];
 
 /** 세계 지도 — 육지 외곽선 위에 도시별 호출량을 원으로 얹는다. */
-export function svgMap(points: StatsSummary["points"], unknown: number): string {
+export function svgMap(
+	points: StatsSummary["points"],
+	unknown: number,
+	hits: { country: string; lat: number; lon: number; total: number; human: number; ai: number; search: number; ips: number }[] = [],
+	hitUnknown = 0,
+): string {
 	const max = Math.max(1, ...points.map((p) => p.total));
 	const bubbles = points
 		.map((p) => {
 			const { x, y } = projectLonLat(p.lon, p.lat);
 			const r = 4 + Math.sqrt(p.total / max) * 16;
-			const title = `${countryName(p.country)}${p.city && p.city !== "-" ? ` · ${p.city}` : ""}\n호출 ${p.total.toLocaleString()}건 · 고유 IP ${p.ips.toLocaleString()}\n비용 ${usd(p.cost)}`;
+			const title = `${countryName(p.country)}${p.city && p.city !== "-" ? ` · ${p.city}` : ""}\nAI 호출 ${p.total.toLocaleString()}건 · 고유 IP ${p.ips.toLocaleString()}\n비용 ${usd(p.cost)}`;
 			return `<g class="bub" data-tip="${escapeHtml(title)}">` +
 				`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r.toFixed(1)}" class="bo"/>` +
 				`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${Math.max(1.8, r * 0.26).toFixed(1)}" class="bi"/></g>`;
 		})
 		.join("");
+
+	// 서비스 방문 — 호출과 다른 색으로 같은 지도에 얹는다. 크기는 방문끼리만 견줘서 정한다.
+	// 호출 수와 같은 자로 재면 한쪽이 다른 쪽을 덮어 둘 다 못 읽는다.
+	const hmax = Math.max(1, ...hits.map((h) => h.total));
+	const hitBubbles = hits
+		.map((h) => {
+			const { x, y } = projectLonLat(h.lon, h.lat);
+			// 호출 원보다 한 뼘 크게 그린다. 같은 나라에 둘 다 있으면 자리가 거의 포개져,
+			// 크기까지 같으면 뒤에 깔린 쪽이 통째로 가린다. 크기는 색깔끼리만 견준다.
+			const r = 7 + Math.sqrt(h.total / hmax) * 18;
+			const bots = h.ai + h.search;
+			const title = `${countryName(h.country)}\n서비스 방문 ${h.total.toLocaleString()}건 · 고유 방문자 ${h.ips.toLocaleString()}\n사람 ${h.human.toLocaleString()} · 크롤러 ${bots.toLocaleString()}\n(나라 가운데에 모아 찍은 자리예요)`;
+			return `<g class="bub hit" data-tip="${escapeHtml(title)}">` +
+				`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r.toFixed(1)}" class="bo"/>` +
+				`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${Math.max(1.8, r * 0.26).toFixed(1)}" class="bi"/></g>`;
+		})
+		.join("");
+
+	const hitSum = hits.reduce((n, h) => n + h.total, 0);
+	const legend = hits.length
+		? `<div class="maplg"><span class="k"><i class="s-call"></i>AI 호출 ${points.reduce((n, p) => n + p.total, 0).toLocaleString()}건</span>` +
+			`<span class="k"><i class="s-hit"></i>서비스 방문 ${hitSum.toLocaleString()}건</span></div>`
+		: "";
+
+	const notes = [
+		"원 크기는 각 색 안에서만 견줘요. 마우스를 올리면 지역·건수를 볼 수 있어요.",
+		unknown ? `좌표가 없는 호출 ${unknown.toLocaleString()}건은 지도에 표시되지 않아요(이전 기록·미상 지역).` : "",
+		hits.length ? "서비스 방문은 도시 좌표가 없어 나라 가운데에 모아 찍어요." : "",
+		hitUnknown ? `나라를 모르는 방문 ${hitUnknown.toLocaleString()}건은 빠져 있어요.` : "",
+	].filter(Boolean);
+
 	return `<div class="mapwrap">
-<svg viewBox="0 0 ${MAP_W} ${MAP_H}" role="img" aria-label="호출 지역 지도">
+<svg viewBox="0 0 ${MAP_W} ${MAP_H}" role="img" aria-label="호출·방문 지역 지도">
 <rect width="${MAP_W}" height="${MAP_H}" class="sea"/>
 <path d="${WORLD_PATH}" class="land"/>
-${bubbles}
+${hitBubbles}${bubbles}
 </svg>
-${points.length ? "" : `<div class="mapempty">아직 좌표가 있는 호출이 없어요.</div>`}
+${points.length || hits.length ? "" : `<div class="mapempty">아직 좌표가 있는 기록이 없어요.</div>`}
+${legend}
 </div>
-<p class="sm" style="margin:8px 2px 0">원 크기는 호출량이에요. 마우스를 올리면 지역·호출 수를 볼 수 있어요.${unknown ? ` 좌표가 없는 호출 ${unknown.toLocaleString()}건은 지도에 표시되지 않아요(이전 기록·미상 지역).` : ""}</p>`;
+<p class="sm" style="margin:8px 2px 0">${notes.join(" ")}</p>`;
 }
 
 /**
