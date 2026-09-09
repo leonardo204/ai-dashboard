@@ -1126,6 +1126,18 @@ label.chk input{margin-top:3px;flex:0 0 auto;}
  .noteline{flex-wrap:wrap;gap:4px;}
  .noteline a{margin-left:0;}
 
+ /* 상황판 — 카드 넷은 2×2로, 두 칸은 세로로 쌓인다 */
+ .stat{font-size:var(--fs-sm);}
+ .stat .rs{flex:1 1 100%;order:3;}
+ .golinks a{padding:11px 13px;}
+ .golinks span{white-space:normal;}
+ /* 열린 신호 — 시각 칸은 접는다(펼치면 이상탐지 화면에 다 있다) */
+ .sigp{padding:8px 10px;}
+ table.sig td{padding:6px 4px;}
+ table.sig td.mono{display:none;}
+ table.sig td.w{white-space:normal;}
+ /* 하위 탭은 옆으로 밀어서 본다 */
+ .subbar .in{gap:0;}
  /* 표 → 카드 */
  table.mbc{display:block;border:0;background:none;border-radius:0;overflow:visible;}
  table.mbc colgroup,table.mbc thead,table.mbc tr.mb-hdr{display:none;}
