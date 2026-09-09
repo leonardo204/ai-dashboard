@@ -209,6 +209,13 @@ ${mini("고유 IP", s.uniqueIPs.toLocaleString())}
 ${mini("사용 모델", `${s.modelCount}종`)}
 </div>
 
+<div class="sh2"><h2>월별 비용</h2><span class="sm">${
+	s.monthly.length
+		? `최근 ${s.monthly.length}개월 · 합계 ${usd(s.monthly.reduce((n, r) => n + r.cost, 0))}${s.appFilter ? ` · ${escapeHtml(s.apps.find((a) => a.id === s.appFilter)?.name ?? s.appFilter)}만` : ""}`
+		: "기록 없음"
+}</span></div>
+${monthlyCostPanel(s)}
+
 ${sectionHead("이상탐지", `/admin/anomaly${q}`, "이상탐지에서 보기 →")}
 ${anomalyBand(s.anomaly, `/admin/anomaly${q}`)}
 
@@ -233,7 +240,8 @@ ${svgTrend(s.buckets)}
   <section>${sectionHead(`호출 지역 (${s.countryCount}개국)`, `/admin/geo${q}`)}${geoShare}</section>
 </div>
 
-<p class="foot">최근 호출은 자동 갱신이 켜져 있으면 새 호출이 들어올 때마다 다시 그려져요.<br>숫자 옆 ▲▼는 직전 같은 기간과 비교한 값이에요.<br>${FOOT_COST}<br>${FOOT_GEO}</p>
+<p class="foot">월별 비용은 기간 탭과 상관없이 늘 최근 열두 달을 보여줘요. 청구가 달 단위로 오니까요. 막대의 흐린 윗부분은 이상탐지·메일 도구처럼 <b>내부용</b>으로 표시한 앱이 쓴 몫이에요. 달은 한국 시간(KST) 기준으로 끊는데 실제 청구는 UTC 기준이라 월말·월초에 조금 다를 수 있어요.<br>
+최근 호출은 자동 갱신이 켜져 있으면 새 호출이 들어올 때마다 다시 그려져요.<br>숫자 옆 ▲▼는 직전 같은 기간과 비교한 값이에요.<br>${FOOT_COST}<br>${FOOT_GEO}</p>
 </div>`,
 		{ ...opts, tab: "summary" },
 	);
@@ -1008,6 +1016,73 @@ function smallDonut(rows: { label: string; v: number; color: string }[], total: 
 
 /** 좁은 자리에 넣을 숫자 — 다섯 자리까지는 그대로, 그보다 크면 줄여 쓴다. */
 const donutNum = (v: number) => (v < 100_000 ? v.toLocaleString() : shortNum(v));
+
+/** 달 표시 — 해가 바뀌는 자리에서만 연도를 붙인다. */
+function monthLabel(m: string, prev?: string): string {
+	const [y, mo] = m.split("-");
+	return !prev || prev.slice(0, 4) !== y ? `${y.slice(2)}년 ${Number(mo)}월` : `${Number(mo)}월`;
+}
+const monthTitle = (m: string) => `${m.slice(0, 4)}년 ${Number(m.slice(5))}월`;
+const kstMonthKey = (ts: number) => new Date(ts + 9 * 3600_000).toISOString().slice(0, 7);
+
+/** 달 비용은 대개 1달러를 넘는다. 막대 위에 얹을 짧은 표기. */
+const usdMonth = (v: number) => (v <= 0 ? "$0" : v >= 1 ? `$${v.toFixed(2)}` : `$${v.toFixed(3)}`);
+
+/**
+ * 달별 비용 — 기간 탭과 무관하게 늘 최근 열두 달을 본다.
+ *
+ * 기간을 따라가게 두면 '주'를 보고 있을 때 막대가 하나만 남아 아무것도 알 수 없다.
+ * 청구서가 달 단위로 오므로 대조하려면 달 추이는 늘 같은 자리에 있어야 한다.
+ * 막대의 흐린 윗부분은 내부용 앱(이상탐지·메일 도구)이 쓴 몫이다 — 실제 청구에는
+ * 포함되지만 "서비스가 쓴 돈"과는 갈라 봐야 한다.
+ */
+function monthlyCostPanel(s: SummaryData): string {
+	const rows = s.monthly;
+	if (!rows.length) return `<div class="empty">아직 비용 기록이 없어요.</div>`;
+
+	const nowKey = kstMonthKey(Date.now());
+	const max = Math.max(...rows.map((r) => r.cost), 0.0001);
+	const BAR = 68;
+
+	const bars = rows
+		.map((r, i) => {
+			const isNow = r.m === nowKey;
+			const h = Math.max(3, Math.round((r.cost / max) * BAR));
+			const innPct = r.cost > 0 ? Math.min(100, Math.round((r.internalCost / r.cost) * 100)) : 0;
+			const tip =
+				`${monthTitle(r.m)}\n전체 ${usd(r.cost)} · ${r.total.toLocaleString()}건` +
+				(r.internalCost > 0
+					? `\n서비스 ${usd(r.cost - r.internalCost)} · 내부 도구 ${usd(r.internalCost)}`
+					: "") +
+				(isNow ? "\n(이번 달 · 아직 진행 중이에요)" : "");
+			return (
+				`<div class="b${isNow ? " now" : ""}" data-tip="${escapeHtml(tip)}">` +
+				`<span class="v">${usdMonth(r.cost)}</span>` +
+				`<span class="bar" style="height:${h}px">${innPct ? `<i style="height:${innPct}%"></i>` : ""}</span>` +
+				`<span class="lb">${escapeHtml(monthLabel(r.m, rows[i - 1]?.m))}</span></div>`
+			);
+		})
+		.join("");
+
+	const cur = rows[rows.length - 1]?.m === nowKey ? rows[rows.length - 1] : null;
+	const parts: string[] = [];
+	if (cur) {
+		parts.push(`이번 달 <b>${usd(cur.cost)}</b>`);
+		// 달 초에는 몇 시간치로 한 달을 점치게 되어 숫자가 널뛴다. 15%는 지나야 적는다.
+		if (s.monthProgress >= 0.15) {
+			parts.push(`이대로면 <b>${usd(cur.cost / s.monthProgress)}</b> 예상`);
+		}
+		if (cur.internalCost > 0) {
+			const pct = Math.round((cur.internalCost / cur.cost) * 100);
+			parts.push(`내부 도구 몫 ${usd(cur.internalCost)}<span class="sm"> (${pct}%)</span>`);
+		}
+	}
+
+	return `<div class="mcost">
+  <div class="bars">${bars}</div>
+  ${parts.length ? `<div class="sum">${parts.join('<span class="dot">·</span>')}</div>` : ""}
+</div>`;
+}
 
 /**
  * 요약 화면에 얹는 이상탐지 칸.

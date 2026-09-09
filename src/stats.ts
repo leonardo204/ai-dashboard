@@ -922,6 +922,30 @@ async function p95Of(env: StatsEnv, since: number, appFilter: string, okCount: n
 
 // ── 요약 화면 ────────────────────────────────────────────────
 
+/** 달마다의 비용 한 줄. 실제 청구는 달 단위로 오므로 대조에 쓴다. */
+export interface MonthCost {
+	/** KST 기준 YYYY-MM */
+	m: string;
+	total: number;
+	cost: number;
+	/** 그중 내부용 앱(이상탐지·메일 도구)이 쓴 몫 */
+	internalCost: number;
+	internalTotal: number;
+}
+
+/**
+ * 이번 달(KST)이 얼마나 지났나 — 0~1.
+ * 달이 끝나기 전에는 지금까지 쓴 돈만으로는 많은지 적은지 알 수 없다.
+ * 이 값으로 나눠 "이대로 가면 이 달에 얼마" 를 낸다.
+ */
+function monthProgress(now = Date.now()): number {
+	const KST = 9 * 3600_000;
+	const k = new Date(now + KST);
+	const start = Date.UTC(k.getUTCFullYear(), k.getUTCMonth(), 1) - KST;
+	const end = Date.UTC(k.getUTCFullYear(), k.getUTCMonth() + 1, 1) - KST;
+	return Math.min(1, Math.max(0.001, (now - start) / (end - start)));
+}
+
 export interface SummaryData {
 	period: string;
 	appFilter: string;
@@ -952,6 +976,10 @@ export interface SummaryData {
 	anomaly: AnomalyBrief;
 	/** 서비스 방문 요약 — 트래픽 탭과 같은 표를 읽되 개수만 본다. */
 	traffic: TrafficBrief;
+	/** 달별 비용 — 기간 탭과 무관하게 최근 열두 달을 본다(청구가 달 단위라서). */
+	monthly: MonthCost[];
+	/** 이번 달이 얼마나 지났는지(0~1). 남은 기간까지 더한 예상치를 낼 때 쓴다. */
+	monthProgress: number;
 }
 
 /**
@@ -1000,8 +1028,12 @@ async function collectSummaryInner(
 	};
 	const bexpr = bucketExpr(p.bucket);
 
+	// 달별 비용은 기간 탭을 따르지 않는다. '주'를 보고 있어도 달 추이는 그대로 보여야
+	// 실제 청구서와 맞춰볼 수 있다. 앱을 골랐으면 그 앱만 센다.
+	const monthSince = Date.now() - 400 * 86_400_000;
+
 	const [apps, grouped, bucketRows, ipRow, okRow, errRows, cRows, prevRows, recentRs,
-		anomSum, anomPrev, anomRecent, anomState] = await Promise.all([
+		anomSum, anomPrev, anomRecent, anomState, monthRows] = await Promise.all([
 		appBriefs(env),
 
 		bind(
@@ -1072,6 +1104,23 @@ async function collectSummaryInner(
 		).all<AnomalyBriefRow>(),
 
 		env.DB.prepare("SELECT key, value, updated_at FROM anomaly_state").all<{ key: string; value: string; updated_at: number }>(),
+
+		// ── 달별 비용. 내부용 앱 몫을 따로 세어 "서비스가 쓴 돈"과 "내부 도구가 쓴 돈"을 나눈다.
+		//    모델별로 쪼개는 이유: 청구액이 0으로 온 행은 모델 단가표로 메워야 해서.
+		(appFilter
+			? env.DB.prepare(
+					`SELECT ${bucketExpr("month")} AS m, model,` +
+						" CASE WHEN app IN (SELECT id FROM apps WHERE internal = 1) THEN 1 ELSE 0 END AS inn," +
+						AGG +
+						" FROM calls WHERE ts >= ?1 AND app = ?2 GROUP BY m, model, inn",
+				).bind(monthSince, appFilter)
+			: env.DB.prepare(
+					`SELECT ${bucketExpr("month")} AS m, model,` +
+						" CASE WHEN app IN (SELECT id FROM apps WHERE internal = 1) THEN 1 ELSE 0 END AS inn," +
+						AGG +
+						" FROM calls WHERE ts >= ?1 GROUP BY m, model, inn",
+				).bind(monthSince)
+		).all<AggRow & { m: string; model: string | null; inn: number }>(),
 	]);
 
 	const nameOf = new Map(apps.map((a) => [a.id, a.name]));
@@ -1107,6 +1156,18 @@ async function collectSummaryInner(
 
 	const countries = (cRows.results ?? []).map((r) => ({ key: r.c, total: r.n }));
 
+	// 달별 비용 — 모델·내부용으로 쪼개 온 것을 달 단위로 합친다.
+	const mmap = new Map<string, MonthCost>();
+	for (const r of monthRows.results ?? []) {
+		const cur = mmap.get(r.m) ?? { m: r.m, total: 0, cost: 0, internalCost: 0, internalTotal: 0 };
+		const c = mergeCost(r.realCost, r.model, r.eIn, r.eOut);
+		cur.total += r.total;
+		cur.cost += c;
+		if (r.inn) { cur.internalCost += c; cur.internalTotal += r.total; }
+		mmap.set(r.m, cur);
+	}
+	const monthly = Array.from(mmap.values()).sort((a, b) => a.m.localeCompare(b.m)).slice(-12);
+
 	return {
 		period,
 		appFilter,
@@ -1124,6 +1185,8 @@ async function collectSummaryInner(
 		errors: (errRows.results ?? []).map((r) => ({ http: r.http, count: r.c, sample: r.sample })),
 		countries: countries.slice(0, 6),
 		countryCount: countries.filter((c) => c.key !== "(미상)").length,
+		monthly,
+		monthProgress: monthProgress(),
 		prev,
 		recent: (recentRs.results ?? []).map(toLogRow),
 		anomaly: anomalyBriefOf(anomSum, anomPrev, anomRecent.results ?? [], anomState.results ?? []),

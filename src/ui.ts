@@ -620,6 +620,31 @@ const EXTRA_CSS = `
 a.go{font-weight:700;color:var(--accent);text-decoration:none;white-space:nowrap;}
 a.go:hover{text-decoration:underline;}
 
+/* 달별 비용 — 막대 위 금액, 아래 달. 흐린 윗부분이 내부용 앱 몫이다 */
+.mcost{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px 12px;}
+.mcost .bars{display:flex;align-items:flex-end;gap:10px;}
+.mcost .b{flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;gap:5px;cursor:default;}
+.mcost .v{font-size:11.5px;font-weight:800;color:var(--muted);white-space:nowrap;
+ font-variant-numeric:tabular-nums;}
+.mcost .bar{display:block;width:100%;max-width:64px;background:var(--accent);
+ border-radius:5px 5px 0 0;position:relative;overflow:hidden;}
+.mcost .bar i{position:absolute;left:0;right:0;top:0;display:block;background:#c9bdf0;}
+.mcost .lb{font-size:11px;font-weight:700;color:var(--muted);white-space:nowrap;}
+.mcost .b:hover .bar{background:#7a45dd;}
+.mcost .b.now .v{color:var(--ink);}
+.mcost .b.now .lb{color:#5E3A9E;}
+.mcost .sum{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;font-size:12.5px;
+ margin-top:12px;padding-top:11px;border-top:1px solid var(--line);}
+.mcost .sum b{font-weight:800;font-variant-numeric:tabular-nums;}
+.mcost .sum .dot{color:var(--line);}
+@media(max-width:640px){
+ .mcost{padding:12px 12px 10px;}
+ .mcost .bars{gap:6px;}
+ .mcost .v{font-size:10.5px;}
+ .mcost .lb{font-size:10px;}
+ .mcost .sum{font-size:12px;gap:6px;}
+}
+
 /* 보낸 메일 게시판 */
 .kind{display:inline-flex;font-weight:800;font-size:11.5px;border-radius:999px;padding:2px 9px;
  border:1px solid;white-space:nowrap;}
