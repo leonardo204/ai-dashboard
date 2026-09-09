@@ -1025,6 +1025,8 @@ function monthLabel(m: string, prev?: string): string {
 }
 const monthTitle = (m: string) => `${m.slice(0, 4)}년 ${Number(m.slice(5))}월`;
 const kstMonthKey = (ts: number) => new Date(ts + 9 * 3600_000).toISOString().slice(0, 7);
+/** KST 기준 날짜(YYYY-MM-DD) — 로그 화면의 날짜 칸이 이 모양을 받는다. */
+const kstDate = (ts: number) => new Date(ts + 9 * 3600_000).toISOString().slice(0, 10);
 
 /** 달 비용은 대개 1달러를 넘는다. 막대 위에 얹을 짧은 표기. */
 const usdMonth = (v: number) => (v <= 0 ? "$0" : v >= 1 ? `$${v.toFixed(2)}` : `$${v.toFixed(3)}`);
@@ -1199,7 +1201,16 @@ function anomalyAppRow(cur: AnomalyNav, apps: { id: string; name: string }[], tr
 
 const SITE_TABS = Object.entries(SITES).map(([id, v]) => ({ id, name: v.name, active: true }));
 
-export function renderAnomaly(a: AnomalyData, opts: AdminOpts = {}): string {
+/**
+ * 이상탐지 화면 둘.
+ *   받은 신호  지금 무슨 신호가 있고 무엇을 해야 하나 (운영)
+ *   탐지기 상태 탐지기가 잘 배우고 있나 (관리)
+ * 열두 칸을 한 화면에 쌓아 두니 급할 때 볼 것과 한가할 때 볼 것이 섞여 있었다.
+ */
+export const renderSignals = (a: AnomalyData, opts: AdminOpts = {}) => renderAnomalyScreen(a, "signals", opts);
+export const renderDetector = (a: AnomalyData, opts: AdminOpts = {}) => renderAnomalyScreen(a, "detector", opts);
+
+function renderAnomalyScreen(a: AnomalyData, view: "signals" | "detector", opts: AdminOpts = {}): string {
 	const traffic = a.scope === "traffic";
 	const who = traffic ? "서비스" : "앱";
 	const nameOf = (k: string) => (k === "*" ? "전체" : traffic ? siteName(k) : k);
@@ -1224,8 +1235,11 @@ export function renderAnomaly(a: AnomalyData, opts: AdminOpts = {}): string {
 		"건",
 	);
 
-	const rows = a.recent.length
-		? a.recent
+	const isFp = (r: AnomalyRowWithMail) => ["rule_fp", "model_fp", "both_fp"].includes(r.verdict ?? "");
+	const openList = a.recent.filter((r) => !isFp(r));
+	const fpList = a.recent.filter(isFp);
+	const rowsOf = (list: AnomalyRowWithMail[], emptyText: string) => (list.length
+		? list
 				.map((r) => {
 					const d = anomDetail(r);
 					return (
@@ -1253,11 +1267,15 @@ export function renderAnomaly(a: AnomalyData, opts: AdminOpts = {}): string {
 								? bucketAt(r.notified_at)
 								: r.suppressed_reason
 									? `<span class="sm" data-tip="${escapeHtml(r.suppressed_reason)}">보내지 않음</span>`
-									: "-"}</td></tr>`
+									: "-"}</td>` +
+						`<td class="lk"><a class="go" href="${traffic
+							? `/admin/traffic?period=${a.period}`
+							: `/admin/calls/logs?period=${a.period}${r.app && r.app !== "*" ? `&app=${encodeURIComponent(r.app)}` : ""}&from=${kstDate(r.bucket)}`}">${traffic ? "트래픽" : "로그"} →</a></td></tr>`
 					);
 				})
 				.join("")
-		: `<tr><td colspan="10">이 기간에 잡힌 이상 신호가 없어요.</td></tr>`;
+		: `<tr><td colspan="11">${emptyText}</td></tr>`);
+	const sigHead = `<tr><th>구간</th><th>등급</th><th>신호</th><th>${who}</th><th class="n">관측</th><th class="n">평소 대비</th><th class="n">점수</th><th>탐지기</th><th>검증</th><th>메일</th><th></th></tr>`;
 
 	// 재학습이 6시간마다 돌아 후보가 쌓인다. 쓰는 모델과 최근 것만 보여주고 나머지는 접는다.
 	const MODEL_SHOWN = 6;
@@ -1384,32 +1402,42 @@ export function renderAnomaly(a: AnomalyData, opts: AdminOpts = {}): string {
 				.join("")
 		: `<tr><td colspan="3">기록이 없어요.</td></tr>`;
 
+	const signals = view === "signals";
 	return shellAdmin(
-		"이상탐지",
+		signals ? "받은 신호" : "탐지기 상태",
 		pageHead(
-			"이상탐지",
-			`${traffic ? "평소와 다른 방문 흐름" : "평소와 다른 호출 흐름"} · ${sinceLabel(a.since)}`,
+			signals ? "받은 신호" : "탐지기 상태",
+			signals
+				? `${traffic ? "평소와 다른 방문 흐름" : "평소와 다른 호출 흐름"} · ${sinceLabel(a.since)}`
+				: `이상탐지 에이전트가 어떻게 배우고 있나 · ${sinceLabel(a.since)}`,
 			a.appFilter,
 		) +
 			`<div id="hz-body">
 ${anomalyNavRow(nav)}
-${anomalyViewRow(nav)}
 ${anomalyAppRow(nav, traffic ? SITE_TABS : a.apps, traffic)}
 ${serverBar(a)}
 ${warmupNotice(a)}
-
-<div class="noteline">
-  <span class="sm">아래 숫자는 <b>${escapeHtml(sinceLabel(a.since))}</b> 쌓인 값이에요. 옆의 ‘24시간’은 그중 최근 하루에 잡힌 수예요.</span>
-  <a href="/admin/anomaly?period=${a.period}&scope=detail&for=${a.scope}${a.appFilter ? `&app=${encodeURIComponent(a.appFilter)}` : ""}">${a.critical ? `심각 ${a.critical.toLocaleString()}건 ` : ""}자세히 보기 →</a>
-</div>
+${!signals ? "" : `
 ${kpiRow([
 	{ label: "이상 신호", value: a.total.toLocaleString(), delta: { cur: a.total, prev: a.prevTotal, higherIsWorse: true }, sub: `24시간 ${a.recent24.toLocaleString()}건`, size: "sm" },
 	{ label: "심각", value: a.critical.toLocaleString(), tone: a.critical ? "bad" : undefined, sub: `24시간 ${a.critical24.toLocaleString()}건`, size: "sm" },
 	{ label: "주의", value: a.warn.toLocaleString(), sub: a.info ? `참고 ${a.info.toLocaleString()}건` : "", size: "sm" },
 	{ label: "메일 발송", value: a.notified.toLocaleString(), sub: alertState?.suppressed ? `억제 ${alertState.suppressed}건` : "", size: "sm" },
 	{ label: "마지막 탐지", value: a.lastDetected ? ago(Date.now() - a.lastDetected) : "-", size: "sm" },
-	{ label: "쓰는 모델", value: escapeHtml(a.models.find((m) => m.status === "active")?.version ?? "규칙만"), size: "sm" },
+	{ label: "판정된 신호", value: a.recent.filter((r) => r.verdict).length.toLocaleString(), sub: `본 ${a.recent.length.toLocaleString()}건 중`, size: "sm" },
 ], 6)}
+
+${sectionHead("열린 신호", {
+	count: `${openList.length.toLocaleString()}건`,
+	href: `/admin/anomaly?period=${a.period}&scope=detail&for=${a.scope}${a.appFilter ? `&app=${encodeURIComponent(a.appFilter)}` : ""}`,
+	linkLabel: "판정 상세 →",
+	tip: "오탐으로 판정된 신호는 아래로 접었어요.\n" +
+		"메일은 규칙이 먼저 걸러요 — 한산한 구간은 판정하지 않고, 한 구간만 튄 신호는 다음 구간에도 이어질 때 보내요.\n같은 신호가 이어지면 묶어서 한 번만 보내고, 심각 신호는 기다리지 않고 바로 보내요.",
+})}
+<div class="scroll cap"><table class="recent">${sigHead}${rowsOf(openList, "이 기간에 열린 신호가 없어요.")}</table></div>
+
+${fpList.length ? `<details class="fold"><summary>오탐으로 판정된 신호 ${fpList.length.toLocaleString()}건 — 눌러서 보기</summary>
+<div class="scroll cap"><table class="recent">${sigHead}${rowsOf(fpList, "")}</table></div></details>` : ""}
 
 ${sectionHead(`${a.bucketLabel} 단위 이상 신호`, {
 	tip: `'평소'는 같은 요일·같은 시각의 과거 기록에서 뽑은 기준선이에요.\n표본이 모자라면 최근 구간 전체로 대신하고, 그때는 등급을 한 단계 낮춰요.${
@@ -1417,16 +1445,12 @@ ${sectionHead(`${a.bucketLabel} 단위 이상 신호`, {
 	}`,
 })}
 ${svgLevels(a.buckets)}
-
+`}
+${signals ? "" : `
 <div class="two">
   <section>${sectionHead("심각도 비중")}${sevDonut}</section>
   <section>${sectionHead("신호별 분포")}${signalShare}</section>
 </div>
-
-${sectionHead("이상 신호 이력", {
-	tip: "메일은 규칙이 먼저 걸러요 — 한산한 구간은 판정하지 않고, 한 구간만 튄 신호는 다음 구간에도 이어질 때 보내요.\n같은 신호가 이어지면 일정 시간 동안 묶어서 한 번만 보내요. 심각 신호는 기다리지 않고 바로 보내요.",
-})}
-<div class="scroll cap"><table class="recent"><tr><th>구간</th><th>등급</th><th>신호</th><th>앱</th><th class="n">관측</th><th class="n">평소 대비</th><th class="n">점수</th><th>탐지기</th><th>검증</th><th>메일</th></tr>${rows}</table></div>
 
 ${sectionHead("이상탐지 에이전트", {
 	tip: "판정은 이상탐지 서버가 하고 이 화면은 넘겨받은 결과만 보여줘요. 서버가 멈춰도 화면은 열려요.\n" +
@@ -1463,10 +1487,10 @@ ${sectionHead("승격 심사", {
 	tip: "모델은 검증셋 성적과 실데이터 정탐률이 기준을 넘고 지금 쓰는 모델보다 나빠지지 않을 때만 승격돼요.\n그전까지는 판정을 기록만 하고 메일에는 쓰지 않아요.",
 })}
 <div class="scroll cap"><table><tr><th>시각</th><th>후보</th><th>결과</th><th>근거</th></tr>${promRows}</table></div>
-
+`}
 <p class="foot">심각·주의 신호는 ${escapeHtml("zerolive7@gmail.com")}으로 메일이 나가요.</p>
 </div>`,
-		{ ...opts, tab: "anomaly", sub: anomalySub("signals", a.period) },
+		{ ...opts, tab: "anomaly", sub: anomalySub(signals ? "signals" : "detector", a.period) },
 	);
 }
 

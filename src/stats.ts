@@ -2274,15 +2274,27 @@ export interface AnomalyData {
 	}[];
 }
 
+/**
+ * 이상탐지 집계.
+ * 화면이 둘로 갈렸다 — "받은 신호"(운영)와 "탐지기 상태"(관리).
+ * 두 화면이 쓰는 조회가 겹치지 않아서, 보지도 않을 것까지 돌리지 않도록 part로 나눈다.
+ */
 export async function collectAnomaly(
-	env: StatsEnv, period: string, appFilter: string, scope = "ai",
+	env: StatsEnv, period: string, appFilter: string, scope = "ai", part: AnomalyPart = "all",
 ): Promise<AnomalyData> {
-	return withSchema(env, () => collectAnomalyInner(env, period, appFilter, scope));
+	return withSchema(env, () => collectAnomalyInner(env, period, appFilter, scope, part));
 }
 
+export type AnomalyPart = "signals" | "detector" | "all";
+
 async function collectAnomalyInner(
-	env: StatsEnv, period: string, appFilter: string, scope: string,
+	env: StatsEnv, period: string, appFilter: string, scope: string, part: AnomalyPart = "all",
 ): Promise<AnomalyData> {
+	const wantSignals = part !== "detector";
+	const wantDetector = part !== "signals";
+	/** 이 화면이 안 보는 값 — 조회를 걸지 않고 빈 것으로 둔다. */
+	const none = <T>(v: T) => Promise.resolve(v);
+	const noRows = <T>() => Promise.resolve({ results: [] as T[] });
 	const { p, since, prevSince } = periodInfo(period);
 	const bexpr = bucketExpr(p.bucket, "bucket");
 	// scope는 화면에서 고른 값이라 바인딩으로 넘긴다. app 조건은 있을 때만 붙는다.
@@ -2310,50 +2322,59 @@ async function collectAnomalyInner(
 				" SUM(CASE WHEN notified_at IS NOT NULL THEN 1 ELSE 0 END) AS nt," +
 				" MAX(detected_at) AS last FROM anomalies WHERE bucket >= ?1" + scopeWhere + appWhere,
 		).first<{ n: number; c: number; w: number; i: number; nt: number; last: number | null }>(),
-		(appFilter
-			? env.DB.prepare("SELECT COUNT(*) AS n FROM anomalies WHERE bucket >= ?1 AND bucket < ?2 AND scope = ?3 AND app = ?4").bind(prevSince, since, scope, appFilter)
-			: env.DB.prepare("SELECT COUNT(*) AS n FROM anomalies WHERE bucket >= ?1 AND bucket < ?2 AND scope = ?3").bind(prevSince, since, scope)
-		).first<{ n: number }>(),
-		bind(
+		wantSignals
+			? (appFilter
+					? env.DB.prepare("SELECT COUNT(*) AS n FROM anomalies WHERE bucket >= ?1 AND bucket < ?2 AND scope = ?3 AND app = ?4").bind(prevSince, since, scope, appFilter)
+					: env.DB.prepare("SELECT COUNT(*) AS n FROM anomalies WHERE bucket >= ?1 AND bucket < ?2 AND scope = ?3").bind(prevSince, since, scope)
+				).first<{ n: number }>()
+			: none<{ n: number } | null>(null),
+		wantSignals ? bind(
 			`SELECT ${bexpr} AS b, COUNT(*) AS n,` +
 				" SUM(CASE WHEN severity='critical' THEN 1 ELSE 0 END) AS c," +
 				" SUM(CASE WHEN severity='warn' THEN 1 ELSE 0 END) AS w," +
 				" SUM(CASE WHEN severity='info' THEN 1 ELSE 0 END) AS i" +
 				" FROM anomalies WHERE bucket >= ?1" + scopeWhere + appWhere + " GROUP BY b ORDER BY b DESC LIMIT 60",
-		).all<{ b: string; n: number; c: number; w: number; i: number }>(),
-		bind(
+		).all<{ b: string; n: number; c: number; w: number; i: number }>() : noRows<{ b: string; n: number; c: number; w: number; i: number }>(),
+		wantDetector ? bind(
 			"SELECT signal AS k, MAX(label) AS label, COUNT(*) AS n," +
 				" SUM(CASE WHEN severity='critical' THEN 1 ELSE 0 END) AS c" +
 				" FROM anomalies WHERE bucket >= ?1" + scopeWhere + appWhere + " GROUP BY signal ORDER BY n DESC LIMIT 12",
-		).all<{ k: string; label: string | null; n: number; c: number }>(),
-		bind(
+		).all<{ k: string; label: string | null; n: number; c: number }>() : noRows<{ k: string; label: string | null; n: number; c: number }>(),
+		wantDetector ? bind(
 			"SELECT app AS k, COUNT(*) AS n, SUM(CASE WHEN severity='critical' THEN 1 ELSE 0 END) AS c" +
 				" FROM anomalies WHERE bucket >= ?1" + scopeWhere + appWhere + " GROUP BY app ORDER BY n DESC LIMIT 12",
-		).all<{ k: string; n: number; c: number }>(),
-		bind(
+		).all<{ k: string; n: number; c: number }>() : noRows<{ k: string; n: number; c: number }>(),
+		wantSignals ? bind(
 			"SELECT * FROM anomalies WHERE bucket >= ?1" + scopeWhere + appWhere + " ORDER BY bucket DESC, severity DESC LIMIT 120",
-		).all<AnomalyRow>(),
-		env.DB.prepare("SELECT * FROM anomaly_models WHERE scope = ?1 ORDER BY trained_at DESC LIMIT 20").bind(scope).all<AnomalyData["models"][number]>(),
+		).all<AnomalyRow>() : noRows<AnomalyRow>(),
+		wantDetector
+			? env.DB.prepare("SELECT * FROM anomaly_models WHERE scope = ?1 ORDER BY trained_at DESC LIMIT 20").bind(scope).all<AnomalyData["models"][number]>()
+			: noRows<AnomalyData["models"][number]>(),
 		env.DB.prepare("SELECT key, value, updated_at FROM anomaly_state ORDER BY key").all<{ key: string; value: string; updated_at: number }>(),
-		env.DB.prepare(
-			"SELECT * FROM anomaly_trains WHERE scope = ?1 ORDER BY started_at DESC LIMIT 20",
-		).bind(scope).all<AnomalyData["trains"][number]>(),
-		env.DB.prepare(
-			"SELECT src_id, ran_at, dataset, detector, version, precision, recall, f1 FROM anomaly_evals" +
-				" WHERE scope = ?1 ORDER BY ran_at DESC LIMIT 60",
-		).bind(scope).all<AnomalyData["evals"][number]>(),
+		wantDetector
+			? env.DB.prepare("SELECT * FROM anomaly_trains WHERE scope = ?1 ORDER BY started_at DESC LIMIT 20")
+					.bind(scope).all<AnomalyData["trains"][number]>()
+			: noRows<AnomalyData["trains"][number]>(),
+		wantDetector
+			? env.DB.prepare(
+					"SELECT src_id, ran_at, dataset, detector, version, precision, recall, f1 FROM anomaly_evals" +
+						" WHERE scope = ?1 ORDER BY ran_at DESC LIMIT 60",
+				).bind(scope).all<AnomalyData["evals"][number]>()
+			: noRows<AnomalyData["evals"][number]>(),
 
 		// 최근 24시간 — 기간 누적과 나란히 놓아야 "지금 벌어지는 일"인지 알 수 있다.
-		bindDay(
+		wantSignals ? bindDay(
 			"SELECT COUNT(*) AS n, SUM(CASE WHEN severity='critical' THEN 1 ELSE 0 END) AS c" +
 				" FROM anomalies WHERE bucket >= ?1" + scopeWhere + appWhere,
-		).first<{ n: number; c: number | null }>(),
+		).first<{ n: number; c: number | null }>() : none<{ n: number; c: number | null } | null>(null),
 
 		// 이상 알림 메일 — 심각 신호가 어느 메일에 실려 나갔는지 이어 준다.
-		env.DB.prepare(
-			"SELECT src_id, subject, det_ids FROM anomaly_mails WHERE kind='anomaly' AND sent_at >= ?1" +
-				" ORDER BY sent_at DESC LIMIT 80",
-		).bind(since).all<{ src_id: number; subject: string; det_ids: string | null }>(),
+		wantSignals
+			? env.DB.prepare(
+					"SELECT src_id, subject, det_ids FROM anomaly_mails WHERE kind='anomaly' AND sent_at >= ?1" +
+						" ORDER BY sent_at DESC LIMIT 80",
+				).bind(since).all<{ src_id: number; subject: string; det_ids: string | null }>()
+			: noRows<{ src_id: number; subject: string; det_ids: string | null }>(),
 	]);
 
 	const mailOf = mailIndex(mailRs.results ?? []);

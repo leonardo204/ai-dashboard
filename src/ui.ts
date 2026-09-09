@@ -237,6 +237,18 @@ textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:var(-
 .topbar form{flex:0 0 auto;}
 .topbar .in>form .btn{padding:7px 12px;}
 
+/* 접었다 펴는 목록 — 오탐 신호처럼 근거로만 남기는 것 */
+details.fold{margin-top:var(--sp-3);}
+details.fold>summary{cursor:pointer;font-size:var(--fs-sm);font-weight:700;color:var(--muted);
+ padding:9px 13px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);
+ list-style:none;}
+details.fold>summary::-webkit-details-marker{display:none}
+details.fold>summary::before{content:'▸ ';color:var(--accent);font-weight:800;}
+details.fold[open]>summary::before{content:'▾ ';}
+details.fold>summary:hover{color:var(--ink);}
+details.fold[open]>summary{border-radius:var(--r-md) var(--r-md) 0 0;border-bottom:0;}
+details.fold .scroll{border-radius:0 0 var(--r-md) var(--r-md);}
+
 /* ── 상황판 ────────────────────────────────────────────────
    상태 한 줄은 화면에서 색을 쓰는 거의 유일한 자리다.
    빨강을 여기저기 쓰면 진짜 문제일 때 눈이 가지 않는다. */

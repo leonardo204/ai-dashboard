@@ -43,7 +43,7 @@ import { handlePasskey, type PasskeyEnv } from "./passkey";
 import { handleHit, exportHits, SITES, type TrafficEnv } from "./traffic";
 import { renderLogin } from "./ui";
 import {
-	renderBoard, renderUsage, renderTrend, renderGeo, renderAnomaly, renderAnomalyDetail, renderMails, renderTraffic, renderLogs, renderApps,
+	renderBoard, renderUsage, renderTrend, renderGeo, renderSignals, renderDetector, renderAnomalyDetail, renderMails, renderTraffic, renderLogs, renderApps,
 } from "./views";
 
 interface Env extends ProxyEnv, PasskeyEnv, TrafficEnv {
@@ -300,7 +300,6 @@ const MOVED: Record<string, string> = {
 	"/admin/apps": "/admin/settings/apps",
 	"/admin/guide": "/admin/settings/guide",
 	"/admin/settings": "/admin/settings/apps",
-	"/admin/anomaly/detector": "/admin/anomaly",
 };
 
 /** 주소에서 로그 검색 조건을 읽는다. */
@@ -649,7 +648,19 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 			}
 			const scope = raw === "traffic" ? "traffic" : "ai";
 			return html(
-				renderAnomaly(await collectAnomaly(env, period, appFilter, scope), { session: true }),
+				renderSignals(await collectAnomaly(env, period, appFilter, scope, "signals"), { session: true }),
+				{ cache: false },
+			);
+		}
+
+		// ── 탐지기 상태 (/admin/anomaly/detector)
+		if (path === "/admin/anomaly/detector" || path === "/admin/anomaly/detector/") {
+			const unauth = await requireAdmin(request, env, url);
+			if (unauth) return unauth;
+			const { period, appFilter } = statScope(url);
+			const scope = url.searchParams.get("scope") === "traffic" ? "traffic" : "ai";
+			return html(
+				renderDetector(await collectAnomaly(env, period, appFilter, scope, "detector"), { session: true }),
 				{ cache: false },
 			);
 		}
