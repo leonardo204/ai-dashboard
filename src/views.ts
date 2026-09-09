@@ -55,12 +55,25 @@ function tableFilter(tableId: string, placeholder: string): string {
 	return `<input data-filter="${tableId}" placeholder="${escapeHtml(placeholder)}" style="max-width:240px">`;
 }
 
-const FOOT_GEO =
-	"국가·지역은 Cloudflare가 요청에 붙여주는 값이라 외부 조회 없이 기록돼요. VPN·통신사 경로에 따라 실제와 다를 수 있어요.";
-const FOOT_COST =
-	"비용은 OpenRouter가 응답에 실어주는 실제 청구액이에요. 내 키를 붙여 쓰는(BYOK) 호출은 " +
-	"OpenRouter 크레딧이 줄지 않아 청구액이 0으로 오는데, 그때는 모델 회사가 알려준 금액을 쓰고 " +
-	"그것도 없으면 단가표로 추정해요(* = 단가 미등록 모델). 최종 청구액은 OpenRouter와 모델 회사 대시보드가 기준이에요.";
+// 각주 문단 대신 쓰는 설명 — 소제목·카드의 ⓘ에 붙는다. 태그 없는 순수 문장이어야 한다.
+const TIP_GEO =
+	"국가·지역은 Cloudflare가 요청에 붙여주는 값이라 외부 조회 없이 기록돼요.\nVPN·통신사 경로에 따라 실제와 다를 수 있어요.";
+const TIP_COST =
+	"비용은 OpenRouter가 응답에 실어주는 실제 청구액이에요.\n" +
+	"내 키를 붙여 쓰는(BYOK) 호출은 청구액이 0으로 와서 모델 회사가 알려준 금액을 쓰고, " +
+	"그것도 없으면 단가표로 추정해요(* = 단가 미등록 모델).\n최종 청구액은 OpenRouter 대시보드가 기준이에요."
+const TIP_MONTH =
+	"기간 탭과 상관없이 늘 최근 열두 달을 보여줘요. 청구가 달 단위로 오니까요.\n" +
+	"막대의 흐린 윗부분은 내부용 앱이 쓴 몫이에요.\n달은 한국 시간 기준이라 UTC로 끊는 실제 청구와 월말·월초에 조금 달라요."
+const TIP_TREND =
+	"막대는 아래가 서비스, 흐린 위쪽이 내부 도구 몫이에요.\n" +
+	"비용 꺾은선은 진한 선이 전체, 점선이 서비스 몫이라 두 선의 간격이 내부 도구가 쓴 돈이에요.\n성공·실패 건수는 막대에 마우스를 올리면 나와요."
+const TIP_VERDICT =
+	"줄을 누르면 이상탐지 에이전트의 판단과 확인할 일, 수치가 펼쳐져요.\n" +
+	"오탐으로 본 줄은 흐리게 보이고 아래로 밀려요. 급하게 볼 것은 없지만 근거는 남겨 둬요.\n" +
+	"'메일 →'를 누르면 그 메일이 펼쳐진 채로 열려요."
+const TIP_INTERNAL =
+	"이상탐지·메일 도구처럼 내부용으로 표시한 앱이 낸 몫이에요.\n어떤 앱을 내부용으로 둘지는 앱 관리에서 정해요.";
 
 // ═════════════════════════════════════════════════════════════
 // 요약 (/admin)
@@ -175,6 +188,7 @@ ${kpiRow([
 	{
 		label: "비용",
 		value: usd(s.cost),
+		tip: TIP_COST,
 		delta: s.prev ? { cur: s.cost, prev: s.prev.cost, higherIsWorse: true } : undefined,
 		sub: s.total ? `호출당 ${usd(s.cost / s.total)}` : "호출 없음",
 		meter: (s.inTokens / Math.max(1, s.inTokens + s.outTokens)) * 100,
@@ -201,6 +215,7 @@ ${kpiRow([
 ], 6)}
 
 ${sectionHead("월별 비용", {
+	tip: TIP_MONTH,
 	note: s.monthly.length
 		? `최근 ${s.monthly.length}개월 · 합계 ${usd(s.monthly.reduce((n, r) => n + r.cost, 0))}${s.appFilter ? ` · ${escapeHtml(s.apps.find((a) => a.id === s.appFilter)?.name ?? s.appFilter)}만` : ""}`
 		: "기록 없음",
@@ -213,10 +228,10 @@ ${anomalyBand(s.anomaly, `/admin/anomaly${q}`)}
 ${sectionHead("트래픽", { href: `/admin/traffic?period=${s.period}`, linkLabel: "트래픽에서 보기 →" })}
 ${trafficBand(s.traffic, `/admin/traffic?period=${s.period}`)}
 
-${sectionHead(`최근 호출 (${SUMMARY_RECENT}건)`, { href: `/admin/logs${q}`, linkLabel: "로그에서 더 보기 →" })}
+${sectionHead(`최근 호출 (${SUMMARY_RECENT}건)`, { href: `/admin/logs${q}`, linkLabel: "로그에서 더 보기 →", tip: "자동 갱신이 켜져 있으면 새 호출이 들어올 때마다 다시 그려져요.\n내부용 앱 호출은 빼고 보여줘요." })}
 <table class="recent calls lite"><colgroup><col class="c-ts"><col class="c-app"><col class="c-kind"><col class="c-model"><col class="c-st"><col class="c-http"><col class="c-lat"><col class="c-tok"><col class="c-cost"><col class="c-geo"><col class="c-err"></colgroup><tr><th>시각</th><th>앱</th><th>용도</th><th>모델</th><th>상태</th><th class="n">HTTP</th><th class="n">지연</th><th class="n">토큰</th><th class="n">비용</th><th>지역</th><th>오류 · 메타</th></tr>${recentRows}</table>
 
-${sectionHead(`추이 (${s.bucketLabel} 단위)`, { href: `/admin/trend${q}` })}
+${sectionHead(`추이 (${s.bucketLabel} 단위)`, { href: `/admin/trend${q}`, tip: TIP_TREND })}
 ${svgTrend(s.buckets)}
 
 <div class="two">
@@ -228,12 +243,9 @@ ${svgTrend(s.buckets)}
   <section>${sectionHead("실패 상위", { href: `/admin/logs${q}&status=error`, linkLabel: "로그에서 보기 →" })}
     <table><tr><th class="n">HTTP</th><th class="n">건수</th><th>대표 메시지</th></tr>${errRows}</table>
   </section>
-  <section>${sectionHead(`호출 지역 (${s.countryCount}개국)`, { href: `/admin/geo${q}` })}${geoShare}</section>
+  <section>${sectionHead(`호출 지역 (${s.countryCount}개국)`, { href: `/admin/geo${q}`, tip: TIP_GEO })}${geoShare}</section>
 </div>
 
-<p class="foot">추이 막대는 아래가 서비스, 흐린 위쪽이 내부 도구 몫이에요. 비용 꺾은선은 진한 선이 전체, 점선이 서비스 몫이라 두 선의 간격이 내부 도구가 쓴 돈이에요. 성공·실패 건수는 막대에 마우스를 올리면 나와요.<br>
-월별 비용은 기간 탭과 상관없이 늘 최근 열두 달을 보여줘요. 청구가 달 단위로 오니까요. 막대의 흐린 윗부분은 이상탐지·메일 도구처럼 <b>내부용</b>으로 표시한 앱이 쓴 몫이에요. 달은 한국 시간(KST) 기준으로 끊는데 실제 청구는 UTC 기준이라 월말·월초에 조금 다를 수 있어요.<br>
-최근 호출은 자동 갱신이 켜져 있으면 새 호출이 들어올 때마다 다시 그려져요.<br>숫자 옆 ▲▼는 직전 같은 기간과 비교한 값이에요.<br>${FOOT_COST}<br>${FOOT_GEO}</p>
 </div>`,
 		{ ...opts, tab: "summary" },
 	);
@@ -302,16 +314,15 @@ ${kpiRow([
 	{ label: "호출당 비용", value: u.total ? usd(u.cost / u.total) : "-", size: "sm" },
 ], 6)}
 
-${sectionHead("앱별", { count: `${u.byApp.length}개` })}
+${sectionHead("앱별", { count: `${u.byApp.length}개`, tip: TIP_COST })}
 <div class="cap"><table class="fx" id="tb-app">${cols("", "96", "74:o1", "74", "84:o1", "84", "86:o2", "92:o2", "58")}<thead><tr><th>앱</th><th class="n">호출</th><th class="n o1">성공</th><th class="n">실패</th><th class="n o1">토큰</th><th class="n">비용</th><th class="n o2">평균 지연</th><th class="n o2">호출당 비용</th><th></th></tr></thead><tbody>${appRows}</tbody></table></div>
 
 ${sectionHead("모델별", { id: "model", count: `<span id="tb-model-cnt">${u.byModel.length}개</span>`, right: tableFilter("tb-model", "모델 이름으로 걸러보기") })}
 <div class="cap"><table class="fx" id="tb-model">${cols("", "96", "74", "90:o1", "90:o1", "84", "86:o2", "58")}<thead><tr><th>모델</th><th class="n">호출</th><th class="n">실패</th><th class="n o1">입력 토큰</th><th class="n o1">출력 토큰</th><th class="n">비용</th><th class="n o2">평균 지연</th><th></th></tr></thead><tbody>${modelRows}</tbody></table></div>
 
-${sectionHead("용도별", { count: `${u.byKind.length}개` })}
+${sectionHead("용도별", { count: `${u.byKind.length}개`, tip: "용도는 앱이 호출할 때 보낸 X-Ai-Kind 값이에요." })}
 <div class="cap"><table class="fx" id="tb-kind">${cols("", "96", "74:o1", "74", "84:o1", "84", "86:o2", "58")}<thead><tr><th>용도</th><th class="n">호출</th><th class="n o1">성공</th><th class="n">실패</th><th class="n o1">토큰</th><th class="n">비용</th><th class="n o2">평균 지연</th><th></th></tr></thead><tbody>${kindRows}</tbody></table></div>
 
-<p class="foot">용도는 앱이 보낸 <span class="mono">X-Ai-Kind</span> 값이에요.<br>${FOOT_COST}</p>
 </div>`,
 		{ ...opts, tab: "usage" },
 	);
@@ -354,6 +365,7 @@ export function renderTrend(t: TrendData, opts: AdminOpts = {}): string {
 			`<div id="hz-body">
 ${filterTabs("/admin/trend", t.period, t.appFilter, t.apps, PERIODS)}
 ${sectionHead(`${t.bucketLabel} 단위 호출·비용`, {
+		tip: TIP_TREND,
 		note: t.total
 			? `서비스 ${(t.total - t.internal).toLocaleString()}건 · 내부 도구 ${t.internal.toLocaleString()}건 (${
 					t.total ? Math.round((t.internal / t.total) * 100) : 0
@@ -366,13 +378,14 @@ ${sectionHead("언제 몰리나 (요일 × 시각, KST)", { note: peak ? `가장
 ${svgHeat(t.heat)}
 
 ${sectionHead("구간별 상세", {
+		tip: `${TIP_INTERNAL}\n${TIP_COST}`,
 		note: `전체 ${t.total.toLocaleString()}건 · ${usd(t.cost)}${
 			t.internal ? ` · 내부 도구 ${t.internal.toLocaleString()}건 · ${usd(t.internalCost)}` : ""
 		}`,
 	})}
 <div class="scroll cap"><table id="tb-bucket"><thead><tr><th>구간</th><th>비중</th><th class="n">호출</th><th class="n">서비스</th><th class="n">내부 도구</th><th class="n">성공</th><th class="n">실패</th><th class="n">토큰</th><th class="n">비용</th><th class="n">내부 도구 비용</th></tr></thead><tbody>${rows}</tbody></table></div>
 
-<p class="foot">막대의 흐린 윗부분과 표의 '내부 도구' 칸은 이상탐지·메일 도구처럼 <b>내부용</b>으로 표시한 앱이 낸 몫이에요. 비용 꺾은선은 진한 선이 전체, 점선이 서비스 몫이라 두 선의 간격이 내부 도구가 쓴 돈이에요.<br>구간은 한국 시간(KST) 기준으로 끊어요.<br>${FOOT_COST}</p>
+<p class="foot">구간은 한국 시간(KST) 기준으로 끊어요.</p>
 </div>`,
 		{ ...opts, tab: "trend" },
 	);
@@ -449,7 +462,7 @@ export function renderGeo(g: GeoData, opts: AdminOpts = {}): string {
 ${filterTabs("/admin/geo", g.period, g.appFilter, g.apps, PERIODS)}
 ${svgMap(g.points, g.geoUnknown, g.hitPoints, g.hitUnknown, g.hitSite ? siteName(g.hitSite) : "")}
 
-${sectionHead("국가별 AI 호출", { count: `${g.byCountry.filter((c) => c.key !== "(미상)").length}개국` })}
+${sectionHead("국가별 AI 호출", { tip: TIP_GEO, count: `${g.byCountry.filter((c) => c.key !== "(미상)").length}개국` })}
 <div class="cap"><table class="fx" id="tb-country">${cols("160", "88", "70:o1", "70", "78", "84:o1", "84", "86:o2", ":o2", "66")}<thead><tr><th>국가</th><th class="n">호출</th><th class="n o1">성공</th><th class="n">실패</th><th class="n">고유 IP</th><th class="n o1">토큰</th><th class="n">비용</th><th class="n o2">평균 지연</th><th class="o2">비중</th><th></th></tr></thead><tbody>${countryRows}</tbody></table></div>
 
 ${hitSection}
@@ -457,9 +470,7 @@ ${hitSection}
 ${sectionHead(`지역 · 도시별 (상위 ${g.byRegion.length})`, { right: tableFilter("tb-region", "도시·지역 이름으로 걸러보기") })}
 <div class="cap"><table class="fx" id="tb-region">${cols("92", "", "", "84", "70:o1", "70", "78:o1", "84:o2", "84")}<thead><tr><th>국가</th><th>지역</th><th>도시</th><th class="n">호출</th><th class="n o1">성공</th><th class="n">실패</th><th class="n o1">고유 IP</th><th class="n o2">토큰</th><th class="n">비용</th></tr></thead><tbody>${regionRows}</tbody></table></div>
 
-<p class="foot">${FOOT_GEO}<br>
-지도의 <b>보라색</b>은 AI 호출, <b>분홍색</b>은 서비스 방문이에요. 방문은 도시 좌표가 없어 나라 가운데에 모아 찍고, 자세한 내용은 트래픽 탭에서 봐요.<br>
-앱을 고르면 그 앱의 호출과, 앱 관리에서 짝지어 둔 서비스의 방문만 함께 보여요.</p>
+<p class="foot">지도의 <b>보라색</b>은 AI 호출, <b>분홍색</b>은 서비스 방문이에요. 앱을 고르면 짝지어 둔 서비스의 방문만 함께 보여요.</p>
 </div>`,
 		{ ...opts, tab: "geo" },
 	);
@@ -1466,7 +1477,11 @@ ${kpiRow([
 	{ label: "쓰는 모델", value: escapeHtml(a.models.find((m) => m.status === "active")?.version ?? "규칙만"), size: "sm" },
 ], 6)}
 
-${sectionHead(`${a.bucketLabel} 단위 이상 신호`)}
+${sectionHead(`${a.bucketLabel} 단위 이상 신호`, {
+	tip: `'평소'는 같은 요일·같은 시각의 과거 기록에서 뽑은 기준선이에요.\n표본이 모자라면 최근 구간 전체로 대신하고, 그때는 등급을 한 단계 낮춰요.${
+		traffic ? "\n트래픽에서는 줄어드는 쪽이 더 중요해요 — 방문이 끊기면 서비스 장애이거나 색인 사고예요." : ""
+	}`,
+})}
 ${svgLevels(a.buckets)}
 
 <div class="two">
@@ -1474,10 +1489,15 @@ ${svgLevels(a.buckets)}
   <section>${sectionHead("신호별 분포")}${signalShare}</section>
 </div>
 
-${sectionHead("이상 신호 이력")}
+${sectionHead("이상 신호 이력", {
+	tip: "메일은 규칙이 먼저 걸러요 — 한산한 구간은 판정하지 않고, 한 구간만 튄 신호는 다음 구간에도 이어질 때 보내요.\n같은 신호가 이어지면 일정 시간 동안 묶어서 한 번만 보내요. 심각 신호는 기다리지 않고 바로 보내요.",
+})}
 <div class="scroll cap"><table class="recent"><tr><th>구간</th><th>등급</th><th>신호</th><th>앱</th><th class="n">관측</th><th class="n">평소 대비</th><th class="n">점수</th><th>탐지기</th><th>검증</th><th>메일</th></tr>${rows}</table></div>
 
-${sectionHead("이상탐지 에이전트")}
+${sectionHead("이상탐지 에이전트", {
+	tip: "판정은 이상탐지 서버가 하고 이 화면은 넘겨받은 결과만 보여줘요. 서버가 멈춰도 화면은 열려요.\n" +
+		"'검증'은 나간 알림을 다시 읽어 정탐인지 오탐인지 가리고 확인할 일을 적어 주는 단계예요. 발송 여부를 정하지는 않아요.",
+})}
 ${agentBrief(a)}
 
 <div class="two">
@@ -1505,18 +1525,12 @@ ${svgF1(a.evals)}
 ${sectionHead("재학습 이력")}
 <div class="scroll cap"><table><tr><th>시각</th><th>계기</th><th>모델</th><th class="n">학습 구간</th><th class="n">F1 변화</th><th>결과</th></tr>${trainRows}</table></div>
 
-${sectionHead("승격 심사")}
+${sectionHead("승격 심사", {
+	tip: "모델은 검증셋 성적과 실데이터 정탐률이 기준을 넘고 지금 쓰는 모델보다 나빠지지 않을 때만 승격돼요.\n그전까지는 판정을 기록만 하고 메일에는 쓰지 않아요.",
+})}
 <div class="scroll cap"><table><tr><th>시각</th><th>후보</th><th>결과</th><th>근거</th></tr>${promRows}</table></div>
 
-<p class="foot">판정은 이상탐지 서버(121.161.160.122)가 하고, 이 화면은 넘겨받은 결과만 보여줘요. 서버가 멈춰도 화면은 열리고 맨 위 상태줄에 표시돼요.<br>
-${traffic
-	? "트래픽에서는 <b>줄어드는 쪽</b>이 더 중요해요. 방문이 끊기면 서비스 장애이거나 색인 사고예요. 메일은 방문 급감 · 서버 오류(5xx) · 없는 주소(404)만 보내고, 급증이나 크롤러 변화는 화면에만 남겨요.<br>"
-	: ""}
-'평소'는 같은 요일·같은 시각의 과거 기록에서 뽑은 기준선이에요. 표본이 모자라면 최근 구간 전체로 대신하고, 그때는 등급을 한 단계 낮춰요.<br>
-심각·주의 신호는 ${escapeHtml("zerolive7@gmail.com")}으로 메일이 나가요. 같은 신호가 이어지면 일정 시간 동안 묶어서 한 번만 보내요.<br>
-메일은 규칙이 먼저 걸러요 — 구간이 너무 한산하면 판정하지 않고, 한 구간만 튄 신호는 다음 구간에도 이어질 때 보내며, 되풀이되는데 더 세지지 않는 신호는 넘겨요. 심각 신호는 이 기다림 없이 바로 보내요.<br>
-'검증'은 나간 알림을 다시 읽어 정탐인지 오탐인지 가리고 확인할 일을 적어 주는 단계예요. 발송 여부를 정하지는 않아요.<br>
-모델은 검증셋 성적과 실데이터 정탐률이 기준을 넘고 지금 쓰는 모델보다 나빠지지 않을 때만 승격돼요. 그전까지는 판정을 기록만 하고 메일에는 쓰지 않아요.</p>
+<p class="foot">심각·주의 신호는 ${escapeHtml("zerolive7@gmail.com")}으로 메일이 나가요.</p>
 </div>`,
 		{ ...opts, tab: "anomaly" },
 	);
@@ -1601,13 +1615,16 @@ ${kpiRow([
 	{ label: "마지막 발송", value: d.lastSent ? ago(Date.now() - d.lastSent) : "-", size: "sm" },
 ], 6)}
 
-${sectionHead("보낸 메일 내역", { href: `/admin/anomaly?period=${d.period}`, linkLabel: "이상 신호 보기 →" })}
+${sectionHead("보낸 메일 내역", {
+	href: `/admin/anomaly?period=${d.period}`,
+	linkLabel: "이상 신호 보기 →",
+	note: `최근 ${MAIL_PAGE}건`,
+	tip: "줄을 누르면 실제로 보낸 본문이 펼쳐져요.\n" +
+		"같은 신호가 이어지면 정해진 시간 동안 묶어서 한 번만 보내요. 오탐으로 판정된 신호는 아예 보내지 않아요.\n" +
+		"트래픽에서는 방문 급감·서버 오류(5xx)·없는 주소 요청(404)만 메일로 보내요.",
+})}
 <div class="scroll cap"><table class="recent mail"><tr><th>보낸 시각</th><th>종류</th><th>갈래</th><th>등급</th><th>제목</th><th class="n">결과</th></tr>${rows}</table></div>
 
-<p class="foot">줄을 누르면 실제로 보낸 본문이 펼쳐져요. ‘받은 그대로 보기’는 메일함에서 보이는 모습 그대로 새 창에 띄워요.<br>
-같은 신호가 이어지면 정해진 시간 동안 묶어서 한 번만 보내요. 검증에서 잘못 잡은 것으로 판정된 신호는 아예 보내지 않고, 이상탐지 화면에 ‘보내지 않음’으로 남아요.<br>
-트래픽에서는 방문 급감·서버 오류(5xx)·없는 주소 요청(404)만 메일로 보내고, 나머지는 화면에만 남겨요.<br>
-최근 ${MAIL_PAGE}건까지 보여줘요.</p>
 </div>`,
 		{ ...opts, tab: "anomaly" },
 	);
@@ -1676,15 +1693,11 @@ ${anomalyViewRow(nav, sevTabs)}
 ${anomalyAppRow(nav, apps, traffic)}
 ${serverBarOf(d.state, d.heartbeatAge)}
 
-${sectionHead("판정 상세", { count: `${d.rows.length.toLocaleString()}건${d.total > d.rows.length ? ` / ${d.total.toLocaleString()}건` : ""}${d.critical24 ? ` · 최근 24시간 심각 <b class="r">${d.critical24.toLocaleString()}</b>건` : ""}`, href: `/admin/anomaly?period=${d.period}&scope=${d.forScope}`, linkLabel: "요약으로 돌아가기 →" })}
+${sectionHead("판정 상세", { tip: TIP_VERDICT, count: `${d.rows.length.toLocaleString()}건${d.total > d.rows.length ? ` / ${d.total.toLocaleString()}건` : ""}${d.critical24 ? ` · 최근 24시간 심각 <b class="r">${d.critical24.toLocaleString()}</b>건` : ""}`, href: `/admin/anomaly?period=${d.period}&scope=${d.forScope}`, linkLabel: "요약으로 돌아가기 →" })}
 <div class="cap tall"><table class="anb2">
 <colgroup><col class="c-when"><col class="c-sev"><col class="c-sig"><col class="c-app"><col><col class="c-vd"><col class="c-ml"></colgroup>
 <tr><th>구간</th><th>등급</th><th>신호</th><th>${traffic ? "서비스" : "앱"}</th><th>무슨 일인가</th><th>검증</th><th class="n">메일</th></tr>${rows}</table></div>
 
-<p class="foot">줄을 누르면 이상탐지 에이전트의 판단과 확인할 일, 수치가 펼쳐져요.<br>
-검증에서 잘못 잡은 것으로 본 줄은 흐리게 보이고 아래로 밀려요. 급하게 볼 것은 없지만 근거는 남겨 둬요.<br>
-메일 발송은 규칙이 정하고, 검증은 나간 알림에 설명과 확인할 일을 붙여요. ‘메일 →’를 누르면 그 메일이 펼쳐진 채로 열려요.<br>
-한 번에 ${ANOMALY_PAGE}건까지 보여줘요.</p>
 </div>`,
 		{ ...opts, tab: "anomaly" },
 	);
@@ -1813,7 +1826,9 @@ export function renderLogs(l: LogsData, opts: AdminOpts = {}): string {
 					? ` <span class="sm">· 내부용 앱 포함</span>`
 					: ` <span class="sm">· 내부용 앱은 빼고 세요</span>`
 	}</span>
-  <span class="nav"><a class="btn" href="/admin/logs.csv${logQuery(f, { before: 0 })}">CSV 내려받기</a></span>
+  <span class="nav"><span class="info" data-tip="${escapeHtml(
+		`내부용으로 표시한 앱의 호출은 기본으로 빼고 보여줘요. 위 '모두'·'내부용만'으로 범위를 바꿔요.\n${TIP_INTERNAL}\n첫 쪽을 보는 동안에는 새 호출이 들어오면 목록이 다시 그려져요. 다음 쪽이거나 줄을 펼쳐 뒀으면 건드리지 않아요.\n${TIP_COST}`,
+	)}">i</span> <a class="btn" href="/admin/logs.csv${logQuery(f, { before: 0 })}">CSV 내려받기</a></span>
 </div>
 
 <div class="cap tall"><table class="log calls" id="tb-log"><colgroup><col class="c-ts"><col class="c-app"><col class="c-kind"><col class="c-model"><col class="c-st"><col class="c-http"><col class="c-lat"><col class="c-tok"><col class="c-cost"><col class="c-geo"><col class="c-err"></colgroup><thead><tr><th>시각</th><th>앱</th><th>용도</th><th>모델</th><th>상태</th><th class="n">HTTP</th><th class="n">지연</th><th class="n">토큰</th><th class="n">비용</th><th>지역</th><th>오류 · 메타</th></tr></thead><tbody>${rows}</tbody></table></div>
@@ -1826,7 +1841,7 @@ export function renderLogs(l: LogsData, opts: AdminOpts = {}): string {
   </span>
 </div>
 
-<p class="foot">이상탐지 에이전트·메일 도구처럼 <b>내부용</b>으로 표시한 앱의 호출은 기본으로 빼고 보여줘요. 요약 화면과 같은 기준이에요. 위 <b>모두</b>·<b>내부용만</b>을 누르면 범위를 바꿀 수 있고, 앱을 하나 고르면 그 앱만 그대로 보여줘요. 어떤 앱을 내부용으로 둘지는 앱 관리에서 정해요.<br>첫 쪽을 보는 동안에는 새 호출이 들어오면 목록이 다시 그려져요. 다음 쪽으로 넘어갔거나, 줄을 펼쳐 뒀거나, 검색칸에 입력하는 중에는 건드리지 않아요.<br>CSV는 조건에 맞는 최근 5000건까지 내려받아요.<br>${FOOT_COST}</p>
+<p class="foot">CSV는 조건에 맞는 최근 5000건까지 내려받아요.</p>
 </div>`,
 		{ ...opts, tab: "logs" },
 	);
@@ -2225,7 +2240,9 @@ ${kpiRow([
 	{ label: "마지막 기록", value: t.lastTs ? ago(Date.now() - t.lastTs) : "-", size: "sm" },
 ], 6)}
 
-${sectionHead(`${t.bucketLabel} 단위 방문`)}
+${sectionHead(`${t.bucketLabel} 단위 방문`, {
+	tip: "사람인지 크롤러인지는 브라우저가 밝힌 이름(User-Agent)으로 갈라요.\n고유 방문자는 IP를 가린 값으로 세고, 정적 파일(이미지·스타일) 요청은 세지 않아요.",
+})}
 ${svgTraffic(t.buckets)}
 
 <div class="two">
@@ -2236,12 +2253,16 @@ ${svgTraffic(t.buckets)}
 </div>
 
 <div class="two">
-  <section>${sectionHead("AI 크롤러 (AEO)")}${botTable(t.aiBots, "아직 AI 크롤러가 다녀간 기록이 없어요.")}</section>
+  <section>${sectionHead("AI 크롤러 (AEO)", {
+	tip: "ChatGPT·Claude·Perplexity 같은 서비스가 문서를 읽어가는 기록이에요.\n여기 방문이 늘면 AI 답변에 실릴 바탕이 쌓이고 있다는 뜻이에요.",
+})}${botTable(t.aiBots, "아직 AI 크롤러가 다녀간 기록이 없어요.")}</section>
   <section>${sectionHead("검색·SNS 크롤러 (SEO)")}${botTable(t.searchBots, "아직 검색 크롤러가 다녀간 기록이 없어요.")}</section>
 </div>
 
 <div class="two">
-  <section>${sectionHead("사람이 들어온 경로", { note: `AI 답변 ${aiRefs.toLocaleString()}건 · 검색 ${searchRefs.toLocaleString()}건` })}
+  <section>${sectionHead("사람이 들어온 경로", {
+	tip: "'AI 답변'은 AI 서비스 화면에서 링크를 눌러 실제로 넘어온 방문이에요.\n크롤러 방문이 성과로 이어졌는지는 이 숫자로 봐요.",
+	note: `AI 답변 ${aiRefs.toLocaleString()}건 · 검색 ${searchRefs.toLocaleString()}건` })}
     <div class="cap"><table><thead><tr><th>구분</th><th>출처</th><th class="n">방문</th></tr></thead><tbody>${refRows}</tbody></table></div>
   </section>
   <section>${sectionHead("AI 크롤러가 읽어간 경로")}
@@ -2258,19 +2279,18 @@ ${svgTraffic(t.buckets)}
   </section>
 </div>
 
-${sectionHead(`없는 주소 요청 (404) · ${t.notFound.total.toLocaleString()}건`)}
+${sectionHead(`없는 주소 요청 (404) · ${t.notFound.total.toLocaleString()}건`, {
+	tip: "대부분 자동 스캐너예요. 워드프레스·PHP·관리 도구처럼 흔히 뚫리는 것을 차례로 두드려 봐요.\n" +
+		"우리 서비스에는 그런 소프트웨어가 없어서 전부 없는 주소로 끝나요. 막는 설정을 따로 넣지 않아도 돼요.\n" +
+		"'우리 쪽 깨진 링크'로 잡힌 것만 고치면 되고, 같은 주소에 200이 찍히면 그때는 바로 살펴봐야 해요.",
+})}
 ${notFoundPanel(t)}
 
 ${sectionHead("최근 크롤러 방문")}
 <div class="scroll cap"><table class="recent"><tr><th>시각</th><th>서비스</th><th>종류</th><th>크롤러</th><th>경로</th><th class="n">응답</th></tr>${recentRows}</table></div>
 
-<p class="foot">없는 주소 요청은 대부분 자동 스캐너예요. 워드프레스·PHP·관리 도구처럼 흔히 뚫리는 것을 차례로 두드려 보고 하나라도 열리면 파고들어요. 우리 서비스는 Cloudflare Workers와 Next.js로만 돌아가고 그런 소프트웨어가 없어서 전부 없는 주소로 끝나요.<br>
-막는 설정을 따로 넣지 않아도 돼요 — 없는 주소는 이미 404로 끝나고, 스캐너를 막아도 IP만 바꿔 다시 와요. ‘우리 쪽 깨진 링크’로 잡힌 것만 고쳐 주면 충분해요.<br>
-같은 주소에 200이 찍히면 그때는 실제로 열린 것이니 바로 살펴봐야 해요.<br>
-<p class="foot">각 서비스가 응답을 보낸 뒤 방문 한 건씩을 이 대시보드로 보내요. 사람인지 크롤러인지는 브라우저가 밝힌 이름(User-Agent)으로 갈라요.<br>
-AI 크롤러는 ChatGPT·Claude·Perplexity 같은 서비스가 문서를 읽어가는 기록이에요. 여기 방문이 늘면 AI 답변에 실릴 바탕이 쌓이고 있다는 뜻이에요.<br>
-'사람이 들어온 경로'의 <b>AI 답변</b>은 AI 서비스 화면에서 링크를 눌러 실제로 넘어온 방문이에요. 크롤러 방문이 성과로 이어졌는지는 이 숫자로 봐요.<br>
-고유 방문자는 IP를 그대로 두지 않고 가린 값으로 세요. 정적 파일(이미지·스타일 등) 요청은 세지 않아요.</p>
+
+<p class="foot">각 서비스가 응답을 보낸 뒤 방문 한 건씩을 이 대시보드로 보내요.</p>
 </div>`,
 		{ ...opts, tab: "traffic" },
 	);
