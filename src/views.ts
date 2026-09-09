@@ -502,7 +502,7 @@ function anomState<T>(a: AnomalyData, key: string): T | null {
 	}
 }
 
-/** 검증 에이전트 판정 — 여섯 가지 라벨을 화면에서 읽히는 말로 옮긴다. */
+/** 이상탐지 에이전트 판정 — 여섯 가지 라벨을 화면에서 읽히는 말로 옮긴다. */
 const VERDICT_LABEL: Record<string, { text: string; cls: string }> = {
 	confirmed: { text: "정탐", cls: "hit" },
 	rule_only: { text: "정탐(규칙만)", cls: "hit" },
@@ -568,7 +568,7 @@ const METRIC_LABEL: Record<string, string> = {
 
 /**
  * 신호마다 "그래서 무엇을 열어 봐야 하나".
- * 검증 에이전트가 판단을 붙이기 전에도 화면이 할 말이 있어야 해서 미리 적어 둔다.
+ * 이상탐지 에이전트가 판단을 붙이기 전에도 화면이 할 말이 있어야 해서 미리 적어 둔다.
  * 에이전트 설명이 도착하면 그쪽을 먼저 보여주고 이 문구는 뒤로 물러난다.
  */
 const SIGNAL_GUIDE: Record<string, { todo: string; link?: (q: { period: string; app: string }) => [string, string] }> = {
@@ -640,7 +640,7 @@ const SIGNAL_GUIDE: Record<string, { todo: string; link?: (q: { period: string; 
 
 /**
  * 한 건이 무슨 일인지 한 문장으로 옮긴다.
- * 검증 에이전트가 아직 안 봤어도 화면이 설명할 수 있어야 해서, 판정에 딸린
+ * 이상탐지 에이전트가 아직 안 봤어도 화면이 설명할 수 있어야 해서, 판정에 딸린
  * 값만으로 문장을 만든다(메일에 쓰는 문장과 같은 결로 맞췄다).
  */
 function anomalyLead(r: AnomalyRow, who: string): string {
@@ -679,7 +679,7 @@ function anomTopMetrics(r: AnomalyRow): string {
 
 /**
  * 판정 한 건 풀어 쓰기 — "심각 3건"만으로는 무엇을 봐야 할지 알 수 없다.
- * 무슨 일인지·검증 에이전트가 어떻게 봤는지·무엇을 열어 볼지를 적고,
+ * 무슨 일인지·이상탐지 에이전트가 어떻게 봤는지·무엇을 열어 볼지를 적고,
  * 그 건이 메일로 나갔으면 그 메일까지 이어 준다.
  * 상세 게시판에서 줄을 펼치면 이 내용이 나온다.
  */
@@ -694,7 +694,7 @@ function anomalyExplain(r: AnomalyRowWithMail, period: string, traffic: boolean)
 		? `<div class="ln ${fp ? "fp" : "hit"}"><b>검증 결과</b>` +
 			`<span>${verdictTag(r.verdict, null)} ${escapeHtml(r.verdict_reason || "")}` +
 			`${r.verdict_confidence ? ` <span class="sm">(확신 ${Math.round(r.verdict_confidence * 100)}%)</span>` : ""}</span></div>`
-		: `<div class="ln wait"><b>검증 결과</b><span>아직 검증 에이전트가 보지 않았어요. 15분 안에 판단이 붙어요.</span></div>`;
+		: `<div class="ln wait"><b>검증 결과</b><span>이상탐지 에이전트가 아직 보지 않았어요. 15분 안에 판단이 붙어요.</span></div>`;
 
 	const todo = r.verdict_action || guide?.todo || "그 시각 기록을 열어 확인해 주세요.";
 	const todoLine = fp
@@ -724,6 +724,146 @@ function anomalyExplain(r: AnomalyRowWithMail, period: string, traffic: boolean)
 </div>`;
 }
 
+
+/**
+ * 이상탐지 에이전트 브리핑 — 무슨 일을 하는 자리이고, 실제로 무엇을 했나.
+ *
+ * 화면에는 "검증된 판정 23건" 같은 숫자만 있고 그 판정을 누가 왜 붙였는지는 안 보였다.
+ * 지금 설정(어떤 모델로 몇 표를 던지고 무엇을 대상으로 삼는지)과 한 일(며칠간 몇 건,
+ * 어떻게 갈랐는지, 최근 무엇을 봤는지)을 한자리에 모은다.
+ */
+interface AgentBrief {
+	enabled?: boolean;
+	model?: string; votes?: number; targets?: string;
+	interval_min?: number; batch?: number; gates_mail?: boolean;
+	total?: number; acted?: number; day1?: number; day7?: number;
+	hit?: number; miss?: number; pending?: number;
+	confidence?: number | null; last_at?: number | null;
+	daily?: { d: string; n: number }[];
+	by_signal?: { scope: string; signal: string; n: number; miss: number }[];
+	recent?: {
+		at: number; bucket: number; verdict: string; confidence: number | null;
+		reason: string; action: string; votes: number;
+		scope: string; app: string; signal: string; severity: string;
+		detector: string; label: string | null;
+	}[];
+}
+
+/** 검증 대상 범위 — 설정값을 사람이 읽는 말로. */
+const AGENT_TARGET_LABEL: Record<string, string> = {
+	notified: "메일로 나간 판정과 심각 신호",
+	all: "주의·심각 판정 전부",
+	critical: "심각 신호만",
+};
+
+/** 하루에 몇 건씩 봤나 — 작은 막대. 값이 없으면 빈 문자열. */
+function agentSpark(daily: { d: string; n: number }[]): string {
+	if (!daily.length) return "";
+	const max = Math.max(1, ...daily.map((r) => r.n));
+	const bars = daily
+		.map((r, i) => {
+			const h = Math.max(2, (r.n / max) * 34);
+			return `<rect x="${(i * 15 + 2).toFixed(1)}" y="${(36 - h).toFixed(1)}" width="11" height="${h.toFixed(1)}" rx="2"` +
+				` data-tip="${escapeHtml(`${r.d} · ${r.n.toLocaleString()}건 검증`)}"/>`;
+		})
+		.join("");
+	return `<div class="agsp"><svg viewBox="0 0 ${daily.length * 15 + 4} 40" role="img" aria-label="날짜별 검증 건수">${bars}</svg>` +
+		`<div class="lb"><span>${escapeHtml(daily[0].d)}</span><span>${escapeHtml(daily[daily.length - 1].d)}</span></div></div>`;
+}
+
+function agentBrief(a: AnomalyData): string {
+	const g = anomState<AgentBrief>(a, "agent");
+	if (!g) {
+		return `<div class="empty">이상탐지 에이전트 기록이 아직 없어요. 서버가 다음 신호를 보내면 채워져요.</div>`;
+	}
+
+	const off = g.enabled === false;
+	const target = AGENT_TARGET_LABEL[g.targets ?? ""] ?? (g.targets || "-");
+	const hit = g.hit ?? 0;
+	const miss = g.miss ?? 0;
+	const rate = hit + miss ? hit / (hit + miss) : null;
+
+	// 무슨 일을 하는 자리인지 — 숫자보다 이 문장이 먼저다.
+	const what =
+		`<div class="agwhat">
+  <p><b>규칙과 모델이 잡은 판정을 한 건씩 다시 읽고, 진짜 이상인지 아닌지를 가려요.</b>
+  그 구간의 지표와 같은 요일·시각의 평소값, 직전 구간 흐름, 오류 메시지, 다른 탐지기의 같은 구간 판정을 함께 넣어 물어봐요.
+  같은 건을 온도를 바꿔 ${g.votes ?? 3}번까지 물어보고 과반이 나온 답만 씁니다. 표가 갈리면 판단 보류로 남겨 사람 몫으로 둬요.</p>
+  <p>정탐으로 보면 <b>확인할 일</b>을 한 줄로 적어요 — 어느 로그를 열어 무엇을 봐야 하는지예요.
+  오탐으로 보면 왜 아닌지를 남겨요. 그 문장이 위 이상 신호 이력의 ‘검증’ 칸과 화면 곳곳에 그대로 쓰여요.</p>
+  <p class="sm">${g.gates_mail
+			? "지금은 이 판정이 메일 발송 여부까지 정해요."
+			: "메일 발송 여부는 규칙이 정하고, 에이전트는 설명만 맡아요. 오탐으로 봐도 메일을 막지 않아요."}</p>
+</div>`;
+
+	const chips = [
+		["쓰는 모델", g.model ?? "-"],
+		["투표", `${g.votes ?? "-"}표 중 과반`],
+		["검증 대상", target],
+		["주기", `${g.interval_min ?? "-"}분마다 최대 ${g.batch ?? "-"}건`],
+	]
+		.map(([k, v]) => `<span class="agc"><i>${escapeHtml(String(k))}</i>${escapeHtml(String(v))}</span>`)
+		.join("");
+
+	const card = (l: string, v: string, tone = "", extra = "") =>
+		`<div class="m"><div class="l">${l}</div><div class="v ${tone}">${v}${extra}</div></div>`;
+
+	const sigRows = (g.by_signal ?? []).length
+		? (g.by_signal ?? [])
+				.map((r) => {
+					const name = SIGNAL_LABEL[r.signal] ?? r.signal;
+					const pct = r.n ? (r.miss / r.n) * 100 : 0;
+					return `<tr><td>${escapeHtml(name)}</td>` +
+						`<td>${r.scope === "traffic" ? "트래픽" : "AI 호출"}</td>` +
+						`<td class="n">${r.n.toLocaleString()}</td>` +
+						`<td class="n${pct >= 50 ? " r" : ""}">${r.miss.toLocaleString()}<span class="sm"> ${pct.toFixed(0)}%</span></td></tr>`;
+				})
+				.join("")
+		: `<tr><td colspan="4">아직 본 판정이 없어요.</td></tr>`;
+
+	const recentRows = (g.recent ?? []).length
+		? (g.recent ?? [])
+				.map((r) => {
+					const m = VERDICT_LABEL[r.verdict] ?? { text: r.verdict, cls: "wait" };
+					const fp = m.cls === "miss";
+					const who = r.app === "*" ? "전체" : r.scope === "traffic" ? siteName(r.app) : r.app;
+					const say = fp ? r.reason : r.action || r.reason;
+					return `<div class="agr${fp ? " fp" : ""}">
+  <div class="hd"><span class="vd ${m.cls}">${escapeHtml(m.text)}</span>
+    <b>${escapeHtml(r.label || SIGNAL_LABEL[r.signal] || r.signal)}</b>
+    <span class="sm">${escapeHtml(who)} · ${bucketAt(r.bucket)} 구간 · ${r.detector === "model" ? "모델" : "규칙"} 판정</span>
+    <span class="sm rt">${ago(Date.now() - r.at)}${r.confidence ? ` · 확신 ${Math.round(r.confidence * 100)}%` : ""}${r.votes ? ` · ${r.votes}표` : ""}</span></div>
+  <p>${escapeHtml(say || "(설명이 없어요)")}</p>
+</div>`;
+				})
+				.join("")
+		: `<div class="empty">아직 본 판정이 없어요.</div>`;
+
+	return `${what}
+<div class="agchips">${off ? `<span class="agc off"><i>상태</i>꺼져 있어요</span>` : `<span class="agc on"><i>상태</i>돌고 있어요</span>`}${chips}</div>
+
+<div class="kpi2" style="margin-bottom:4px">
+  ${card("본 판정", (g.total ?? 0).toLocaleString(), "", `<span class="sm"> · 24시간 ${(g.day1 ?? 0).toLocaleString()}</span>`)}
+  ${card("정탐으로 봄", hit.toLocaleString())}
+  ${card("오탐으로 봄", miss.toLocaleString())}
+  ${card("정탐률", rate === null ? "-" : pct1(rate))}
+  ${card("확인할 일 적음", (g.acted ?? 0).toLocaleString())}
+  ${card("마지막 판정", g.last_at ? ago(Date.now() - g.last_at) : "-")}
+</div>
+
+<div class="two">
+  <section>${sectionHead("날짜별 검증 건수")}
+    <div class="panel">${agentSpark(g.daily ?? []) || `<span class="sm">아직 기록이 없어요.</span>`}
+      <p class="sm" style="margin:8px 0 0">최근 14일이에요. 판정이 늘면 검증도 함께 늘어요.</p></div>
+  </section>
+  <section>${sectionHead("많이 본 신호")}
+    <div class="cap"><table class="fx">${cols("", "82", "62", "96")}<thead><tr><th>신호</th><th>갈래</th><th class="n">본 건</th><th class="n">오탐으로 봄</th></tr></thead><tbody>${sigRows}</tbody></table></div>
+  </section>
+</div>
+
+${sectionHead("최근에 본 판정")}
+<div class="agrs">${recentRows}</div>`;
+}
 
 /** 구간 시각 — 표에서는 초까지 필요 없다. */
 const bucketAt = (ts: number) => kst(ts).slice(0, 11);
@@ -1116,7 +1256,7 @@ export function renderAnomaly(a: AnomalyData, opts: AdminOpts = {}): string {
 				.join("")
 		: `<tr><td colspan="5">아직 학습된 모델이 없어요. 지금은 규칙·통계 기준으로 판정하고 있어요.</td></tr>`;
 
-	// ── 검증 에이전트 라벨 · 탐지기 성적 · 승격 심사 (이상탐지 서버가 함께 밀어 넣는다)
+	// ── 이상탐지 에이전트 라벨 · 탐지기 성적 · 승격 심사 (이상탐지 서버가 함께 밀어 넣는다)
 	type LabelState = {
 		total?: number;
 		by_verdict?: Record<string, number>;
@@ -1258,8 +1398,11 @@ ${svgLevels(a.buckets)}
 ${sectionHead("이상 신호 이력")}
 <div class="scroll cap"><table class="recent"><tr><th>구간</th><th>등급</th><th>신호</th><th>앱</th><th class="n">관측</th><th class="n">평소 대비</th><th class="n">점수</th><th>탐지기</th><th>검증</th><th>메일</th></tr>${rows}</table></div>
 
+${sectionHead("이상탐지 에이전트")}
+${agentBrief(a)}
+
 <div class="two">
-  <section>${sectionHead("검증 결과")}
+  <section>${sectionHead("검증 결과 모음")}
     <table><tr><th>판정</th><th class="n">건수</th><th class="n">비중</th></tr>${verdictRows}</table>
   </section>
   <section>${sectionHead(`${who}별 이상 건수`)}
@@ -1465,7 +1608,7 @@ ${serverBarOf(d.state, d.heartbeatAge)}
 <colgroup><col class="c-when"><col class="c-sev"><col class="c-sig"><col class="c-app"><col><col class="c-vd"><col class="c-ml"></colgroup>
 <tr><th>구간</th><th>등급</th><th>신호</th><th>${traffic ? "서비스" : "앱"}</th><th>무슨 일인가</th><th>검증</th><th class="n">메일</th></tr>${rows}</table></div>
 
-<p class="foot">줄을 누르면 검증 에이전트의 판단과 확인할 일, 수치가 펼쳐져요.<br>
+<p class="foot">줄을 누르면 이상탐지 에이전트의 판단과 확인할 일, 수치가 펼쳐져요.<br>
 검증에서 잘못 잡은 것으로 본 줄은 흐리게 보이고 아래로 밀려요. 급하게 볼 것은 없지만 근거는 남겨 둬요.<br>
 메일 발송은 규칙이 정하고, 검증은 나간 알림에 설명과 확인할 일을 붙여요. ‘메일 →’를 누르면 그 메일이 펼쳐진 채로 열려요.<br>
 한 번에 ${ANOMALY_PAGE}건까지 보여줘요.</p>
@@ -1610,7 +1753,7 @@ export function renderLogs(l: LogsData, opts: AdminOpts = {}): string {
   </span>
 </div>
 
-<p class="foot">검증 에이전트·메일 도구처럼 <b>내부용</b>으로 표시한 앱의 호출은 기본으로 빼고 보여줘요. 요약 화면과 같은 기준이에요. 위 <b>모두</b>·<b>내부용만</b>을 누르면 범위를 바꿀 수 있고, 앱을 하나 고르면 그 앱만 그대로 보여줘요. 어떤 앱을 내부용으로 둘지는 앱 관리에서 정해요.<br>첫 쪽을 보는 동안에는 새 호출이 들어오면 목록이 다시 그려져요. 다음 쪽으로 넘어갔거나, 줄을 펼쳐 뒀거나, 검색칸에 입력하는 중에는 건드리지 않아요.<br>CSV는 조건에 맞는 최근 5000건까지 내려받아요.<br>${FOOT_COST}</p>
+<p class="foot">이상탐지 에이전트·메일 도구처럼 <b>내부용</b>으로 표시한 앱의 호출은 기본으로 빼고 보여줘요. 요약 화면과 같은 기준이에요. 위 <b>모두</b>·<b>내부용만</b>을 누르면 범위를 바꿀 수 있고, 앱을 하나 고르면 그 앱만 그대로 보여줘요. 어떤 앱을 내부용으로 둘지는 앱 관리에서 정해요.<br>첫 쪽을 보는 동안에는 새 호출이 들어오면 목록이 다시 그려져요. 다음 쪽으로 넘어갔거나, 줄을 펼쳐 뒀거나, 검색칸에 입력하는 중에는 건드리지 않아요.<br>CSV는 조건에 맞는 최근 5000건까지 내려받아요.<br>${FOOT_COST}</p>
 </div>`,
 		{ ...opts, tab: "logs" },
 	);
@@ -1697,7 +1840,7 @@ function appCard(a: AppConfig): string {
       </div>
       <div class="fld"><label>짝이 되는 서비스 — 지역 탭에서 이 앱을 고르면 이 서비스의 방문도 함께 보여요</label>
         ${siteSelect(a.site)}</div>
-      <label class="chk"><input type="checkbox" name="internal" value="1"${a.internal ? " checked" : ""}> 내부용 앱 — 검증 에이전트처럼 우리 쪽이 부르는 앱이에요. 앱 탭에서 뒤로 물리고, 요약의 최근 호출에서는 빼요.</label>
+      <label class="chk"><input type="checkbox" name="internal" value="1"${a.internal ? " checked" : ""}> 내부용 앱 — 이상탐지 에이전트처럼 우리 쪽이 부르는 앱이에요. 앱 탭에서 뒤로 물리고, 요약의 최근 호출에서는 빼요.</label>
       <div class="eacts"><button class="btn p" type="submit">저장</button>
         <button type="button" class="btn" data-toggle="${escapeHtml(ed)}">취소</button></div>
     </form>

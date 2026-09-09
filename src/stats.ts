@@ -115,15 +115,15 @@ export async function ensureSchema(env: StatsEnv): Promise<void> {
 		"CREATE TABLE IF NOT EXISTS anomalies (id INTEGER PRIMARY KEY AUTOINCREMENT, src_id INTEGER, detected_at INTEGER NOT NULL, bucket INTEGER NOT NULL, grain TEXT NOT NULL, app TEXT NOT NULL, signal TEXT NOT NULL, severity TEXT NOT NULL, score REAL, observed REAL, baseline REAL, label TEXT, detail TEXT, detector TEXT, model_version TEXT, notified_at INTEGER, status TEXT NOT NULL DEFAULT 'open')",
 		"CREATE TABLE IF NOT EXISTS anomaly_models (version TEXT PRIMARY KEY, algo TEXT, scope TEXT, trained_at INTEGER, train_from INTEGER, train_to INTEGER, train_rows INTEGER, metrics TEXT, status TEXT, note TEXT)",
 		"CREATE TABLE IF NOT EXISTS anomaly_state (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)",
-		// 검증 에이전트가 붙인 판정. 이미 있으면 조용히 실패한다(D1엔 ADD COLUMN IF NOT EXISTS가 없다).
+		// 이상탐지 에이전트가 붙인 판정. 이미 있으면 조용히 실패한다(D1엔 ADD COLUMN IF NOT EXISTS가 없다).
 		// 앱이 어느 서비스(트래픽) 화면과 짝인지. 지역 탭에서 앱을 고르면 그 서비스 방문만 함께 본다.
 		"ALTER TABLE apps ADD COLUMN site TEXT",
-		// 내부용 앱(검증 에이전트 등). 화면에서는 뒤로 물리고 요약의 최근 호출에서는 뺀다.
+		// 내부용 앱(이상탐지 에이전트 등). 화면에서는 뒤로 물리고 요약의 최근 호출에서는 뺀다.
 		"ALTER TABLE apps ADD COLUMN internal INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE anomalies ADD COLUMN verdict TEXT",
 		"ALTER TABLE anomalies ADD COLUMN verdict_reason TEXT",
 		"ALTER TABLE anomalies ADD COLUMN suppressed_reason TEXT",
-		// 검증 에이전트의 자연어 설명 — reason은 "왜 이렇게 봤나", action은 "그래서 무엇을 보라".
+		// 이상탐지 에이전트의 자연어 설명 — reason은 "왜 이렇게 봤나", action은 "그래서 무엇을 보라".
 		"ALTER TABLE anomalies ADD COLUMN verdict_action TEXT",
 		"ALTER TABLE anomalies ADD COLUMN verdict_confidence REAL",
 		// 판정 갈래 — ai(호출) · traffic(서비스 방문). 앱 이름과 사이트 이름이 한 칸에 섞이지 않게 나눈다.
@@ -209,7 +209,7 @@ export interface AppConfig {
 	createdAt: number;
 	/** 짝이 되는 트래픽 서비스 키(SITES). 비어 있으면 연결하지 않은 앱이다. */
 	site: string | null;
-	/** 내부용 앱(검증 에이전트처럼 우리 쪽이 부르는 것). 화면에서 뒤로 물리고 요약 최근 호출에서 뺀다. */
+	/** 내부용 앱(이상탐지 에이전트처럼 우리 쪽이 부르는 것). 화면에서 뒤로 물리고 요약 최근 호출에서 뺀다. */
 	internal: boolean;
 }
 
@@ -969,7 +969,7 @@ export interface AnomalyBrief {
 	lastDetected: number;
 	/** 이상탐지 서버가 마지막으로 신호를 보낸 뒤 지난 시간(ms). 한 번도 없으면 null. */
 	heartbeatAge: number | null;
-	/** 검증 에이전트가 정탐으로 본 비율(0~1). 라벨이 아직 없으면 null. */
+	/** 이상탐지 에이전트가 정탐으로 본 비율(0~1). 라벨이 아직 없으면 null. */
 	hitRate: number | null;
 	recent: AnomalyBriefRow[];
 }
@@ -1037,7 +1037,7 @@ async function collectSummaryInner(
 			: Promise.resolve({ results: [] as (AggRow & { model: string | null })[] }),
 
 		// 맨 아래 "최근 호출" — id 역순 몇 건. 인덱스로 바로 잡혀서 행 수와 무관하게 가볍다.
-		// 내부용 앱(검증 에이전트 등)은 뺀다. 그 호출이 대부분을 차지해 정작 보고 싶은 앱이 밀린다.
+		// 내부용 앱(이상탐지 에이전트 등)은 뺀다. 그 호출이 대부분을 차지해 정작 보고 싶은 앱이 밀린다.
 		(appFilter
 			? env.DB.prepare(`SELECT ${LOG_COLS} FROM calls WHERE app = ?1 ORDER BY id DESC LIMIT ?2`).bind(appFilter, SUMMARY_RECENT)
 			: env.DB.prepare(

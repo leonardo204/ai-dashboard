@@ -573,7 +573,7 @@ const EXTRA_CSS = `
 .statline{font-size:12.5px;color:var(--muted);margin:-4px 0 8px;line-height:1.7;}
 .statline b{color:var(--ink);font-weight:800;font-variant-numeric:tabular-nums;}
 .statline b.r{color:var(--r);}
-/* 검증 에이전트 판정 태그 */
+/* 이상탐지 에이전트 판정 태그 */
 .vd{display:inline-flex;align-items:center;font-weight:800;font-size:11.5px;
  border-radius:999px;padding:2px 9px;white-space:nowrap;border:1px solid transparent;}
 .vd.hit{background:#f2fbf4;color:#0a7d33;border-color:#cfe8d4;}
@@ -707,6 +707,38 @@ tr.hl td{background:#fff8e6 !important;}
 .cb .lk:hover{background:#ece4ff;}
 .cb .lk.mail{background:#fff6e8;border-color:#f2ddbe;color:#96601a;}
 tr.hl>td{background:#fff8e6 !important;}
+
+/* 이상탐지 에이전트 브리핑 — 무슨 일을 하는 자리인지 먼저 읽히게 */
+.agwhat{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px;}
+.agwhat p{margin:0 0 8px;font-size:13px;line-height:1.75;}
+.agwhat p:last-child{margin:0;}
+.agwhat b{font-weight:800;}
+.agchips{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 12px;}
+.agc{display:inline-flex;align-items:baseline;gap:6px;font-size:12px;font-weight:700;
+ background:#fafbfc;border:1px solid var(--line);border-radius:999px;padding:5px 12px;}
+.agc i{font-style:normal;font-size:11px;font-weight:800;color:var(--muted);}
+.agc.on{background:#f2fbf4;border-color:#cfe8d4;color:#0a7d33;}
+.agc.off{background:#fdecec;border-color:#f6cfcf;color:#a9313a;}
+/* 날짜별 검증 건수 — 작은 막대 */
+.agsp svg{width:100%;height:auto;display:block;overflow:visible;}
+.agsp svg rect{fill:var(--accent);opacity:.82;cursor:default;}
+.agsp svg rect:hover{opacity:1;fill:#C85A95;}
+.agsp .lb{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);
+ font-weight:700;margin-top:5px;}
+/* 최근에 본 판정 */
+.agrs{display:grid;gap:8px;}
+.agr{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--accent);
+ border-radius:12px;padding:11px 14px;}
+.agr.fp{border-left-color:#c9ced8;}
+.agr .hd{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.agr .hd b{font-size:13.5px;}
+.agr .hd .rt{margin-left:auto;}
+.agr p{margin:7px 0 0;font-size:12.5px;line-height:1.65;}
+.agr.fp p{color:var(--muted);}
+@media(max-width:640px){
+ .agwhat{padding:12px 13px;}
+ .agr .hd .rt{margin-left:0;}
+}
 
 /* 요일 × 시각 히트맵 */
 .hm{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px;overflow-x:auto;}
@@ -1507,7 +1539,7 @@ export function filterTabs(
 	rightBelow = "",
 	opts: { key?: string; allLabel?: string; extra?: string } = {},
 ): string {
-	// 내부용 앱(검증 에이전트 등)은 맨 뒤로 보내고 흐리게 둔다. 실제 앱을 먼저 찾게.
+	// 내부용 앱(이상탐지 에이전트 등)은 맨 뒤로 보내고 흐리게 둔다. 실제 앱을 먼저 찾게.
 	apps = [...apps.filter((a) => !a.internal), ...apps.filter((a) => a.internal)];
 	const key = opts.key ?? "app";
 	// extra는 이 화면이 기간·앱 말고도 물고 다녀야 하는 조건이다(예: 이상탐지 갈래).
