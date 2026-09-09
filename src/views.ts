@@ -27,6 +27,7 @@ import {
 	svgTrend, svgMap, svgShare, svgDonut, svgHeat, svgLevels, svgF1, svgTraffic, type AdminOpts,
 } from "./ui";
 import { SITES, siteName, siteUrl, THREAT_LABEL } from "./traffic";
+import { findChanges } from "./changes";
 
 /** 상단바 메뉴가 기간·앱 조건을 그대로 물고 가도록 붙이는 질의 문자열. */
 function navQuery(period: string, appFilter: string): string {
@@ -95,6 +96,7 @@ export function renderBoard(b: BoardData, opts: AdminOpts = {}): string {
 	const failRate = b.total ? (b.error / b.total) * 100 : 0;
 	const prevFailRate = b.prev && b.prev.total ? (b.prev.error / b.prev.total) * 100 : 0;
 	const topHttp = b.byHttp[0];
+	const changes = findChanges(b);
 
 	const signalRows = b.anomaly.open.length
 		? b.anomaly.open
@@ -136,6 +138,11 @@ ${filterTabs("/admin", b.period, b.appFilter, b.apps, PERIODS)}
   <span class="rs">${escapeHtml(st.reason)}</span>
   <span class="go">보기 →</span>
 </a>
+${changes.length
+	? `<div class="chg">${changes
+			.map((c) => `<a href="${c.href}"><i></i><span>${c.text}</span></a>`)
+			.join("")}</div>`
+	: ""}
 
 ${kpiRow([
 	{

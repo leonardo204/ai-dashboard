@@ -266,6 +266,14 @@ details.fold .scroll{border-radius:0 0 var(--r-md) var(--r-md);}
 .stat.bad .dot{background:var(--bad);}.stat.bad b{color:var(--bad-fg);}
 @media(max-width:640px){.stat{flex-wrap:wrap;gap:7px;padding:11px 13px;}.stat .go{margin-left:auto;}}
 
+/* "달라진 것" — 상태 한 줄 바로 아래. 말할 게 없으면 칸 자체가 없다. */
+.chg{display:flex;flex-direction:column;gap:1px;margin:-6px 0 var(--sp-3);}
+.chg a{display:flex;align-items:baseline;gap:8px;text-decoration:none;color:var(--ink);
+ font-size:var(--fs-sm);padding:6px 16px;border-radius:var(--r-sm);}
+.chg a:hover{background:var(--accent-bg);}
+.chg i{width:5px;height:5px;border-radius:50%;background:var(--muted);flex:0 0 5px;position:relative;top:-2px;}
+.chg b{font-weight:800;}
+
 /* 열린 신호 칸 — 표 모양은 쓰되 테두리를 지워 카드 안에 얹는다 */
 .sigp{padding:10px 12px;}
 table.sig{border:0;background:none;font-size:var(--fs-sm);}
