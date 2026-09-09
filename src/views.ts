@@ -209,35 +209,35 @@ ${mini("고유 IP", s.uniqueIPs.toLocaleString())}
 ${mini("사용 모델", `${s.modelCount}종`)}
 </div>
 
-<div class="sh2"><h2>월별 비용</h2><span class="sm">${
-	s.monthly.length
+${sectionHead("월별 비용", {
+	note: s.monthly.length
 		? `최근 ${s.monthly.length}개월 · 합계 ${usd(s.monthly.reduce((n, r) => n + r.cost, 0))}${s.appFilter ? ` · ${escapeHtml(s.apps.find((a) => a.id === s.appFilter)?.name ?? s.appFilter)}만` : ""}`
-		: "기록 없음"
-}</span></div>
+		: "기록 없음",
+})}
 ${monthlyCostPanel(s)}
 
-${sectionHead("이상탐지", `/admin/anomaly${q}`, "이상탐지에서 보기 →")}
+${sectionHead("이상탐지", { href: `/admin/anomaly${q}`, linkLabel: "이상탐지에서 보기 →" })}
 ${anomalyBand(s.anomaly, `/admin/anomaly${q}`)}
 
-${sectionHead("트래픽", `/admin/traffic?period=${s.period}`, "트래픽에서 보기 →")}
+${sectionHead("트래픽", { href: `/admin/traffic?period=${s.period}`, linkLabel: "트래픽에서 보기 →" })}
 ${trafficBand(s.traffic, `/admin/traffic?period=${s.period}`)}
 
-${sectionHead(`최근 호출 (${SUMMARY_RECENT}건)`, `/admin/logs${q}`, "로그에서 더 보기 →")}
+${sectionHead(`최근 호출 (${SUMMARY_RECENT}건)`, { href: `/admin/logs${q}`, linkLabel: "로그에서 더 보기 →" })}
 <table class="recent calls lite"><colgroup><col class="c-ts"><col class="c-app"><col class="c-kind"><col class="c-model"><col class="c-st"><col class="c-http"><col class="c-lat"><col class="c-tok"><col class="c-cost"><col class="c-geo"><col class="c-err"></colgroup><tr><th>시각</th><th>앱</th><th>용도</th><th>모델</th><th>상태</th><th class="n">HTTP</th><th class="n">지연</th><th class="n">토큰</th><th class="n">비용</th><th>지역</th><th>오류 · 메타</th></tr>${recentRows}</table>
 
-${sectionHead(`추이 (${s.bucketLabel} 단위)`, `/admin/trend${q}`)}
+${sectionHead(`추이 (${s.bucketLabel} 단위)`, { href: `/admin/trend${q}` })}
 ${svgTrend(s.buckets)}
 
 <div class="two">
-  <section>${sectionHead("앱별 비중", `/admin/usage${q}`)}${appDonut}</section>
-  <section>${sectionHead("모델별 비중", `/admin/usage${q}#model`)}${modelDonut}</section>
+  <section>${sectionHead("앱별 비중", { href: `/admin/usage${q}` })}${appDonut}</section>
+  <section>${sectionHead("모델별 비중", { href: `/admin/usage${q}#model` })}${modelDonut}</section>
 </div>
 
 <div class="two">
-  <section>${sectionHead("실패 상위", `/admin/logs${q}&status=error`, "로그에서 보기 →")}
+  <section>${sectionHead("실패 상위", { href: `/admin/logs${q}&status=error`, linkLabel: "로그에서 보기 →" })}
     <table><tr><th class="n">HTTP</th><th class="n">건수</th><th>대표 메시지</th></tr>${errRows}</table>
   </section>
-  <section>${sectionHead(`호출 지역 (${s.countryCount}개국)`, `/admin/geo${q}`)}${geoShare}</section>
+  <section>${sectionHead(`호출 지역 (${s.countryCount}개국)`, { href: `/admin/geo${q}` })}${geoShare}</section>
 </div>
 
 <p class="foot">추이 막대는 아래가 서비스, 흐린 위쪽이 내부 도구 몫이에요. 비용 꺾은선은 진한 선이 전체, 점선이 서비스 몫이라 두 선의 간격이 내부 도구가 쓴 돈이에요. 성공·실패 건수는 막대에 마우스를 올리면 나와요.<br>
@@ -311,13 +311,13 @@ ${filterTabs("/admin/usage", u.period, u.appFilter, u.apps, PERIODS)}
   <div class="m"><div class="l">호출당 비용</div><div class="v">${u.total ? usd(u.cost / u.total) : "-"}</div></div>
 </div>
 
-<div class="sh2"><h2>앱별 <span class="sm">${u.byApp.length}개</span></h2></div>
+${sectionHead("앱별", { count: `${u.byApp.length}개` })}
 <div class="cap"><table class="fx" id="tb-app">${cols("", "96", "74:o1", "74", "84:o1", "84", "86:o2", "92:o2", "58")}<thead><tr><th>앱</th><th class="n">호출</th><th class="n o1">성공</th><th class="n">실패</th><th class="n o1">토큰</th><th class="n">비용</th><th class="n o2">평균 지연</th><th class="n o2">호출당 비용</th><th></th></tr></thead><tbody>${appRows}</tbody></table></div>
 
-<div class="sh2" id="model"><h2>모델별 <span class="sm" id="tb-model-cnt">${u.byModel.length}개</span></h2>${tableFilter("tb-model", "모델 이름으로 걸러보기")}</div>
+${sectionHead("모델별", { id: "model", count: `<span id="tb-model-cnt">${u.byModel.length}개</span>`, right: tableFilter("tb-model", "모델 이름으로 걸러보기") })}
 <div class="cap"><table class="fx" id="tb-model">${cols("", "96", "74", "90:o1", "90:o1", "84", "86:o2", "58")}<thead><tr><th>모델</th><th class="n">호출</th><th class="n">실패</th><th class="n o1">입력 토큰</th><th class="n o1">출력 토큰</th><th class="n">비용</th><th class="n o2">평균 지연</th><th></th></tr></thead><tbody>${modelRows}</tbody></table></div>
 
-<div class="sh2"><h2>용도별 <span class="sm">${u.byKind.length}개</span></h2></div>
+${sectionHead("용도별", { count: `${u.byKind.length}개` })}
 <div class="cap"><table class="fx" id="tb-kind">${cols("", "96", "74:o1", "74", "84:o1", "84", "86:o2", "58")}<thead><tr><th>용도</th><th class="n">호출</th><th class="n o1">성공</th><th class="n">실패</th><th class="n o1">토큰</th><th class="n">비용</th><th class="n o2">평균 지연</th><th></th></tr></thead><tbody>${kindRows}</tbody></table></div>
 
 <p class="foot">용도는 앱이 보낸 <span class="mono">X-Ai-Kind</span> 값이에요.<br>${FOOT_COST}</p>
@@ -362,21 +362,23 @@ export function renderTrend(t: TrendData, opts: AdminOpts = {}): string {
 		pageHead("추이", `기간별 호출·비용 흐름 · ${sinceLabel(t.since)}`, t.appFilter) +
 			`<div id="hz-body">
 ${filterTabs("/admin/trend", t.period, t.appFilter, t.apps, PERIODS)}
-<div class="sh2"><h2>${t.bucketLabel} 단위 호출·비용</h2><span class="sm">${
-		t.total
+${sectionHead(`${t.bucketLabel} 단위 호출·비용`, {
+		note: t.total
 			? `서비스 ${(t.total - t.internal).toLocaleString()}건 · 내부 도구 ${t.internal.toLocaleString()}건 (${
 					t.total ? Math.round((t.internal / t.total) * 100) : 0
 				}%)`
-			: "기록 없음"
-	}</span></div>
+			: "기록 없음",
+	})}
 ${svgTrend(t.buckets)}
 
-<div class="sh2"><h2>언제 몰리나 (요일 × 시각, KST)</h2>${peak ? `<span class="sm">가장 많은 때: ${WD[peak.w]}요일 ${peak.h}시 · ${peak.n.toLocaleString()}건</span>` : ""}</div>
+${sectionHead("언제 몰리나 (요일 × 시각, KST)", { note: peak ? `가장 많은 때: ${WD[peak.w]}요일 ${peak.h}시 · ${peak.n.toLocaleString()}건` : "" })}
 ${svgHeat(t.heat)}
 
-<div class="sh2"><h2>구간별 상세</h2><span class="sm">전체 ${t.total.toLocaleString()}건 · ${usd(t.cost)}${
-		t.internal ? ` · 내부 도구 ${t.internal.toLocaleString()}건 · ${usd(t.internalCost)}` : ""
-	}</span></div>
+${sectionHead("구간별 상세", {
+		note: `전체 ${t.total.toLocaleString()}건 · ${usd(t.cost)}${
+			t.internal ? ` · 내부 도구 ${t.internal.toLocaleString()}건 · ${usd(t.internalCost)}` : ""
+		}`,
+	})}
 <div class="scroll cap"><table id="tb-bucket"><thead><tr><th>구간</th><th>비중</th><th class="n">호출</th><th class="n">서비스</th><th class="n">내부 도구</th><th class="n">성공</th><th class="n">실패</th><th class="n">토큰</th><th class="n">비용</th><th class="n">내부 도구 비용</th></tr></thead><tbody>${rows}</tbody></table></div>
 
 <p class="foot">막대의 흐린 윗부분과 표의 '내부 도구' 칸은 이상탐지·메일 도구처럼 <b>내부용</b>으로 표시한 앱이 낸 몫이에요. 비용 꺾은선은 진한 선이 전체, 점선이 서비스 몫이라 두 선의 간격이 내부 도구가 쓴 돈이에요.<br>구간은 한국 시간(KST) 기준으로 끊어요.<br>${FOOT_COST}</p>
@@ -446,7 +448,7 @@ export function renderGeo(g: GeoData, opts: AdminOpts = {}): string {
 	const hitSection = g.hitUnlinked
 		? `<p class="sm" style="margin:18px 2px 0">이 앱에는 짝이 되는 서비스가 지정되어 있지 않아 방문 지역을 함께 보여주지 못해요. ` +
 			`<a href="/admin/apps">앱 관리에서 연결하기 →</a> · <a href="/admin/geo?period=${g.period}">전체 앱으로 보기 →</a></p>`
-		: `<div class="sh2"><h2>${escapeHtml(hitTitle)}</h2><a href="${trafficHref}">트래픽에서 보기 →</a></div>
+		: `${sectionHead(hitTitle, { href: trafficHref, linkLabel: "트래픽에서 보기 →" })}
 <div class="cap"><table class="fx" id="tb-hitgeo">${cols("160", "78", "72", "84:o1", "82:o1", "88:o1", ":o2", "78")}<thead><tr><th>국가</th><th class="n">방문</th><th class="n">사람</th><th class="n o1">고유 방문자</th><th class="n o1">AI 크롤러</th><th class="n o1">검색 크롤러</th><th class="o2">비중</th><th></th></tr></thead><tbody>${hitRows}</tbody></table></div>`;
 
 	return shellAdmin(
@@ -456,12 +458,12 @@ export function renderGeo(g: GeoData, opts: AdminOpts = {}): string {
 ${filterTabs("/admin/geo", g.period, g.appFilter, g.apps, PERIODS)}
 ${svgMap(g.points, g.geoUnknown, g.hitPoints, g.hitUnknown, g.hitSite ? siteName(g.hitSite) : "")}
 
-<div class="sh2"><h2>국가별 AI 호출</h2><span class="sm">${g.byCountry.filter((c) => c.key !== "(미상)").length}개국</span></div>
+${sectionHead("국가별 AI 호출", { count: `${g.byCountry.filter((c) => c.key !== "(미상)").length}개국` })}
 <div class="cap"><table class="fx" id="tb-country">${cols("160", "88", "70:o1", "70", "78", "84:o1", "84", "86:o2", ":o2", "66")}<thead><tr><th>국가</th><th class="n">호출</th><th class="n o1">성공</th><th class="n">실패</th><th class="n">고유 IP</th><th class="n o1">토큰</th><th class="n">비용</th><th class="n o2">평균 지연</th><th class="o2">비중</th><th></th></tr></thead><tbody>${countryRows}</tbody></table></div>
 
 ${hitSection}
 
-<div class="sh2"><h2>지역 · 도시별 (상위 ${g.byRegion.length})</h2>${tableFilter("tb-region", "도시·지역 이름으로 걸러보기")}</div>
+${sectionHead(`지역 · 도시별 (상위 ${g.byRegion.length})`, { right: tableFilter("tb-region", "도시·지역 이름으로 걸러보기") })}
 <div class="cap"><table class="fx" id="tb-region">${cols("92", "", "", "84", "70:o1", "70", "78:o1", "84:o2", "84")}<thead><tr><th>국가</th><th>지역</th><th>도시</th><th class="n">호출</th><th class="n o1">성공</th><th class="n">실패</th><th class="n o1">고유 IP</th><th class="n o2">토큰</th><th class="n">비용</th></tr></thead><tbody>${regionRows}</tbody></table></div>
 
 <p class="foot">${FOOT_GEO}<br>
@@ -1507,7 +1509,7 @@ ${agentBrief(a)}
     <div class="statline">검증된 판정 <b>${(lab?.total ?? 0).toLocaleString()}</b>건 · 정탐률 규칙 <b class="${(lab?.rule?.rate ?? 1) < 0.5 ? "r" : ""}">${pct1(lab?.rule?.rate)}</b> · 모델 <b class="${(lab?.model?.rate ?? 1) < 0.5 ? "r" : ""}">${pct1(lab?.model?.rate)}</b><br>검증셋 F1 규칙 <b>${pct1(ev?.rule?.f1)}</b> · 모델 <b>${pct1(ev?.model?.f1)}</b></div>
     <div class="scroll cap"><table class="tight"><tr><th>구분</th><th class="n">규칙 정밀도</th><th class="n">규칙 재현율</th><th class="n">모델 정밀도</th><th class="n">모델 재현율</th></tr>${compareRows}</table></div>
   </section>
-  <section><div class="sh2"><h2>탐지 모델</h2>${a.models.length > MODEL_SHOWN ? `<span class="sm">최근 ${MODEL_SHOWN}개만 · 전체 ${a.models.length}개</span>` : ""}</div>
+  <section>${sectionHead("탐지 모델", { note: a.models.length > MODEL_SHOWN ? `최근 ${MODEL_SHOWN}개만 · 전체 ${a.models.length}개` : "" })}
     <div class="scroll cap"><table class="tight"><tr><th>버전</th><th>상태</th><th>학습 시각</th><th class="n">학습 행</th><th>평가</th></tr>${modelRows}</table></div>
   </section>
 </div>
@@ -1617,7 +1619,7 @@ ${serverBarOf(d.state, d.heartbeatAge)}
   ${card("마지막 발송", d.lastSent ? ago(Date.now() - d.lastSent) : "-")}
 </div>
 
-${sectionHead("보낸 메일 내역", "/admin/anomaly?period=" + d.period, "이상 신호 보기 →")}
+${sectionHead("보낸 메일 내역", { href: `/admin/anomaly?period=${d.period}`, linkLabel: "이상 신호 보기 →" })}
 <div class="scroll cap"><table class="recent mail"><tr><th>보낸 시각</th><th>종류</th><th>갈래</th><th>등급</th><th>제목</th><th class="n">결과</th></tr>${rows}</table></div>
 
 <p class="foot">줄을 누르면 실제로 보낸 본문이 펼쳐져요. ‘받은 그대로 보기’는 메일함에서 보이는 모습 그대로 새 창에 띄워요.<br>
@@ -1695,7 +1697,7 @@ ${anomalyViewRow(nav, sevTabs)}
 ${anomalyAppRow(nav, apps, traffic)}
 ${serverBarOf(d.state, d.heartbeatAge)}
 
-<div class="sh2"><h2>판정 상세 <span class="sm">${d.rows.length.toLocaleString()}건${d.total > d.rows.length ? ` / ${d.total.toLocaleString()}건` : ""}${d.critical24 ? ` · 최근 24시간 심각 <b class="r">${d.critical24.toLocaleString()}</b>건` : ""}</span></h2><a href="/admin/anomaly?period=${d.period}&scope=${d.forScope}">요약으로 돌아가기 →</a></div>
+${sectionHead("판정 상세", { count: `${d.rows.length.toLocaleString()}건${d.total > d.rows.length ? ` / ${d.total.toLocaleString()}건` : ""}${d.critical24 ? ` · 최근 24시간 심각 <b class="r">${d.critical24.toLocaleString()}</b>건` : ""}`, href: `/admin/anomaly?period=${d.period}&scope=${d.forScope}`, linkLabel: "요약으로 돌아가기 →" })}
 <div class="cap tall"><table class="anb2">
 <colgroup><col class="c-when"><col class="c-sev"><col class="c-sig"><col class="c-app"><col><col class="c-vd"><col class="c-ml"></colgroup>
 <tr><th>구간</th><th>등급</th><th>신호</th><th>${traffic ? "서비스" : "앱"}</th><th>무슨 일인가</th><th>검증</th><th class="n">메일</th></tr>${rows}</table></div>
@@ -2263,7 +2265,7 @@ ${svgTraffic(t.buckets)}
 </div>
 
 <div class="two">
-  <section><div class="sh2"><h2>사람이 들어온 경로</h2><span class="sm">AI 답변 ${aiRefs.toLocaleString()}건 · 검색 ${searchRefs.toLocaleString()}건</span></div>
+  <section>${sectionHead("사람이 들어온 경로", { note: `AI 답변 ${aiRefs.toLocaleString()}건 · 검색 ${searchRefs.toLocaleString()}건` })}
     <div class="cap"><table><thead><tr><th>구분</th><th>출처</th><th class="n">방문</th></tr></thead><tbody>${refRows}</tbody></table></div>
   </section>
   <section>${sectionHead("AI 크롤러가 읽어간 경로")}
@@ -2280,7 +2282,7 @@ ${svgTraffic(t.buckets)}
   </section>
 </div>
 
-${sectionHead(`없는 주소 요청 (404) · ${t.notFound.total.toLocaleString()}건`, `/admin/traffic${q}`, "")}
+${sectionHead(`없는 주소 요청 (404) · ${t.notFound.total.toLocaleString()}건`)}
 ${notFoundPanel(t)}
 
 ${sectionHead("최근 크롤러 방문")}

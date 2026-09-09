@@ -542,10 +542,19 @@ const EXTRA_CSS = `
  .topbar .in>form .btn{font-size:var(--fs-sm);padding:6px 10px;}}
 
 /* 제목 오른쪽에 "자세히" 링크를 붙이는 소제목 */
-.sh2{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:26px 0 9px;}
-.sh2 h2{margin:0;}
-.sh2 a{font-size:var(--fs-sm);font-weight:700;color:var(--accent);text-decoration:none;white-space:nowrap;}
-.sh2 a:hover{text-decoration:underline;}
+.sect{display:flex;align-items:baseline;justify-content:space-between;gap:var(--sp-3);margin:26px 0 var(--sp-2);flex-wrap:wrap;}
+.sect h2{margin:0;display:inline-flex;align-items:baseline;gap:6px;min-width:0;}
+.sect .ct{font-size:var(--fs-xs);font-weight:700;color:var(--muted);}
+.sect .rt{display:flex;align-items:baseline;gap:10px;margin-left:auto;min-width:0;}
+.sect .rt input{max-width:240px;}
+.sect a{font-size:var(--fs-sm);font-weight:700;color:var(--accent);text-decoration:none;white-space:nowrap;}
+.sect a:hover{text-decoration:underline;}
+/* 각주 문단 대신 쓰는 설명 표시 — 눌러서 읽는 게 아니라 올려서 읽는다 */
+.info{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;
+ border-radius:50%;border:1px solid var(--line);background:var(--panel);color:var(--muted);
+ font-size:var(--fs-xs);font-weight:800;font-style:italic;line-height:1;cursor:default;
+ position:relative;top:1px;flex:0 0 14px;}
+.info:hover{color:var(--ink);border-color:var(--muted);}
 
 /* 직전 같은 기간과 비교한 증감 */
 .dl{display:inline-flex;align-items:center;gap:2px;font-size:var(--fs-xs);font-weight:800;
@@ -1044,8 +1053,7 @@ label.chk input{margin-top:3px;flex:0 0 auto;}
  .clock .t{font-size:var(--fs-lg);}
  .tabs{gap:6px;margin-bottom:10px;}
  .tab{font-size:var(--fs-sm);padding:6px 11px;}
- .sh2{flex-wrap:wrap;gap:4px;margin:20px 0 8px;}
- .sh2 h2{font-size:var(--fs-lg);}
+ .sect{gap:var(--sp-1);margin:20px 0 var(--sp-2);}
  .kpi2{grid-template-columns:repeat(2,1fr);gap:8px;}
  .m{padding:9px 11px;}
  .m .v{font-size:var(--fs-lg);}
@@ -1637,8 +1645,34 @@ export function filterTabs(
 }
 
 /** 소제목 + 오른쪽 "자세히" 링크. */
-export function sectionHead(title: string, href = "", linkLabel = "자세히 →"): string {
-	return `<div class="sh2"><h2>${escapeHtml(title)}</h2>${href ? `<a href="${href}">${linkLabel}</a>` : ""}</div>`;
+export interface SectionOpts {
+	/** 오른쪽 링크 주소. 없으면 링크를 그리지 않는다. */
+	href?: string;
+	linkLabel?: string;
+	/** 제목 옆 회색 숫자("4개", "12건"). HTML을 그대로 넣는다. */
+	count?: string;
+	/** 오른쪽 작은 글씨(합계 같은 것). HTML을 그대로 넣는다. */
+	note?: string;
+	/** ⓘ 표시에 붙는 설명. 각주 문단 대신 여기에 둔다. */
+	tip?: string;
+	/** 표 거르기 입력처럼 오른쪽에 넣을 것. */
+	right?: string;
+	id?: string;
+}
+
+/**
+ * 소제목 — 화면의 모든 칸이 이 함수 하나만 쓴다.
+ * 전에는 sectionHead()와 <div class="sh2">가 섞여 있어 같은 자리인데 간격·글자가 달랐다.
+ */
+export function sectionHead(title: string, opts: SectionOpts = {}): string {
+	const right =
+		(opts.note ? `<span class="sm">${opts.note}</span>` : "") +
+		(opts.right ?? "") +
+		(opts.href ? `<a href="${opts.href}">${opts.linkLabel ?? "자세히 →"}</a>` : "");
+	return `<div class="sect"${opts.id ? ` id="${opts.id}"` : ""}><h2>${escapeHtml(title)}` +
+		(opts.count ? `<span class="ct">${opts.count}</span>` : "") +
+		(opts.tip ? `<span class="info" data-tip="${escapeHtml(opts.tip)}">i</span>` : "") +
+		`</h2>${right ? `<div class="rt">${right}</div>` : ""}</div>`;
 }
 
 /**
