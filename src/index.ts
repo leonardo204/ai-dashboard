@@ -33,7 +33,7 @@
 import { handleChat, handleEmbeddings, type ProxyEnv } from "./proxy";
 import { renderGuide, GUIDE_MD, GUIDE_FILENAME } from "./guide";
 import {
-	collectStats, collectSummary, collectUsage, collectTrend, collectGeo, queryLogs, logsCsv,
+	collectStats, collectSummary, collectBoard, collectUsage, collectTrend, collectGeo, queryLogs, logsCsv,
 	listApps, getApp, upsertApp, deleteApp, newToken, pulse, exportCalls, normPeriod, LOG_PAGE,
 	collectAnomaly, collectAnomalyBoard, pushAnomaly, collectMails, getMailHtml, listPasskeys, passkeyCount, deletePasskey,
 	collectTraffic,
@@ -742,6 +742,12 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 				return apiErr(401, "인증이 필요해요. Authorization: Bearer <ADMIN_API_KEY> 헤더를 넣어 주세요.");
 			}
 			const { period, appFilter } = statScope(url);
+			// ?board=1 이면 상황판이 쓰는 값 그대로 — 화면 숫자와 대조할 때 쓴다.
+			if (url.searchParams.get("board")) {
+				return new Response(JSON.stringify(await collectBoard(env, period, appFilter), null, 2), {
+					headers: { "Content-Type": "application/json;charset=UTF-8", "Cache-Control": "no-store" },
+				});
+			}
 			return new Response(JSON.stringify(await collectStats(env, period, appFilter), null, 2), {
 				headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
 			});

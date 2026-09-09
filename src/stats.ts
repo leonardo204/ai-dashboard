@@ -1059,6 +1059,8 @@ export interface AnomalyBrief {
 
 /** 요약 화면 이상탐지 칸에 보여줄 최근 이상 건수. */
 export const SUMMARY_ANOMALY_RECENT = 3;
+/** 상황판에 보여줄 열린 신호 수 — 세 건이면 '지금 무슨 일인가'는 충분히 읽힌다. */
+export const BOARD_SIGNALS = 3;
 
 /** 요약 화면 맨 아래에 보여줄 최근 호출 건수. */
 export const SUMMARY_RECENT = 5;
@@ -1288,6 +1290,447 @@ function anomalyBriefOf(
 		hitRate,
 		recent,
 	};
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// 상황판 (/admin)
+//   첫 화면은 "지금 문제가 있나"에만 답한다. 나머지 숫자는 하위 화면에 있다.
+//   그래서 예전 요약 화면이 돌리던 열네 개 집계 대신 일곱 개만 돈다.
+// ─────────────────────────────────────────────────────────────
+
+/** 상태 한 줄을 가르는 문턱값. 나중에 관리 화면에서 고칠 수 있게 한곳에 모아 둔다. */
+export const BOARD_RULES = {
+	/** 이 아래로는 표본이 적어 비율을 믿지 않는다. */
+	minCalls: 20,
+	/** 실패율이 이만큼이면 '문제' */
+	failBad: 0.05,
+	/** '주의'로 볼 최소 실패율(급증과 함께 걸린다) */
+	failWarnFloor: 0.01,
+	/** 실패율이 직전 기간의 몇 배면 '주의' */
+	failSpike: 3,
+	/** 탐지 서버 신호가 끊긴 것으로 보는 시간 */
+	beatBad: 15 * 60_000,
+	beatWarn: 5 * 60_000,
+	/** 이달 예상 비용이 지난달의 몇 배면 '주의' */
+	costSpike: 1.5,
+	/** 달이 이만큼은 지나야 예상치를 쓴다 */
+	monthMin: 0.15,
+	/** p95 지연이 직전 기간의 몇 배면 '주의' */
+	latSpike: 2,
+};
+
+/** 상태 문장에 쓰는 금액 표기. ui.ts의 usd()와 같은 규칙이지만 여기서 ui를 부르지는 않는다. */
+const money = (v: number) => `$${v.toFixed(v < 1 ? 4 : 2)}`;
+
+/** 오탐으로 판정된 신호 — 열린 것으로 세지 않는다. */
+const FP_SQL = "('rule_fp','model_fp','both_fp')";
+/**
+ * 상황판이 쓰는 창 함수 묶음.
+ * LIMIT은 맨 마지막에 걸리므로 창 함수는 걸러진 전체를 본다 — 몇 건만 받아 오면서 개수도 같이 센다.
+ * n·nc·nw는 이 기간에 열린 신호, c24·w24는 최근 하루치다(상태 한 줄은 지금을 말해야 한다).
+ */
+const WIN =
+	` SUM(CASE WHEN verdict IS NULL OR verdict NOT IN ${FP_SQL} THEN 1 ELSE 0 END) OVER () AS n,` +
+	` SUM(CASE WHEN severity='critical' AND (verdict IS NULL OR verdict NOT IN ${FP_SQL}) THEN 1 ELSE 0 END) OVER () AS nc,` +
+	` SUM(CASE WHEN severity='warn' AND (verdict IS NULL OR verdict NOT IN ${FP_SQL}) THEN 1 ELSE 0 END) OVER () AS nw,` +
+	" SUM(CASE WHEN verdict IS NOT NULL THEN 1 ELSE 0 END) OVER () AS nj," +
+	` SUM(CASE WHEN bucket >= ?2 AND severity='critical' AND (verdict IS NULL OR verdict NOT IN ${FP_SQL}) THEN 1 ELSE 0 END) OVER () AS c24,` +
+	` SUM(CASE WHEN bucket >= ?2 AND severity='warn' AND (verdict IS NULL OR verdict NOT IN ${FP_SQL}) THEN 1 ELSE 0 END) OVER () AS w24,` +
+	" MAX(detected_at) OVER () AS last";
+
+export interface BoardStatus {
+	level: "ok" | "warn" | "bad";
+	/** 근거 한 문장. 여러 개가 걸려도 가장 급한 것 하나만 적는다. */
+	reason: string;
+	/** 그 근거를 확인할 화면 */
+	href: string;
+}
+
+export interface BoardStatusInput {
+	total: number;
+	error: number;
+	prevTotal: number;
+	prevError: number;
+	p95: number;
+	prevP95: number;
+	heartbeatAge: number | null;
+	openCritical: number;
+	openWarn: number;
+	/** 열린 신호 가운데 가장 급한 것의 이름·앱 */
+	topSignal: { label: string; app: string } | null;
+	monthCost: number;
+	prevMonthCost: number;
+	monthProgress: number;
+	/** 화면 링크에 붙일 질의 문자열(?period=…&app=…) */
+	q: string;
+}
+
+/**
+ * 상태 한 줄 — 위에서부터 먼저 맞는 것 하나만 고른다.
+ * 순수 함수라 값만 넣어 시험할 수 있다.
+ */
+export function boardStatus(i: BoardStatusInput): BoardStatus {
+	const R = BOARD_RULES;
+	const rate = i.total ? i.error / i.total : 0;
+	const prevRate = i.prevTotal ? i.prevError / i.prevTotal : 0;
+	const enough = i.total >= R.minCalls;
+	const who = i.topSignal ? `${i.topSignal.label}${i.topSignal.app && i.topSignal.app !== "*" ? ` · ${i.topSignal.app}` : ""}` : "";
+
+	// ── 문제
+	if (i.openCritical > 0) {
+		return {
+			level: "bad",
+			reason: `최근 하루에 심각 신호 ${i.openCritical.toLocaleString()}건이 잡혔어요${who ? ` — ${who}` : ""}`,
+			href: `/admin/anomaly${i.q}`,
+		};
+	}
+	if (i.heartbeatAge === null || i.heartbeatAge > R.beatBad) {
+		return {
+			level: "bad",
+			reason: i.heartbeatAge === null ? "이상탐지 서버에서 아직 신호가 오지 않았어요" : "이상탐지 서버 신호가 끊겼어요",
+			href: `/admin/anomaly${i.q}`,
+		};
+	}
+	if (enough && rate >= R.failBad) {
+		return {
+			level: "bad",
+			reason: `실패율 ${(rate * 100).toFixed(1)}% · ${i.error.toLocaleString()}건`,
+			href: `/admin/calls/logs${i.q}&status=error`,
+		};
+	}
+
+	// ── 주의
+	if (i.openWarn > 0) {
+		return {
+			level: "warn",
+			reason: `최근 하루에 주의 신호 ${i.openWarn.toLocaleString()}건이 잡혔어요${who ? ` — ${who}` : ""}`,
+			href: `/admin/anomaly${i.q}`,
+		};
+	}
+	if (i.heartbeatAge > R.beatWarn) {
+		return { level: "warn", reason: "이상탐지 서버 신호가 늦어지고 있어요", href: `/admin/anomaly${i.q}` };
+	}
+	if (enough && rate >= R.failWarnFloor && prevRate > 0 && rate >= prevRate * R.failSpike) {
+		return {
+			level: "warn",
+			reason: `실패율 ${(rate * 100).toFixed(1)}% — 직전 같은 기간의 ${(rate / prevRate).toFixed(1)}배예요`,
+			href: `/admin/calls/logs${i.q}&status=error`,
+		};
+	}
+	if (i.monthProgress >= R.monthMin && i.prevMonthCost > 0) {
+		const forecast = i.monthCost / i.monthProgress;
+		if (forecast >= i.prevMonthCost * R.costSpike) {
+			return {
+				level: "warn",
+				reason: `이달 예상 비용 ${money(forecast)} — 지난달 ${money(i.prevMonthCost)}의 ${(forecast / i.prevMonthCost).toFixed(1)}배예요`,
+				href: `/admin/calls/usage${i.q}`,
+			};
+		}
+	}
+	if (enough && i.prevP95 > 0 && i.p95 >= i.prevP95 * R.latSpike) {
+		return {
+			level: "warn",
+			reason: `p95 지연 ${(i.p95 / 1000).toFixed(1)}초 — 직전 같은 기간의 ${(i.p95 / i.prevP95).toFixed(1)}배예요`,
+			href: `/admin/calls/logs${i.q}&slow=${Math.round(i.prevP95 * R.latSpike)}`,
+		};
+	}
+
+	return { level: "ok", reason: "잡힌 이상 신호가 없고 실패율·지연·비용 모두 평소 범위예요", href: `/admin/calls${i.q}` };
+}
+
+/** 상황판이 쓰는 이상 신호 묶음 — 열린 것 몇 건과 개수, 서버 상태만. */
+export interface BoardAnomaly {
+	/** 오탐으로 판정되지 않은 신호 몇 건 (급한 순) */
+	open: AnomalyBriefRow[];
+	openTotal: number;
+	critical: number;
+	warn: number;
+	/** 그중 최근 하루에 잡힌 것 — 상태 한 줄은 이 값으로 가른다. */
+	critical24: number;
+	warn24: number;
+	/** 이 기간에 이상탐지 에이전트가 판정한 건수 */
+	judged: number;
+	heartbeatAge: number | null;
+	lastDetected: number;
+}
+
+export interface BoardData {
+	period: string;
+	appFilter: string;
+	since: number;
+	bucketLabel: string;
+	apps: AppBrief[];
+	/** 이번 기간 합계 */
+	total: number;
+	ok: number;
+	error: number;
+	inTokens: number;
+	outTokens: number;
+	cost: number;
+	avgLatency: number;
+	p95Latency: number;
+	modelCount: number;
+	countryCount: number;
+	/** 실패를 HTTP 코드별로 — 카드 보조 줄과 '달라진 것'이 쓴다. */
+	byHttp: { http: number; count: number }[];
+	byApp: (GroupRow & { name: string })[];
+	byModel: GroupRow[];
+	byCountry: { key: string; total: number }[];
+	/** 직전 같은 기간. 전체 기간을 보는 중이면 null. */
+	prev: {
+		total: number; error: number; cost: number; avgLatency: number; p95Latency: number;
+		byApp: Record<string, number>;
+		byModel: Record<string, number>;
+		byCountry: Record<string, number>;
+		byAppCost: Record<string, number>;
+	} | null;
+	buckets: Bucket[];
+	monthly: MonthCost[];
+	monthProgress: number;
+	anomaly: BoardAnomaly;
+	/** 트래픽 한 줄 — 오늘 방문과 그중 AI 크롤러 몫. */
+	traffic: { today: number; ai: number; human: number } | null;
+	status: BoardStatus;
+}
+
+export async function collectBoard(env: StatsEnv, period: string, appFilter: string): Promise<BoardData> {
+	return withSchema(env, () => collectBoardInner(env, period, appFilter));
+}
+
+async function collectBoardInner(env: StatsEnv, period: string, appFilter: string): Promise<BoardData> {
+	const { p, since, prevSince } = periodInfo(period);
+	const monthSince = Date.now() - 400 * 86_400_000;
+	// 오늘(KST) 0시
+	const KST = 9 * 3600_000;
+	const k = new Date(Date.now() + KST);
+	const todayStart = Date.UTC(k.getUTCFullYear(), k.getUTCMonth(), k.getUTCDate()) - KST;
+	const dayAgo = Date.now() - 86_400_000;
+
+	const scanFrom = p.days ? prevSince : 0;
+	const appWhere = appFilter ? " AND app = ?3" : "";
+	const bind3 = (sql: string) => {
+		const st = env.DB.prepare(sql);
+		return appFilter ? st.bind(scanFrom, since, appFilter) : st.bind(scanFrom, since);
+	};
+
+	const [apps, groupRs, bucketRs, anomRs, stateRs, monthRs, hitRow] = await Promise.all([
+		appBriefs(env),
+
+		// ① 이번 기간과 직전 기간을 한 번에 — 같은 표를 두 번 훑지 않는다.
+		bind3(
+			"SELECT CASE WHEN ts >= ?2 THEN 1 ELSE 0 END AS cur," +
+				" COALESCE(app,'(미상)') AS app, model," +
+				" COALESCE(NULLIF(country,''),'(미상)') AS ctry," +
+				" CASE WHEN status='error' THEN COALESCE(http,0) ELSE -1 END AS ehttp," +
+				AGG +
+				` FROM calls WHERE ts >= ?1${appWhere} GROUP BY cur, app, model, ctry, ehttp`,
+		).all<AggRow & { cur: number; app: string; model: string | null; ctry: string; ehttp: number }>(),
+
+		// ② 카드 안 추이선과 흐름 — 서비스·내부 도구를 갈라 둔다.
+		(appFilter
+			? env.DB.prepare(
+					`SELECT ${bucketExpr(p.bucket)} AS b, model,` + INN + AGG +
+						" FROM calls WHERE ts >= ?1 AND app = ?2 GROUP BY b, model, inn ORDER BY b DESC",
+				).bind(since, appFilter)
+			: env.DB.prepare(
+					`SELECT ${bucketExpr(p.bucket)} AS b, model,` + INN + AGG +
+						" FROM calls WHERE ts >= ?1 GROUP BY b, model, inn ORDER BY b DESC",
+				).bind(since)
+		).all<AggRow & { b: string; model: string | null; inn: number }>(),
+
+		// ③ 열린 신호 몇 건 + 전체 개수(창 함수로 한 번에).
+		(appFilter
+			? env.DB.prepare(
+					"SELECT bucket, app, signal, severity, label, observed, baseline, detail, verdict, verdict_reason," +
+						WIN +
+						" FROM anomalies WHERE bucket >= ?1 AND scope='ai' AND app = ?3" +
+						" ORDER BY CASE WHEN verdict IN ('rule_fp','model_fp','both_fp') THEN 1 ELSE 0 END," +
+						" CASE severity WHEN 'critical' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END, bucket DESC" +
+						` LIMIT ${BOARD_SIGNALS}`,
+				).bind(since, dayAgo, appFilter)
+			: env.DB.prepare(
+					"SELECT bucket, app, signal, severity, label, observed, baseline, detail, verdict, verdict_reason," +
+						WIN +
+						" FROM anomalies WHERE bucket >= ?1 AND scope='ai'" +
+						" ORDER BY CASE WHEN verdict IN ('rule_fp','model_fp','both_fp') THEN 1 ELSE 0 END," +
+						" CASE severity WHEN 'critical' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END, bucket DESC" +
+						` LIMIT ${BOARD_SIGNALS}`,
+				).bind(since, dayAgo)
+		).all<AnomalyBriefRow & { n: number; nc: number; nw: number; nj: number; c24: number; w24: number; last: number | null }>(),
+
+		// ④ 탐지 서버가 살아 있나
+		env.DB.prepare("SELECT key, value, updated_at FROM anomaly_state").all<{ key: string; value: string; updated_at: number }>(),
+
+		// ⑤ 달별 비용 열두 달
+		(appFilter
+			? env.DB.prepare(
+					`SELECT ${bucketExpr("month")} AS m, model,` + INN + AGG +
+						" FROM calls WHERE ts >= ?1 AND app = ?2 GROUP BY m, model, inn",
+				).bind(monthSince, appFilter)
+			: env.DB.prepare(
+					`SELECT ${bucketExpr("month")} AS m, model,` + INN + AGG +
+						" FROM calls WHERE ts >= ?1 GROUP BY m, model, inn",
+				).bind(monthSince)
+		).all<AggRow & { m: string; model: string | null; inn: number }>(),
+
+		// ⑥ 트래픽 한 줄 — 오늘 하루치만. hits 표가 없는 환경도 있어 실패를 삼킨다.
+		env.DB.prepare("SELECT COUNT(*) AS n, SUM(kind='ai') AS a, SUM(kind='human') AS h FROM hits WHERE ts >= ?1")
+			.bind(todayStart)
+			.first<{ n: number; a: number | null; h: number | null }>()
+			.catch(() => null),
+	]);
+
+	// ── 이번·직전 기간 나누기
+	const byAppMap = new Map<string, GroupRow>();
+	const byModelMap = new Map<string, GroupRow>();
+	const byCountryMap = new Map<string, number>();
+	const httpMap = new Map<number, number>();
+	const prevApp: Record<string, number> = {};
+	const prevAppCost: Record<string, number> = {};
+	const prevModel: Record<string, number> = {};
+	const prevCountry: Record<string, number> = {};
+	let total = 0, ok = 0, error = 0, inTokens = 0, outTokens = 0, cost = 0, latSum = 0;
+	let pT = 0, pE = 0, pC = 0, pL = 0, pOk = 0;
+
+	for (const r of groupRs.results ?? []) {
+		const u = unitOf(r, r.model);
+		if (r.cur) {
+			addTo(byAppMap, r.app, u);
+			addTo(byModelMap, r.model ?? "(미상)", u);
+			byCountryMap.set(r.ctry, (byCountryMap.get(r.ctry) ?? 0) + u.total);
+			if (r.ehttp >= 0) httpMap.set(r.ehttp, (httpMap.get(r.ehttp) ?? 0) + u.error);
+			total += u.total; ok += u.ok; error += u.error;
+			inTokens += u.inTok; outTokens += u.outTok; cost += u.cost; latSum += u.latency;
+		} else {
+			prevApp[r.app] = (prevApp[r.app] ?? 0) + u.total;
+			prevAppCost[r.app] = (prevAppCost[r.app] ?? 0) + u.cost;
+			const m = r.model ?? "(미상)";
+			prevModel[m] = (prevModel[m] ?? 0) + u.total;
+			prevCountry[r.ctry] = (prevCountry[r.ctry] ?? 0) + u.total;
+			pT += u.total; pE += u.error; pC += u.cost; pL += u.latency; pOk += u.ok;
+		}
+	}
+
+	// ── p95는 세워 놓고 한 건만 읽는다. 이번·직전을 한 번에 묻는다.
+	const [p95Latency, prevP95] = await Promise.all([
+		p95Of(env, since, appFilter, ok),
+		p.days ? p95Between(env, prevSince, since, appFilter, pOk) : Promise.resolve(0),
+	]);
+
+	// ── 흐름 버킷
+	const bmap = new Map<string, Bucket>();
+	for (const r of bucketRs.results ?? []) {
+		const cur = bmap.get(r.b) ?? emptyBucket(r.b);
+		const c = mergeCost(r.realCost, r.model, r.eIn, r.eOut);
+		cur.total += r.total; cur.ok += r.ok ?? 0; cur.error += r.error ?? 0;
+		cur.tokens += r.inTok + r.outTok; cur.cost += c;
+		if (r.inn) { cur.internal += r.total; cur.internalCost += c; }
+		bmap.set(r.b, cur);
+	}
+	const buckets = Array.from(bmap.values()).sort((a, b) => (a.b < b.b ? 1 : -1)).slice(0, 30);
+
+	// ── 달별 비용
+	const mmap = new Map<string, MonthCost>();
+	for (const r of monthRs.results ?? []) {
+		const cur = mmap.get(r.m) ?? { m: r.m, total: 0, cost: 0, internalCost: 0, internalTotal: 0 };
+		const c = mergeCost(r.realCost, r.model, r.eIn, r.eOut);
+		cur.total += r.total;
+		cur.cost += c;
+		if (r.inn) { cur.internalCost += c; cur.internalTotal += r.total; }
+		mmap.set(r.m, cur);
+	}
+	const monthly = Array.from(mmap.values()).sort((a, b) => a.m.localeCompare(b.m)).slice(-12);
+
+	// ── 이상 신호
+	const rows = anomRs.results ?? [];
+	const head = rows[0];
+	const openRows = rows.filter((r) => !VERDICT_MISS.includes(r.verdict ?? ""));
+	// 서버가 무엇이든 밀어 넣으면 살아 있는 것이다. 이상탐지 화면과 같은 기준을 쓴다.
+	const beat = (stateRs.results ?? []).reduce((a, b) => Math.max(a, b.updated_at || 0), 0);
+	const anomaly: BoardAnomaly = {
+		open: openRows,
+		openTotal: head?.n ?? 0,
+		critical: head?.nc ?? 0,
+		warn: head?.nw ?? 0,
+		critical24: head?.c24 ?? 0,
+		warn24: head?.w24 ?? 0,
+		judged: head?.nj ?? 0,
+		heartbeatAge: beat ? Date.now() - beat : null,
+		lastDetected: head?.last ?? 0,
+	};
+
+	const nameOf = new Map(apps.map((a) => [a.id, a.name]));
+	const byApp = Array.from(byAppMap.values()).sort(desc).map((r) => ({ ...r, name: nameOf.get(r.key) ?? r.key }));
+	const byCountry = Array.from(byCountryMap.entries())
+		.map(([key, t]) => ({ key, total: t }))
+		.sort((a, b) => b.total - a.total);
+	const nowKey = new Date(Date.now() + KST).toISOString().slice(0, 7);
+	const curMonth = monthly.find((m) => m.m === nowKey);
+	const lastMonth = monthly.filter((m) => m.m !== nowKey).slice(-1)[0];
+	const q = `?period=${period}${appFilter ? `&app=${encodeURIComponent(appFilter)}` : ""}`;
+
+	// 열린 신호 가운데 가장 급한 것 — 상태 한 줄에 이름을 붙인다.
+	const top = openRows.find((r) => r.severity === "critical") ?? openRows.find((r) => r.severity === "warn") ?? null;
+
+	return {
+		period,
+		appFilter,
+		since,
+		bucketLabel: bucketLabelOf(p.bucket),
+		apps,
+		total, ok, error, inTokens, outTokens, cost,
+		avgLatency: total ? Math.round(latSum / total) : 0,
+		p95Latency,
+		modelCount: byModelMap.size,
+		countryCount: byCountry.filter((c) => c.key !== "(미상)").length,
+		byHttp: Array.from(httpMap.entries())
+			.map(([http, count]) => ({ http, count }))
+			.sort((a, b) => b.count - a.count),
+		byApp,
+		byModel: Array.from(byModelMap.values()).sort(desc),
+		byCountry,
+		prev: p.days
+			? {
+					total: pT, error: pE, cost: pC,
+					avgLatency: pT ? Math.round(pL / pT) : 0,
+					p95Latency: prevP95,
+					byApp: prevApp, byModel: prevModel, byCountry: prevCountry, byAppCost: prevAppCost,
+				}
+			: null,
+		buckets,
+		monthly,
+		monthProgress: monthProgress(),
+		anomaly,
+		traffic: hitRow ? { today: hitRow.n ?? 0, ai: hitRow.a ?? 0, human: hitRow.h ?? 0 } : null,
+		status: boardStatus({
+			total, error,
+			prevTotal: pT, prevError: pE,
+			p95: p95Latency, prevP95,
+			heartbeatAge: anomaly.heartbeatAge,
+			openCritical: anomaly.critical24,
+			openWarn: anomaly.warn24,
+			topSignal: top ? { label: top.label || top.signal, app: top.app } : null,
+			monthCost: curMonth?.cost ?? 0,
+			prevMonthCost: lastMonth?.cost ?? 0,
+			monthProgress: monthProgress(),
+			q,
+		}),
+	};
+}
+
+/** 직전 기간의 p95 — 범위만 다르고 방식은 p95Of와 같다. */
+async function p95Between(
+	env: StatsEnv, from: number, to: number, appFilter: string, okCount: number,
+): Promise<number> {
+	if (okCount <= 0) return 0;
+	const off = Math.max(0, Math.floor((okCount - 1) * 0.95));
+	const where = appFilter ? " AND app = ?3" : "";
+	const st = env.DB.prepare(
+		`SELECT latency_ms AS v FROM calls WHERE ts >= ?1 AND ts < ?2${where} AND status='ok' ORDER BY latency_ms LIMIT 1 OFFSET ${off}`,
+	);
+	const row = await (appFilter ? st.bind(from, to, appFilter) : st.bind(from, to)).first<{ v: number }>();
+	return row?.v ?? 0;
 }
 
 // ── 사용량 화면 ──────────────────────────────────────────────
