@@ -36,6 +36,20 @@ CREATE INDEX IF NOT EXISTS idx_calls_ts     ON calls(ts);
 CREATE INDEX IF NOT EXISTS idx_calls_ip_ts  ON calls(ip, ts);
 CREATE INDEX IF NOT EXISTS idx_calls_app_ts ON calls(app, ts);
 
+-- (앱, IP) 별 호출 수를 미리 세어 두는 칸 — rate limit 이 읽는 유일한 표.
+-- 예전에는 호출마다 calls 를 24시간 훑어 세었다. 그러면 그 IP 가 오늘 부른 만큼
+-- 행을 읽어, 1,000 번째 호출이 999 행을 읽는다. 호출 수의 제곱으로 늘어나
+-- 하루 2,000 번만 몰아 불러도 D1 무료 하루 읽기 500 만 행에 닿았다.
+-- 이제 분 칸·일 칸 두 줄만 읽고 쓴다.
+CREATE TABLE IF NOT EXISTS rate_counter (
+  app    TEXT    NOT NULL,        -- 앱 id
+  ip     TEXT    NOT NULL,        -- 클라이언트 IP
+  span   TEXT    NOT NULL,        -- 'm' 분 칸 / 'd' 일 칸
+  bucket INTEGER NOT NULL,        -- 그 칸의 번호 (epoch 을 분·일로 나눈 몫)
+  n      INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (app, ip, span, bucket)
+);
+
 -- 지리 정보 (Cloudflare request.cf — 외부 조회 없음)
 ALTER TABLE calls ADD COLUMN country TEXT;   -- ISO 3166-1 alpha-2 (예: KR)
 ALTER TABLE calls ADD COLUMN region  TEXT;   -- 광역 지역 (예: Seoul)

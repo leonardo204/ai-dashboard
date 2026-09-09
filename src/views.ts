@@ -963,7 +963,7 @@ function modelMetrics(raw: string | null): string {
 }
 
 /** 심각도 비중 도넛 — 요약 칸 왼쪽에 들어가는 작은 판. 가운데에 전체 건수를 적는다. */
-const SEV_COLOR: Record<string, string> = { critical: "#c0392b", warn: "#E0A33B", info: "#35A7FF" };
+const SEV_COLOR: Record<string, string> = { critical: "var(--bad)", warn: "var(--warn)", info: "var(--info)" };
 
 function sevDonut(a: { critical: number; warn: number; info: number; total: number }): string {
 	return smallDonut(
@@ -993,7 +993,7 @@ function smallDonut(rows: { label: string; v: number; color: string }[], total: 
 	let acc = -Math.PI / 2;
 	const arcs =
 		parts.length === 1
-			? `<circle cx="${C}" cy="${C}" r="${(R + r) / 2}" fill="none" stroke="${parts[0].color}" stroke-width="${R - r}" data-tip="${escapeHtml(`${parts[0].label} ${parts[0].v.toLocaleString()}건 (100%)`)}"/>`
+			? `<circle cx="${C}" cy="${C}" r="${(R + r) / 2}" fill="none" style="stroke:${parts[0].color}" stroke-width="${R - r}" data-tip="${escapeHtml(`${parts[0].label} ${parts[0].v.toLocaleString()}건 (100%)`)}"/>`
 			: parts
 					.map((s) => {
 						const ang = (s.v / sum) * Math.PI * 2;
@@ -1003,7 +1003,7 @@ function smallDonut(rows: { label: string; v: number; color: string }[], total: 
 						const large = ang > Math.PI ? 1 : 0;
 						const d = `M ${pt(a0, R)} A ${R} ${R} 0 ${large} 1 ${pt(a1, R)} L ${pt(a1, r)} A ${r} ${r} 0 ${large} 0 ${pt(a0, r)} Z`;
 						const tip = `${s.label} ${s.v.toLocaleString()}건 (${((s.v / sum) * 100).toFixed(0)}%)`;
-						return `<path d="${d}" fill="${s.color}" data-tip="${escapeHtml(tip)}"/>`;
+						return `<path d="${d}" style="fill:${s.color}" data-tip="${escapeHtml(tip)}"/>`;
 					})
 					.join("");
 
@@ -1932,7 +1932,7 @@ function appCard(a: AppConfig): string {
       </div>
       <div class="fld"><label>짝이 되는 서비스 — 지역 탭에서 이 앱을 고르면 이 서비스의 방문도 함께 보여요</label>
         ${siteSelect(a.site)}</div>
-      <label class="chk"><input type="checkbox" name="internal" value="1"${a.internal ? " checked" : ""}> 내부용 앱 — 이상탐지 에이전트처럼 우리 쪽이 부르는 앱이에요. 앱 탭에서 뒤로 물리고, 요약의 최근 호출에서는 빼요.</label>
+      <label class="chk"><input type="checkbox" name="internal" value="1"${a.internal ? " checked" : ""}> 내부용 앱 — 이상탐지·메일 도구처럼 우리 쪽 서버가 부르는 앱이에요. IP 기준 상한을 걸지 않고(한 곳에서 몰아 부르는 것이 정상이라서), 앱 탭에서 뒤로 물리고 요약의 최근 호출에서는 빼요.</label>
       <div class="eacts"><button class="btn p" type="submit">저장</button>
         <button type="button" class="btn" data-toggle="${escapeHtml(ed)}">취소</button></div>
     </form>
@@ -1991,7 +1991,7 @@ export function renderApps(apps: AppConfig[], passkeys: PasskeyRow[] = [], opts:
       <div class="fld"><label>메모</label><input name="note" placeholder="용도·비고"></div>
       <div class="fld"><label>짝이 되는 서비스 (선택)</label>${siteSelect("")}</div>
     </div>
-    <label class="chk"><input type="checkbox" name="internal" value="1"> 내부용 앱(우리 쪽이 부르는 앱)</label>
+    <label class="chk"><input type="checkbox" name="internal" value="1"> 내부용 앱(우리 쪽 서버가 부르는 앱 — IP 상한을 걸지 않아요)</label>
     <div class="eacts"><button class="btn p" type="submit">추가 (토큰 자동 발급)</button>
       <button type="button" class="btn" data-toggle="new-app" data-on="닫기" data-off="새 앱 추가">취소</button></div>
   </form>
@@ -2042,7 +2042,7 @@ Content-Type: application/json
 
 /** 방문 종류 색 — 화면 어디서나 같은 뜻으로 쓴다(차트 범례와 맞춘다). */
 const KIND_COLOR: Record<string, string> = {
-	human: "#925FF0", ai: "#C85A95", search: "#35A7FF", social: "#44AB42", other: "#cfd6e4",
+	human: "var(--accent)", ai: "var(--accent-2)", search: "var(--info)", social: "var(--ok)", other: "var(--int)",
 };
 const KIND_LABEL: Record<string, string> = {
 	human: "사람", ai: "AI 크롤러", search: "검색 크롤러", social: "SNS 미리보기", bot: "기타 봇", other: "기타 봇",

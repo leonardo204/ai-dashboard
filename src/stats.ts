@@ -89,6 +89,9 @@ export async function ensureSchema(env: StatsEnv): Promise<void> {
 	await env.DB.prepare(
 		"CREATE TABLE IF NOT EXISTS calls (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL, http INTEGER, latency_ms INTEGER, ip TEXT, in_tokens INTEGER DEFAULT 0, out_tokens INTEGER DEFAULT 0, err TEXT)",
 	).run();
+	await env.DB.prepare(
+		"CREATE TABLE IF NOT EXISTS rate_counter (app TEXT NOT NULL, ip TEXT NOT NULL, span TEXT NOT NULL, bucket INTEGER NOT NULL, n INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (app, ip, span, bucket))",
+	).run();
 	// 기존 테이블 확장(이미 있으면 조용히 실패 → 무시). D1엔 ADD COLUMN IF NOT EXISTS가 없다.
 	for (const sql of [
 		"ALTER TABLE calls ADD COLUMN app TEXT",
@@ -299,18 +302,39 @@ export async function deleteApp(env: StatsEnv, id: string): Promise<void> {
 // rate limit · 로깅
 // ─────────────────────────────────────────────────────────────
 
-/** 앱별 상한 기준으로 (앱, IP) 분당·일일 초과 여부. 초과면 true(차단). */
+const MIN_MS = 60_000;
+const DAY_MS = 86_400_000;
+
+/**
+ * 이 호출을 세어 두고, 앱별 상한을 넘었는지 알려준다. 넘으면 true(차단).
+ *
+ * 세는 방식이 중요하다. 예전에는 호출마다 calls 를 24 시간 훑어 세었다.
+ * 그러면 그 IP 가 오늘 부른 만큼 행을 읽는다 — 1,000 번째 호출이 999 행을
+ * 읽으니 읽는 양이 호출 수의 제곱으로 늘어난다. 하루 2,000 번만 몰아 불러도
+ * D1 무료 하루 읽기 500 만 행에 닿아, 프록시 전체가 1101 로 멈췄다.
+ *
+ * 이제는 (앱, IP, 칸) 별로 세어 둔 숫자 한 줄만 올리고 그 값을 돌려받는다.
+ * 기본 열쇠로 찾으므로 호출당 읽는 행이 분 칸·일 칸 두 줄로 고정된다.
+ * 올리는 일과 세는 일을 한 번에 하니 두 요청 사이에 값이 어긋날 일도 없다.
+ *
+ * 칸은 흐르는 창이 아니라 고정 창이다(분이 바뀌면 0 부터). 상한을 조금 느슨하게
+ * 보는 쪽이라, 남이 토큰을 주워 쓰는 것을 막는 목적에는 그대로 쓸 만하다.
+ */
 export async function rateLimited(env: StatsEnv, appId: string, ip: string, now: number, perMin: number, perDay: number): Promise<boolean> {
+	const bump = (span: string, bucket: number) => env.DB.prepare(
+		"INSERT INTO rate_counter (app, ip, span, bucket, n) VALUES (?1, ?2, ?3, ?4, 1)" +
+			" ON CONFLICT(app, ip, span, bucket) DO UPDATE SET n = n + 1 RETURNING n",
+	).bind(appId, ip, span, bucket);
+
 	try {
-		await ensureSchema(env);
-		const row = await env.DB.prepare(
-			"SELECT SUM(CASE WHEN ts > ?1 THEN 1 ELSE 0 END) AS m, COUNT(*) AS d FROM calls WHERE app = ?2 AND ip = ?3 AND ts > ?4",
-		)
-			.bind(now - 60_000, appId, ip, now - 86_400_000)
-			.first<{ m: number | null; d: number | null }>();
-		return (row?.m ?? 0) >= perMin || (row?.d ?? 0) >= perDay;
+		const [m, d] = await withSchema(env, () => env.DB.batch<{ n: number }>([
+			bump("m", Math.floor(now / MIN_MS)),
+			bump("d", Math.floor(now / DAY_MS)),
+		]));
+		const cnt = (r: typeof m) => r?.results?.[0]?.n ?? 0;
+		return cnt(m) > perMin || cnt(d) > perDay;
 	} catch {
-		// 저장소 장애 시엔 서비스는 살리고(차단 안 함) 로깅만 건너뛴다.
+		// 저장소 장애 시엔 서비스는 살리고(차단 안 함) 세기만 건너뛴다.
 		return false;
 	}
 }
@@ -356,6 +380,10 @@ export async function maybeCleanup(env: StatsEnv, now: number): Promise<void> {
 	try {
 		await ensureSchema(env);
 		await env.DB.prepare("DELETE FROM calls WHERE ts < ?1").bind(now - 180 * 86_400_000).run();
+		// 다 지난 셈 칸도 함께 버린다. 두고 봐야 쓸 데가 없고 파일만 커진다.
+		await env.DB.prepare(
+			"DELETE FROM rate_counter WHERE (span = 'm' AND bucket < ?1) OR (span = 'd' AND bucket < ?2)",
+		).bind(Math.floor(now / MIN_MS) - 120, Math.floor(now / DAY_MS) - 2).run();
 	} catch {
 		/* 무시 */
 	}
@@ -368,9 +396,12 @@ export async function maybeCleanup(env: StatsEnv, now: number): Promise<void> {
  */
 export async function pulse(env: StatsEnv, appFilter: string): Promise<{ mx: number; ts: number }> {
 	const row = await withSchema(env, () => {
+		// MAX(id)와 MAX(ts)를 함께 구하면 SQLite가 MAX 최적화를 포기하고
+		// 색인을 통째로 훑는다(2,700행). 대시보드가 몇 초마다 부르는 자리라
+		// 그것만으로 하루 수천만 행이 된다. 마지막 한 줄만 집어 온다.
 		const st = appFilter
-			? env.DB.prepare("SELECT MAX(id) AS mx, MAX(ts) AS ts FROM calls WHERE app = ?1").bind(appFilter)
-			: env.DB.prepare("SELECT MAX(id) AS mx, MAX(ts) AS ts FROM calls");
+			? env.DB.prepare("SELECT id AS mx, ts FROM calls WHERE app = ?1 ORDER BY ts DESC LIMIT 1").bind(appFilter)
+			: env.DB.prepare("SELECT id AS mx, ts FROM calls ORDER BY id DESC LIMIT 1");
 		return st.first<{ mx: number | null; ts: number | null }>();
 	});
 	return { mx: row?.mx ?? 0, ts: row?.ts ?? 0 };

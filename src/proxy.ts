@@ -181,7 +181,11 @@ async function gate(request: Request, env: ProxyEnv, ctx: ExecutionContext): Pro
 		.toLowerCase()
 		.slice(0, 32);
 
-	if (await rateLimited(env, app.id, ip, now, app.perMin, app.perDay)) {
+	// 내부용 앱은 상한을 걸지 않는다. 상한은 남이 토큰을 주워 남의 IP 에서
+	// 퍼 쓰는 것을 막으려고 둔 것인데, 이상탐지·메일 도구는 내 서버 한 곳에서
+	// 부르고 밀린 일을 한 번에 수천 건 처리하는 것이 정상이다. 건너뛰면
+	// 그 앱은 rate limit 때문에 D1 을 읽지 않는다.
+	if (!app.internal && await rateLimited(env, app.id, ip, now, app.perMin, app.perDay)) {
 		ctx.waitUntil(logCall(env, { ts: now, app: app.id, kind, model: null, status: "error", http: 429, latency_ms: 0, ip, in_tokens: 0, out_tokens: 0, cost: null, err: "rate_limited", meta: null, ...geo }));
 		return { ok: false, res: err(429, "요청이 너무 많아요. 잠시 후 다시 시도해 주세요.") };
 	}
