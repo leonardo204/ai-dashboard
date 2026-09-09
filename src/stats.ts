@@ -1001,303 +1001,25 @@ function monthProgress(now = Date.now()): number {
 	return Math.min(1, Math.max(0.001, (now - start) / (end - start)));
 }
 
-export interface SummaryData {
-	period: string;
-	appFilter: string;
-	since: number;
-	bucketLabel: string;
-	apps: AppBrief[];
-	total: number;
-	ok: number;
-	error: number;
-	inTokens: number;
-	outTokens: number;
-	cost: number;
-	avgLatency: number;
-	p95Latency: number;
-	uniqueIPs: number;
-	byApp: (GroupRow & { name: string })[];
-	byModel: GroupRow[];
-	modelCount: number;
-	buckets: Bucket[];
-	errors: { http: number | null; count: number; sample: string | null }[];
-	countries: { key: string; total: number }[];
-	countryCount: number;
-	/** 직전 같은 기간(전체 기간을 볼 땐 없다) */
-	prev: { total: number; error: number; cost: number; avgLatency: number } | null;
-	/** 맨 아래에 붙는 최근 호출 몇 건 — 자세히는 로그 화면에서 본다. */
-	recent: LogRow[];
-	/** 이상탐지 요약 — 판정은 바깥 서버가 하고 여기에는 결과만 쌓인다. */
-	anomaly: AnomalyBrief;
-	/** 서비스 방문 요약 — 트래픽 탭과 같은 표를 읽되 개수만 본다. */
-	traffic: TrafficBrief;
-	/** 달별 비용 — 기간 탭과 무관하게 최근 열두 달을 본다(청구가 달 단위라서). */
-	monthly: MonthCost[];
-	/** 이번 달이 얼마나 지났는지(0~1). 남은 기간까지 더한 예상치를 낼 때 쓴다. */
-	monthProgress: number;
-}
-
-/**
- * 요약 화면에 얹는 이상탐지 한 줄.
- * 전용 탭과 같은 표를 읽되, 훑어보는 화면이라 개수와 최근 몇 건만 가져온다.
- */
-export interface AnomalyBriefRow {
-	bucket: number; app: string; signal: string; severity: string;
-	label: string | null; observed: number | null; baseline: number | null;
-	detail: string | null; verdict: string | null; verdict_reason: string | null;
-}
-export interface AnomalyBrief {
-	total: number; critical: number; warn: number; info: number;
-	prevTotal: number;
-	lastDetected: number;
-	/** 이상탐지 서버가 마지막으로 신호를 보낸 뒤 지난 시간(ms). 한 번도 없으면 null. */
-	heartbeatAge: number | null;
-	/** 이상탐지 에이전트가 정탐으로 본 비율(0~1). 라벨이 아직 없으면 null. */
-	hitRate: number | null;
-	recent: AnomalyBriefRow[];
-}
-
-/** 요약 화면 이상탐지 칸에 보여줄 최근 이상 건수. */
-export const SUMMARY_ANOMALY_RECENT = 3;
-/** 상황판에 보여줄 열린 신호 수 — 세 건이면 '지금 무슨 일인가'는 충분히 읽힌다. */
-export const BOARD_SIGNALS = 3;
-
-/** 요약 화면 맨 아래에 보여줄 최근 호출 건수. */
-export const SUMMARY_RECENT = 5;
-
-export async function collectSummary(env: StatsEnv, period: string, appFilter: string): Promise<SummaryData> {
-	// 호출 통계와 방문 기록은 서로 다른 표라 같이 조회한다(둘을 순서대로 돌리면 왕복이 두 배가 된다).
-	const [s, t] = await Promise.all([
-		withSchema(env, () => collectSummaryInner(env, period, appFilter)),
-		trafficBrief(env, period),
-	]);
-	return { ...s, traffic: t };
-}
-
-async function collectSummaryInner(
-	env: StatsEnv, period: string, appFilter: string,
-): Promise<Omit<SummaryData, "traffic">> {
-	const { p, since, prevSince } = periodInfo(period);
-	const appWhere = appFilter ? " AND app = ?2" : "";
-	const bind = (sql: string) => {
-		const st = env.DB.prepare(sql);
-		return appFilter ? st.bind(since, appFilter) : st.bind(since);
-	};
-	const bexpr = bucketExpr(p.bucket);
-
-	// 달별 비용은 기간 탭을 따르지 않는다. '주'를 보고 있어도 달 추이는 그대로 보여야
-	// 실제 청구서와 맞춰볼 수 있다. 앱을 골랐으면 그 앱만 센다.
-	const monthSince = Date.now() - 400 * 86_400_000;
-
-	const [apps, grouped, bucketRows, ipRow, okRow, errRows, cRows, prevRows, recentRs,
-		anomSum, anomPrev, anomRecent, anomState, monthRows] = await Promise.all([
-		appBriefs(env),
-
-		bind(
-			`SELECT COALESCE(app,'(미상)') AS app, model,${AGG} FROM calls WHERE ts >= ?1${appWhere} GROUP BY app, model`,
-		).all<AggRow & { app: string; model: string | null }>(),
-
-		bind(
-			`SELECT ${bexpr} AS b, model,${INN}${AGG} FROM calls WHERE ts >= ?1${appWhere} GROUP BY b, model, inn ORDER BY b DESC`,
-		).all<AggRow & { b: string; model: string | null; inn: number }>(),
-
-		bind(`SELECT COUNT(DISTINCT ip) AS n FROM calls WHERE ts >= ?1${appWhere}`).first<{ n: number }>(),
-
-		bind(`SELECT COUNT(*) AS n FROM calls WHERE ts >= ?1${appWhere} AND status='ok'`).first<{ n: number }>(),
-
-		bind(
-			`SELECT http, COUNT(*) AS c, MAX(err) AS sample FROM calls WHERE ts >= ?1${appWhere} AND status='error' GROUP BY http ORDER BY c DESC LIMIT 5`,
-		).all<{ http: number | null; c: number; sample: string | null }>(),
-
-		bind(
-			`SELECT COALESCE(NULLIF(country,''),'(미상)') AS c, COUNT(*) AS n FROM calls WHERE ts >= ?1${appWhere} GROUP BY c ORDER BY n DESC`,
-		).all<{ c: string; n: number }>(),
-
-		// 전체 기간을 보는 중이면 비교 대상이 없다.
-		p.days
-			? (appFilter
-					? env.DB.prepare(
-							`SELECT model,${AGG} FROM calls WHERE ts >= ?1 AND ts < ?2 AND app = ?3 GROUP BY model`,
-						).bind(prevSince, since, appFilter)
-					: env.DB.prepare(
-							`SELECT model,${AGG} FROM calls WHERE ts >= ?1 AND ts < ?2 GROUP BY model`,
-						).bind(prevSince, since)
-				).all<AggRow & { model: string | null }>()
-			: Promise.resolve({ results: [] as (AggRow & { model: string | null })[] }),
-
-		// 맨 아래 "최근 호출" — id 역순 몇 건. 인덱스로 바로 잡혀서 행 수와 무관하게 가볍다.
-		// 내부용 앱(이상탐지 에이전트 등)은 뺀다. 그 호출이 대부분을 차지해 정작 보고 싶은 앱이 밀린다.
-		(appFilter
-			? env.DB.prepare(`SELECT ${LOG_COLS} FROM calls WHERE app = ?1 ORDER BY id DESC LIMIT ?2`).bind(appFilter, SUMMARY_RECENT)
-			: env.DB.prepare(
-					`SELECT ${LOG_COLS} FROM calls WHERE app IS NULL OR app NOT IN (SELECT id FROM apps WHERE internal = 1)` +
-						" ORDER BY id DESC LIMIT ?1",
-				).bind(SUMMARY_RECENT)
-		).all<RawLogRow>(),
-
-		// ── 이상탐지 요약. 전용 탭과 같은 표를 읽되 개수와 최근 몇 건만 본다.
-		bind(
-			"SELECT COUNT(*) AS n," +
-				" SUM(CASE WHEN severity='critical' THEN 1 ELSE 0 END) AS c," +
-				" SUM(CASE WHEN severity='warn' THEN 1 ELSE 0 END) AS w," +
-				" MAX(detected_at) AS last FROM anomalies WHERE bucket >= ?1" + " AND scope='ai'" + appWhere,
-		).first<{ n: number; c: number | null; w: number | null; last: number | null }>(),
-
-		p.days
-			? (appFilter
-					? env.DB.prepare("SELECT COUNT(*) AS n FROM anomalies WHERE bucket >= ?1 AND bucket < ?2 AND scope='ai' AND app = ?3").bind(prevSince, since, appFilter)
-					: env.DB.prepare("SELECT COUNT(*) AS n FROM anomalies WHERE bucket >= ?1 AND bucket < ?2 AND scope='ai'").bind(prevSince, since)
-				).first<{ n: number }>()
-			: Promise.resolve(null),
-
-		// 검증에서 오탐으로 판정된 건은 뒤로 민다. 메일도 나가지 않는 건이라
-		// 요약 상단을 차지하면 실제로 봐야 할 신호가 가린다. 그다음 심각한 것, 그다음 최근 것.
-		bind(
-			"SELECT bucket, app, signal, severity, label, observed, baseline, detail, verdict, verdict_reason" +
-				" FROM anomalies WHERE bucket >= ?1 AND scope='ai'" + appWhere +
-				" ORDER BY CASE WHEN verdict IN ('rule_fp','model_fp','both_fp') THEN 1 ELSE 0 END," +
-				" CASE severity WHEN 'critical' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END, bucket DESC" +
-				` LIMIT ${SUMMARY_ANOMALY_RECENT}`,
-		).all<AnomalyBriefRow>(),
-
-		env.DB.prepare("SELECT key, value, updated_at FROM anomaly_state").all<{ key: string; value: string; updated_at: number }>(),
-
-		// ── 달별 비용. 내부용 앱 몫을 따로 세어 "서비스가 쓴 돈"과 "내부 도구가 쓴 돈"을 나눈다.
-		//    모델별로 쪼개는 이유: 청구액이 0으로 온 행은 모델 단가표로 메워야 해서.
-		(appFilter
-			? env.DB.prepare(
-					`SELECT ${bucketExpr("month")} AS m, model,` +
-						INN +
-						AGG +
-						" FROM calls WHERE ts >= ?1 AND app = ?2 GROUP BY m, model, inn",
-				).bind(monthSince, appFilter)
-			: env.DB.prepare(
-					`SELECT ${bucketExpr("month")} AS m, model,` +
-						INN +
-						AGG +
-						" FROM calls WHERE ts >= ?1 GROUP BY m, model, inn",
-				).bind(monthSince)
-		).all<AggRow & { m: string; model: string | null; inn: number }>(),
-	]);
-
-	const nameOf = new Map(apps.map((a) => [a.id, a.name]));
-	const byAppMap = new Map<string, GroupRow>();
-	const byModelMap = new Map<string, GroupRow>();
-	let total = 0, ok = 0, error = 0, inTokens = 0, outTokens = 0, cost = 0, latSum = 0;
-
-	for (const r of grouped.results ?? []) {
-		const unit = unitOf(r, r.model);
-		addTo(byAppMap, r.app, unit);
-		addTo(byModelMap, r.model ?? "(미상)", unit);
-		total += unit.total; ok += unit.ok; error += unit.error;
-		inTokens += unit.inTok; outTokens += unit.outTok; cost += unit.cost; latSum += unit.latency;
-	}
-
-	const bmap = new Map<string, Bucket>();
-	for (const r of bucketRows.results ?? []) {
-		const cur = bmap.get(r.b) ?? emptyBucket(r.b);
-		const c = mergeCost(r.realCost, r.model, r.eIn, r.eOut);
-		cur.total += r.total; cur.ok += r.ok ?? 0; cur.error += r.error ?? 0;
-		cur.tokens += r.inTok + r.outTok; cur.cost += c;
-		if (r.inn) { cur.internal += r.total; cur.internalCost += c; }
-		bmap.set(r.b, cur);
-	}
-	const buckets = Array.from(bmap.values()).sort((a, b) => (a.b < b.b ? 1 : -1)).slice(0, 30);
-
-	let prev: SummaryData["prev"] = null;
-	if (p.days) {
-		let pT = 0, pE = 0, pC = 0, pL = 0;
-		for (const r of prevRows.results ?? []) {
-			pT += r.total; pE += r.error ?? 0; pC += mergeCost(r.realCost, r.model, r.eIn, r.eOut); pL += r.lat;
-		}
-		prev = { total: pT, error: pE, cost: pC, avgLatency: pT ? Math.round(pL / pT) : 0 };
-	}
-
-	const countries = (cRows.results ?? []).map((r) => ({ key: r.c, total: r.n }));
-
-	// 달별 비용 — 모델·내부용으로 쪼개 온 것을 달 단위로 합친다.
-	const mmap = new Map<string, MonthCost>();
-	for (const r of monthRows.results ?? []) {
-		const cur = mmap.get(r.m) ?? { m: r.m, total: 0, cost: 0, internalCost: 0, internalTotal: 0 };
-		const c = mergeCost(r.realCost, r.model, r.eIn, r.eOut);
-		cur.total += r.total;
-		cur.cost += c;
-		if (r.inn) { cur.internalCost += c; cur.internalTotal += r.total; }
-		mmap.set(r.m, cur);
-	}
-	const monthly = Array.from(mmap.values()).sort((a, b) => a.m.localeCompare(b.m)).slice(-12);
-
-	return {
-		period,
-		appFilter,
-		since,
-		bucketLabel: bucketLabelOf(p.bucket),
-		apps,
-		total, ok, error, inTokens, outTokens, cost,
-		avgLatency: total ? Math.round(latSum / total) : 0,
-		p95Latency: await p95Of(env, since, appFilter, okRow?.n ?? 0),
-		uniqueIPs: ipRow?.n ?? 0,
-		byApp: Array.from(byAppMap.values()).sort(desc).map((r) => ({ ...r, name: nameOf.get(r.key) ?? r.key })),
-		byModel: Array.from(byModelMap.values()).sort(desc),
-		modelCount: byModelMap.size,
-		buckets,
-		errors: (errRows.results ?? []).map((r) => ({ http: r.http, count: r.c, sample: r.sample })),
-		countries: countries.slice(0, 6),
-		countryCount: countries.filter((c) => c.key !== "(미상)").length,
-		monthly,
-		monthProgress: monthProgress(),
-		prev,
-		recent: (recentRs.results ?? []).map(toLogRow),
-		anomaly: anomalyBriefOf(anomSum, anomPrev, anomRecent.results ?? [], anomState.results ?? []),
-	};
-}
-
 /** 검증 라벨 가운데 정탐으로 세는 것 / 오탐으로 세는 것. 이상탐지 서버와 같은 기준이다. */
 const VERDICT_HIT = ["confirmed", "rule_only", "model_gain"];
 const VERDICT_MISS = ["rule_fp", "model_fp", "both_fp"];
-
-function anomalyBriefOf(
-	sum: { n: number; c: number | null; w: number | null; last: number | null } | null,
-	prev: { n: number } | null,
-	recent: AnomalyBriefRow[],
-	state: { key: string; value: string; updated_at: number }[],
-): AnomalyBrief {
-	const newest = state.reduce((a, b) => Math.max(a, b.updated_at || 0), 0);
-
-	// 정탐률 — 이상탐지 서버가 밀어 넣은 라벨 집계에서 뽑는다. 형식이 달라지면 표시하지 않는다.
-	let hitRate: number | null = null;
-	const labels = state.find((r) => r.key === "labels");
-	if (labels) {
-		try {
-			const by = (JSON.parse(labels.value) as { by_verdict?: Record<string, number> }).by_verdict ?? {};
-			const cnt = (keys: string[]) => keys.reduce((a, k) => a + (by[k] ?? 0), 0);
-			const hit = cnt(VERDICT_HIT), miss = cnt(VERDICT_MISS);
-			if (hit + miss > 0) hitRate = hit / (hit + miss);
-		} catch {
-			/* 형식이 달라졌을 뿐이라 화면은 그대로 그린다 */
-		}
-	}
-
-	return {
-		total: sum?.n ?? 0,
-		critical: sum?.c ?? 0,
-		warn: sum?.w ?? 0,
-		// 등급은 셋뿐이라 참고는 따로 세지 않고 나머지로 둔다(조회 하나를 아낀다).
-		info: Math.max(0, (sum?.n ?? 0) - (sum?.c ?? 0) - (sum?.w ?? 0)),
-		prevTotal: prev?.n ?? 0,
-		lastDetected: sum?.last ?? 0,
-		heartbeatAge: newest ? Date.now() - newest : null,
-		hitRate,
-		recent,
-	};
-}
-
 
 // ─────────────────────────────────────────────────────────────
 // 상황판 (/admin)
 //   첫 화면은 "지금 문제가 있나"에만 답한다. 나머지 숫자는 하위 화면에 있다.
 //   그래서 예전 요약 화면이 돌리던 열네 개 집계 대신 일곱 개만 돈다.
 // ─────────────────────────────────────────────────────────────
+
+/** 상황판에 보여줄 열린 신호 수 — 세 건이면 "지금 무슨 일인가"는 충분히 읽힌다. */
+export const BOARD_SIGNALS = 3;
+
+/** 신호 한 줄 — 상황판과 이상탐지 화면이 같은 모양으로 읽는다. */
+export interface AnomalyBriefRow {
+	bucket: number; app: string; signal: string; severity: string;
+	label: string | null; observed: number | null; baseline: number | null;
+	detail: string | null; verdict: string | null; verdict_reason: string | null;
+}
 
 /** 상태 한 줄을 가르는 문턱값. 나중에 관리 화면에서 고칠 수 있게 한곳에 모아 둔다. */
 export const BOARD_RULES = {
@@ -1829,6 +1551,8 @@ export interface TrendData {
 	apps: AppBrief[];
 	buckets: Bucket[];
 	heat: { w: number; h: number; n: number }[];
+	/** 실패 상위 — 옛 요약 화면에 있던 칸이 이리로 내려왔다. */
+	errors: { http: number | null; count: number; sample: string | null }[];
 	total: number;
 	cost: number;
 	/** 그중 내부용 앱(이상탐지·메일 도구) 몫. */
@@ -1850,7 +1574,7 @@ async function collectTrendInner(env: StatsEnv, period: string, appFilter: strin
 	const bexpr = bucketExpr(p.bucket);
 	const kstBase = "ts/1000, 'unixepoch', '+9 hours'";
 
-	const [apps, bucketRows, heatRows] = await Promise.all([
+	const [apps, bucketRows, heatRows, errRows] = await Promise.all([
 		appBriefs(env),
 		bind(
 			`SELECT ${bexpr} AS b, model,${INN}${AGG} FROM calls WHERE ts >= ?1${appWhere} GROUP BY b, model, inn ORDER BY b DESC`,
@@ -1860,6 +1584,10 @@ async function collectTrendInner(env: StatsEnv, period: string, appFilter: strin
 				` CAST(strftime('%H', ${kstBase}) AS INTEGER) AS h, COUNT(*) AS n` +
 				` FROM calls WHERE ts >= ?1${appWhere} GROUP BY w, h`,
 		).all<{ w: number; h: number; n: number }>(),
+		bind(
+			`SELECT http, COUNT(*) AS c, MAX(err) AS sample FROM calls WHERE ts >= ?1${appWhere} AND status='error'` +
+				" GROUP BY http ORDER BY c DESC LIMIT 5",
+		).all<{ http: number | null; c: number; sample: string | null }>(),
 	]);
 
 	const bmap = new Map<string, Bucket>();
@@ -1883,6 +1611,7 @@ async function collectTrendInner(env: StatsEnv, period: string, appFilter: strin
 		apps,
 		buckets: Array.from(bmap.values()).sort((a, b) => (a.b < b.b ? 1 : -1)).slice(0, 60),
 		heat: heatRows.results ?? [],
+		errors: (errRows.results ?? []).map((r) => ({ http: r.http, count: r.c, sample: r.sample })),
 		total,
 		cost,
 		internal,
@@ -2990,65 +2719,6 @@ async function collectTrafficInner(env: StatsEnv, period: string, siteFilter: st
 			};
 		})(),
 	};
-}
-
-/** 요약 화면에 얹는 트래픽 한 줄 — 개수와 서비스별 합계만 본다. */
-export interface TrafficBrief {
-	total: number; human: number; ai: number; search: number; other: number;
-	uniq: number; prevTotal: number; lastTs: number;
-	sites: { key: string; name: string; total: number; prev: number; ai: number }[];
-	/** 이 기간에 트래픽 쪽에서 잡힌 이상 신호 — 요약 화면에서 한 줄로 알린다. */
-	anomalies: number; anomalyCritical: number;
-}
-
-export async function trafficBrief(env: StatsEnv, period: string): Promise<TrafficBrief> {
-	const { p, since, prevSince } = periodInfo(period);
-	const empty: TrafficBrief = {
-		total: 0, human: 0, ai: 0, search: 0, other: 0, uniq: 0, prevTotal: 0, lastTs: 0, sites: [],
-		anomalies: 0, anomalyCritical: 0,
-	};
-	try {
-		const [sumRow, siteRs, prevRow, prevSiteRs, anomRow] = await Promise.all([
-			env.DB.prepare(
-				`SELECT COUNT(*) AS n, ${kindSum("k_")}, COUNT(DISTINCT CASE WHEN kind='human' THEN ip_hash END) AS uq,` +
-					` MAX(ts) AS last FROM hits WHERE ts >= ?1`,
-			).bind(since).first<{ n: number; k_human: number; k_ai: number; k_search: number; k_social: number; k_bot: number; uq: number; last: number | null }>(),
-			env.DB.prepare(
-				"SELECT site, COUNT(*) AS n, SUM(kind='ai') AS a FROM hits WHERE ts >= ?1 GROUP BY site ORDER BY n DESC",
-			).bind(since).all<{ site: string; n: number; a: number | null }>(),
-			p.days
-				? env.DB.prepare("SELECT COUNT(*) AS n FROM hits WHERE ts >= ?1 AND ts < ?2").bind(prevSince, since).first<{ n: number }>()
-				: Promise.resolve(null),
-			p.days
-				? env.DB.prepare("SELECT site, COUNT(*) AS n FROM hits WHERE ts >= ?1 AND ts < ?2 GROUP BY site")
-						.bind(prevSince, since).all<{ site: string; n: number }>()
-				: Promise.resolve({ results: [] as { site: string; n: number }[] }),
-			// 트래픽 쪽 이상 신호 — 요약 화면에서 한 줄로 알린다.
-			env.DB.prepare(
-				"SELECT COUNT(*) AS n, SUM(CASE WHEN severity='critical' THEN 1 ELSE 0 END) AS c" +
-					" FROM anomalies WHERE scope='traffic' AND bucket >= ?1",
-			).bind(since).first<{ n: number; c: number | null }>(),
-		]);
-		const prevSite = new Map((prevSiteRs.results ?? []).map((r) => [r.site, r.n]));
-		return {
-			total: sumRow?.n ?? 0,
-			human: sumRow?.k_human ?? 0,
-			ai: sumRow?.k_ai ?? 0,
-			search: sumRow?.k_search ?? 0,
-			other: (sumRow?.k_social ?? 0) + (sumRow?.k_bot ?? 0),
-			uniq: sumRow?.uq ?? 0,
-			prevTotal: prevRow?.n ?? 0,
-			lastTs: sumRow?.last ?? 0,
-			sites: (siteRs.results ?? []).slice(0, 6).map((r) => ({
-				key: r.site, name: siteName(r.site), total: r.n, prev: prevSite.get(r.site) ?? 0, ai: r.a ?? 0,
-			})),
-			anomalies: anomRow?.n ?? 0,
-			anomalyCritical: anomRow?.c ?? 0,
-		};
-	} catch {
-		// hits 표가 아직 없는 경우 — 화면은 그대로 그리고 "기록 없음"으로 둔다.
-		return empty;
-	}
 }
 
 // ─────────────────────────────────────────────────────────────

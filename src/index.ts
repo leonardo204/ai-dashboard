@@ -33,7 +33,7 @@
 import { handleChat, handleEmbeddings, type ProxyEnv } from "./proxy";
 import { renderGuide, GUIDE_MD, GUIDE_FILENAME } from "./guide";
 import {
-	collectStats, collectSummary, collectBoard, collectUsage, collectTrend, collectGeo, queryLogs, logsCsv,
+	collectStats, collectBoard, collectUsage, collectTrend, collectGeo, queryLogs, logsCsv,
 	listApps, getApp, upsertApp, deleteApp, newToken, pulse, exportCalls, normPeriod, LOG_PAGE,
 	collectAnomaly, collectAnomalyBoard, pushAnomaly, collectMails, getMailHtml, listPasskeys, passkeyCount, deletePasskey,
 	collectTraffic,

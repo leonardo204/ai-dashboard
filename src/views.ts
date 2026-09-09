@@ -13,14 +13,13 @@
  */
 
 import {
-	PERIODS, MODEL_PRICES, DEFAULT_MODEL, countryName, LOG_PAGE, SUMMARY_RECENT, MAIL_PAGE,
+	PERIODS, MODEL_PRICES, DEFAULT_MODEL, countryName, LOG_PAGE, MAIL_PAGE,
 	type AppConfig, type GroupRow, type PasskeyRow,
-	type SummaryData, type BoardData, type MonthCost, type UsageData, type TrendData, type GeoData, type LogsData, type LogFilter,
+	type BoardData, type MonthCost, type UsageData, type TrendData, type GeoData, type LogsData, type LogFilter,
 	type MailsData, type MailRow,
 	type AnomalyBoardData, type AnomalyRowWithMail, ANOMALY_PAGE,
-	type AnomalyBrief,
 	type AnomalyData, type AnomalyRow,
-	type TrafficData, type TrafficBrief,
+	type TrafficData,
 } from "./stats";
 import {
 	escapeHtml, usd, kst, shortNum, shellAdmin, pageHead, filterTabs, sectionHead, delta, kpiRow,
@@ -78,180 +77,6 @@ const TIP_INTERNAL =
 
 // ═════════════════════════════════════════════════════════════
 // 요약 (/admin)
-// ═════════════════════════════════════════════════════════════
-
-export function renderSummary(s: SummaryData, opts: AdminOpts = {}): string {
-	const q = navQuery(s.period, s.appFilter);
-	const okRate = s.total ? Math.round((s.ok / s.total) * 100) : 0;
-	const errRate = s.total ? (s.error / s.total) * 100 : 0;
-
-	// 호출 수 카드 안 미니 그래프 — 축·라벨 없이 흐름만 보여준다.
-	const sparkData = s.buckets.slice(0, 24).slice().reverse();
-
-	// 눈여겨볼 것만 앱 탭 줄 오른쪽에. 평소에는 아무것도 뜨지 않는다.
-	const alerts: string[] = [];
-	if (s.error && errRate >= 5) {
-		alerts.push(
-			`<a class="al" href="/admin/calls/logs${q}&status=error" style="text-decoration:none">실패율 <b>${errRate.toFixed(1)}%</b> · ${s.error.toLocaleString()}건 — 로그 보기 →</a>`,
-		);
-	}
-	if (s.prev && s.prev.cost > 0 && s.cost > s.prev.cost * 1.5) {
-		alerts.push(
-			`<div class="al">비용이 직전 같은 기간보다 <b>${Math.round(((s.cost - s.prev.cost) / s.prev.cost) * 100)}%</b> 늘었어요 (${usd(s.prev.cost)} → ${usd(s.cost)})</div>`,
-		);
-	}
-	if (s.anomaly.critical) {
-		alerts.push(
-			`<a class="al" href="/admin/anomaly${q}" style="text-decoration:none">이상 신호 <b>심각 ${s.anomaly.critical.toLocaleString()}건</b> — 이상탐지에서 보기 →</a>`,
-		);
-	}
-	if (s.p95Latency >= 10_000) {
-		alerts.push(
-			`<a class="al" href="/admin/calls/logs${q}&slow=10000" style="text-decoration:none">가장 느린 5%가 <b>${(s.p95Latency / 1000).toFixed(1)}초</b>를 넘어요 — 느린 호출 보기 →</a>`,
-		);
-	}
-
-	const appDonut = svgDonut(
-		s.byApp.map((r) => ({
-			label: r.name,
-			value: r.total,
-			sub: `비용 ${usd(r.cost)}`,
-			href: `/admin/calls/usage?period=${s.period}&app=${encodeURIComponent(r.key)}`,
-		})),
-		"건",
-	);
-	const modelDonut = svgDonut(
-		s.byModel.map((r) => ({
-			label: shortModel(r.key),
-			value: r.total,
-			sub: `비용 ${usd(r.cost)}`,
-			href: `/admin/calls/logs${q}&model=${encodeURIComponent(r.key)}`,
-		})),
-		"건",
-	);
-
-	const errRows = s.errors.length
-		? s.errors
-				.map(
-					(e) =>
-						`<tr><td class="n">${e.http ?? "-"}</td><td class="n">${e.count.toLocaleString()}</td><td class="err">${e.sample ? escapeHtml(e.sample) : ""}</td></tr>`,
-				)
-				.join("")
-		: `<tr><td colspan="3">이 기간에 실패한 호출이 없어요.</td></tr>`;
-
-	const geoShare = svgShare(
-		s.countries.map((c) => ({ label: countryName(c.key), value: c.total, sub: "" })),
-		"건",
-	);
-
-	// 최근 호출 — 지표 카드 바로 아래에 둔다. 자동 갱신에 같이 실려서 새 호출이 들어오면 바로 바뀐다.
-	// 자세히 보는 건 로그 화면 몫이라 여기서는 줄을 펼치지 않는다.
-	const recentRows = s.recent.length
-		? s.recent
-				.map((r) => {
-					const geo = r.city && r.city !== "-" ? r.city : r.region && r.region !== "-" ? r.region : r.country;
-					return (
-						`<tr><td class="mono">${kst(r.ts)}</td><td data-tip="${escapeHtml(r.app)}">${escapeHtml(r.app)}</td>` +
-						`<td>${escapeHtml(r.kind)}</td>` +
-						`<td class="mono" data-tip="${escapeHtml(r.model ?? "-")}">${escapeHtml(shortModel(r.model ?? "-"))}</td>` +
-						`<td><span class="pill ${r.status === "ok" ? "g" : "r"}">${escapeHtml(r.status)}</span></td>` +
-						`<td class="n">${r.http ?? "-"}</td><td class="n">${r.latency_ms.toLocaleString()}ms</td>` +
-						`<td class="n">${(r.inTok + r.outTok).toLocaleString()}</td><td class="n">${usd(r.cost)}</td>` +
-						`<td class="geo">${escapeHtml(geo || "-")}</td>` +
-						`<td class="err"${(r.err ?? r.meta) ? ` data-tip="${escapeHtml(String(r.err ?? r.meta))}"` : ""}>${escapeHtml(r.err ?? r.meta ?? "")}</td></tr>`
-					);
-				})
-				.join("")
-		: `<tr><td colspan="11">아직 호출이 없어요.</td></tr>`;
-
-	return shellAdmin(
-		"AI 호출 요약",
-		pageHead("AI 호출 요약", `앱별 AI 프록시 사용량 · ${sinceLabel(s.since)}`, s.appFilter) +
-			`<div id="hz-body">
-${filterTabs(
-	"/admin",
-	s.period,
-	s.appFilter,
-	s.apps,
-	PERIODS,
-	`<a class="tab alt" href="/admin/stats.json${q}">JSON</a>`,
-	alerts.length ? `<div class="alerts">${alerts.join("")}</div>` : "",
-)}
-${kpiRow([
-	{
-		label: "호출 수",
-		value: s.total.toLocaleString(),
-		unit: "건",
-		delta: s.prev ? { cur: s.total, prev: s.prev.total } : undefined,
-		sub: `${s.error ? `<b class="r">실패 ${s.error.toLocaleString()}건</b> · ` : ""}성공률 ${okRate}%`,
-		spark: sparkData.map((b) => b.total),
-	},
-	{
-		label: "비용",
-		value: usd(s.cost),
-		tip: TIP_COST,
-		delta: s.prev ? { cur: s.cost, prev: s.prev.cost, higherIsWorse: true } : undefined,
-		sub: s.total ? `호출당 ${usd(s.cost / s.total)}` : "호출 없음",
-		meter: (s.inTokens / Math.max(1, s.inTokens + s.outTokens)) * 100,
-		sub2: `입력 ${shortNum(s.inTokens)} · 출력 ${shortNum(s.outTokens)} 토큰`,
-	},
-	{
-		label: "평균 지연",
-		value: s.avgLatency.toLocaleString(),
-		unit: "ms",
-		delta: s.prev ? { cur: s.avgLatency, prev: s.prev.avgLatency, higherIsWorse: true } : undefined,
-		sub: `p95 ${s.p95Latency.toLocaleString()}ms`,
-		meter: (s.avgLatency / Math.max(1, s.p95Latency)) * 100,
-		meterTone: "lat",
-		sub2: `가장 느린 5%는 ${s.p95Latency.toLocaleString()}ms를 넘어요`,
-	},
-], 3)}
-${kpiRow([
-	{ label: "성공", value: s.ok.toLocaleString(), tone: "ok", size: "sm" },
-	{ label: "실패", value: s.error.toLocaleString(), tone: s.error ? "bad" : undefined, size: "sm" },
-	{ label: "입력 토큰", value: shortNum(s.inTokens), size: "sm" },
-	{ label: "출력 토큰", value: shortNum(s.outTokens), size: "sm" },
-	{ label: "고유 IP", value: s.uniqueIPs.toLocaleString(), size: "sm" },
-	{ label: "사용 모델", value: `${s.modelCount}종`, size: "sm" },
-], 6)}
-
-${sectionHead("월별 비용", {
-	tip: TIP_MONTH,
-	note: s.monthly.length
-		? `최근 ${s.monthly.length}개월 · 합계 ${usd(s.monthly.reduce((n, r) => n + r.cost, 0))}${s.appFilter ? ` · ${escapeHtml(s.apps.find((a) => a.id === s.appFilter)?.name ?? s.appFilter)}만` : ""}`
-		: "기록 없음",
-})}
-${monthlyCostPanel(s)}
-
-${sectionHead("이상탐지", { href: `/admin/anomaly${q}`, linkLabel: "이상탐지에서 보기 →" })}
-${anomalyBand(s.anomaly, `/admin/anomaly${q}`)}
-
-${sectionHead("트래픽", { href: `/admin/traffic?period=${s.period}`, linkLabel: "트래픽에서 보기 →" })}
-${trafficBand(s.traffic, `/admin/traffic?period=${s.period}`)}
-
-${sectionHead(`최근 호출 (${SUMMARY_RECENT}건)`, { href: `/admin/calls/logs${q}`, linkLabel: "로그에서 더 보기 →", tip: "자동 갱신이 켜져 있으면 새 호출이 들어올 때마다 다시 그려져요.\n내부용 앱 호출은 빼고 보여줘요." })}
-<table class="recent calls lite"><colgroup><col class="c-ts"><col class="c-app"><col class="c-kind"><col class="c-model"><col class="c-st"><col class="c-http"><col class="c-lat"><col class="c-tok"><col class="c-cost"><col class="c-geo"><col class="c-err"></colgroup><tr><th>시각</th><th>앱</th><th>용도</th><th>모델</th><th>상태</th><th class="n">HTTP</th><th class="n">지연</th><th class="n">토큰</th><th class="n">비용</th><th>지역</th><th>오류 · 메타</th></tr>${recentRows}</table>
-
-${sectionHead(`추이 (${s.bucketLabel} 단위)`, { href: `/admin/calls${q}`, tip: TIP_TREND })}
-${svgTrend(s.buckets)}
-
-<div class="two">
-  <section>${sectionHead("앱별 비중", { href: `/admin/calls/usage${q}` })}${appDonut}</section>
-  <section>${sectionHead("모델별 비중", { href: `/admin/calls/usage${q}#model` })}${modelDonut}</section>
-</div>
-
-<div class="two">
-  <section>${sectionHead("실패 상위", { href: `/admin/calls/logs${q}&status=error`, linkLabel: "로그에서 보기 →" })}
-    <table><tr><th class="n">HTTP</th><th class="n">건수</th><th>대표 메시지</th></tr>${errRows}</table>
-  </section>
-  <section>${sectionHead(`호출 지역 (${s.countryCount}개국)`, { href: `/admin/calls/geo${q}`, tip: TIP_GEO })}${geoShare}</section>
-</div>
-
-</div>`,
-		{ ...opts, tab: "board" },
-	);
-}
-
 // ═════════════════════════════════════════════════════════════
 // 상황판 (/admin)
 // ═════════════════════════════════════════════════════════════
@@ -497,12 +322,22 @@ export function renderTrend(t: TrendData, opts: AdminOpts = {}): string {
 				.join("")
 		: `<tr><td colspan="10">데이터 없음</td></tr>`;
 
+	const errRows = t.errors.length
+		? t.errors
+				.map(
+					(e) =>
+						`<tr><td class="n">${e.http ?? "-"}</td><td class="n">${e.count.toLocaleString()}</td>` +
+						`<td class="err"${e.sample ? ` data-tip="${escapeHtml(e.sample)}"` : ""}>${escapeHtml(e.sample ?? "")}</td></tr>`,
+				)
+				.join("")
+		: `<tr><td colspan="3">이 기간에 실패한 호출이 없어요.</td></tr>`;
+
 	const peak = t.heat.reduce((a, b) => (b.n > (a?.n ?? 0) ? b : a), t.heat[0]);
 	const WD = ["일", "월", "화", "수", "목", "금", "토"];
 
 	return shellAdmin(
-		"추이",
-		pageHead("추이", `기간별 호출·비용 흐름 · ${sinceLabel(t.since)}`, t.appFilter) +
+		"AI 호출",
+		pageHead("AI 호출", `호출·비용 흐름 · ${sinceLabel(t.since)}`, t.appFilter) +
 			`<div id="hz-body">
 ${filterTabs("/admin/calls", t.period, t.appFilter, t.apps, PERIODS)}
 ${sectionHead(`${t.bucketLabel} 단위 호출·비용`, {
@@ -517,6 +352,13 @@ ${svgTrend(t.buckets)}
 
 ${sectionHead("언제 몰리나 (요일 × 시각, KST)", { note: peak ? `가장 많은 때: ${WD[peak.w]}요일 ${peak.h}시 · ${peak.n.toLocaleString()}건` : "" })}
 ${svgHeat(t.heat)}
+
+${sectionHead("실패 상위", {
+		href: `/admin/calls/logs${q}&status=error`,
+		linkLabel: "로그에서 보기 →",
+		note: t.errors.length ? `실패 ${t.errors.reduce((n, e) => n + e.count, 0).toLocaleString()}건` : "실패 없어요",
+	})}
+<table><thead><tr><th class="n">HTTP</th><th class="n">건수</th><th>대표 메시지</th></tr></thead><tbody>${errRows}</tbody></table>
 
 ${sectionHead("구간별 상세", {
 		tip: `${TIP_INTERNAL}\n${TIP_COST}`,
@@ -1240,55 +1082,6 @@ function monthlyCostPanel(s: { monthly: MonthCost[]; monthProgress: number }, ba
 	return `<div class="mcost">
   <div class="bars">${bars}</div>
   ${parts.length ? `<div class="sum">${parts.join('<span class="dot">·</span>')}</div>` : ""}
-</div>`;
-}
-
-/**
- * 요약 화면에 얹는 이상탐지 칸.
- * 훑어보는 화면이라 "지금 이상이 있나 · 무엇이 · 탐지기는 살아 있나" 셋만 담고,
- * 나머지는 이상탐지 탭 몫으로 넘긴다. 이상이 없으면 한 줄로 접는다.
- */
-function anomalyBand(a: AnomalyBrief, href: string): string {
-	const age = a.heartbeatAge;
-	const cls = age === null || age > 15 * 60_000 ? "down" : age > 5 * 60_000 ? "stale" : "";
-	const stateText =
-		age === null
-			? "이상탐지 서버에서 아직 신호가 오지 않았어요"
-			: cls === "down"
-				? "이상탐지 서버 신호가 끊겼어요"
-				: cls === "stale"
-					? "이상탐지 서버 신호가 늦어지고 있어요"
-					: "이상탐지 서버 정상";
-	const dot = `<span class="st${cls ? ` ${cls}` : ""}"><span class="dot"></span>${escapeHtml(stateText)}</span>`;
-
-	if (!a.total) {
-		return `<div class="anb quiet">${dot}<span class="t">이 기간에 잡힌 이상 신호가 없어요.</span>` +
-			`<span class="sm">마지막 신호 ${ago(age)}</span></div>`;
-	}
-
-	const rows = a.recent
-		.map((r) => {
-			const d = anomDetail(r);
-			const amount = d.ratio ? `평소의 ${d.ratio}배` : anomValue(r.observed, d.metric);
-			const tip = r.verdict_reason ? `${kst(r.bucket)}\n${r.verdict_reason}` : kst(r.bucket);
-			return `<tr><td class="mono" data-tip="${escapeHtml(tip)}">${kst(r.bucket).slice(0, 11)}</td>` +
-				`<td>${sevTag(r.severity)}</td>` +
-				`<td>${escapeHtml(d.label || SIGNAL_LABEL[r.signal] || r.signal)}</td>` +
-				`<td>${r.app === "*" ? "전체" : escapeHtml(r.app)}</td>` +
-				`<td class="n">${escapeHtml(amount)}</td>` +
-				`<td>${verdictTag(r.verdict, r.verdict_reason)}</td></tr>`;
-		})
-		.join("");
-
-	return `<div class="anb">
-  <div class="anb-l">
-    ${dot}
-    ${sevDonut(a)}
-    <div class="sub">전체 ${a.total.toLocaleString()}건${delta(a.total, a.prevTotal, true)}${a.hitRate === null ? "" : ` · 정탐률 ${pct1(a.hitRate)}`}<br>마지막 탐지 ${a.lastDetected ? ago(Date.now() - a.lastDetected) : "-"}</div>
-  </div>
-  <div class="anb-r"><div class="scroll"><table class="mini"><tr><th>구간</th><th>등급</th><th>신호</th><th>앱</th><th class="n">관측</th><th>검증</th></tr>${rows}</table></div>
-    <div class="sub"><a href="${href}">이상 신호 ${a.total.toLocaleString()}건 모두 보기 →</a></div>
-  </div>
 </div>`;
 }
 
@@ -2449,50 +2242,4 @@ ${notFoundPanel(t)}
 </div>`,
 		{ ...opts, tab: "traffic", sub: trafficSub(view, q) },
 	);
-}
-
-/**
- * 요약 화면에 얹는 트래픽 칸.
- * 왼쪽은 사람·크롤러 비중, 오른쪽은 서비스별 방문. 자세히는 트래픽 탭 몫이다.
- */
-function trafficBand(t: TrafficBrief, href: string): string {
-	if (!t.total) {
-		return `<div class="anb quiet"><span class="st down"><span class="dot"></span>방문 기록 없음</span>` +
-			`<span class="t">이 기간에 들어온 서비스 방문 기록이 없어요.</span>` +
-			`<span class="sm">서비스가 기록을 보내기 시작하면 여기에 쌓여요.</span></div>`;
-	}
-
-	const donut = smallDonut(
-		[
-			{ label: "사람", v: t.human, color: KIND_COLOR.human },
-			{ label: "AI 크롤러", v: t.ai, color: KIND_COLOR.ai },
-			{ label: "검색 크롤러", v: t.search, color: KIND_COLOR.search },
-			{ label: "기타 봇", v: t.other, color: KIND_COLOR.other },
-		],
-		t.total,
-		"방문 종류 비중",
-	);
-
-	const rows = t.sites
-		.map(
-			(r) =>
-				`<tr><td>${escapeHtml(r.name)}</td>` +
-				`<td class="n">${r.total.toLocaleString()}${delta(r.total, r.prev)}</td>` +
-				`<td class="n">${r.ai.toLocaleString()}</td></tr>`,
-		)
-		.join("");
-
-	return `<div class="anb">
-  <div class="anb-l">
-    ${donut}
-    <div class="sub">고유 방문자 ${t.uniq.toLocaleString()}명 · 전체 ${t.total.toLocaleString()}건${delta(t.total, t.prevTotal)}<br>마지막 기록 ${t.lastTs ? ago(Date.now() - t.lastTs) : "-"}</div>
-  </div>
-  <div class="anb-r"><div class="scroll"><table class="mini"><tr><th>서비스</th><th class="n">방문</th><th class="n">AI 크롤러</th></tr>${rows}</table></div>
-    <div class="sub"><a href="${href}">서비스별 자세히 보기 →</a>${
-			t.anomalies
-				? ` · <a href="/admin/anomaly?scope=traffic">이상 신호 ${t.anomalies.toLocaleString()}건${t.anomalyCritical ? ` (심각 ${t.anomalyCritical})` : ""} 보기 →</a>`
-				: ""
-		}</div>
-  </div>
-</div>`;
 }
