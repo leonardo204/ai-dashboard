@@ -11,11 +11,13 @@
  *  POST /v1/embeddings    임베딩
  *  POST /v1/hit           다른 서비스가 보내는 방문 기록 (TRAFFIC_TOKEN)
  *  GET  /admin            요약 대시보드 (세션 로그인)
- *  GET  /admin/usage      앱·모델·용도별 사용량
- *  GET  /admin/trend      기간별 추이 · 요일×시각 히트맵
- *  GET  /admin/geo        국가·도시별 호출 분포
- *  GET  /admin/logs       호출 로그 검색 (/admin/logs.csv 내려받기)
- *  GET  /admin/apps       앱 관리 화면
+ *  GET  /admin/calls           AI 호출 — 흐름(기본)
+ *  GET  /admin/calls/usage     앱·모델·용도별 사용량
+ *  GET  /admin/calls/geo       국가·도시별 호출 분포
+ *  GET  /admin/calls/logs      호출 로그 검색 (/admin/logs.csv 내려받기)
+ *  GET  /admin/traffic         트래픽 — 방문(기본) · /bots · /paths
+ *  GET  /admin/anomaly         이상탐지 — 받은 신호(기본) · /mails
+ *  GET  /admin/settings/apps   앱 관리 화면
  *  GET  /admin/guide      연결 가이드 (원문: /admin/guide.md)
  *       /admin/api/*      앱 관리·통계·모델 카탈로그 API
  *  GET  /admin/api/export 호출 로그 증분 내보내기(이상탐지 서버 수집용)
@@ -171,13 +173,13 @@ async function handleLogin(request: Request, env: Env, url: URL): Promise<Respon
 	);
 }
 
-/** 앱 관리 화면(/admin/apps)의 폼 처리 — 추가·저장·토큰 재발급·중지/재개·삭제. */
+/** 앱 관리 화면(/admin/settings/apps)의 폼 처리 — 추가·저장·토큰 재발급·중지/재개·삭제. */
 async function handleAppsPost(request: Request, env: Env): Promise<Response> {
 	const f = await request.formData();
 	const get = (k: string) => String(f.get(k) ?? "").trim();
 	const action = get("action");
 	const id = get("id");
-	const back = (msg: string) => Response.redirect(new URL(`/admin/apps?msg=${encodeURIComponent(msg)}`, request.url).toString(), 303);
+	const back = (msg: string) => Response.redirect(new URL(`/admin/settings/apps?msg=${encodeURIComponent(msg)}`, request.url).toString(), 303);
 
 	if (action === "passkey-delete") {
 		const cred = get("cred");
@@ -205,7 +207,7 @@ async function handleAppsPost(request: Request, env: Env): Promise<Response> {
 		const t = newToken();
 		await upsertApp(env, { ...existing, models: JSON.stringify(existing.models), token: t });
 		return Response.redirect(
-			new URL(`/admin/apps?msg=${encodeURIComponent(`${id} 토큰을 새로 발급했어요.`)}&token=${encodeURIComponent(t)}`, request.url).toString(),
+			new URL(`/admin/settings/apps?msg=${encodeURIComponent(`${id} 토큰을 새로 발급했어요.`)}&token=${encodeURIComponent(t)}`, request.url).toString(),
 			303,
 		);
 	}
@@ -232,7 +234,7 @@ async function handleAppsPost(request: Request, env: Env): Promise<Response> {
 		const token = newToken();
 		await upsertApp(env, { id, name, token, models: JSON.stringify(models), perMin, perDay, active: true, note, site, internal });
 		return Response.redirect(
-			new URL(`/admin/apps?msg=${encodeURIComponent(`${name} 앱을 추가했어요.`)}&token=${encodeURIComponent(token)}`, request.url).toString(),
+			new URL(`/admin/settings/apps?msg=${encodeURIComponent(`${name} 앱을 추가했어요.`)}&token=${encodeURIComponent(token)}`, request.url).toString(),
 			303,
 		);
 	}
@@ -280,10 +282,25 @@ function statScope(url: URL): { period: string; appFilter: string } {
 const STAT_PAGES: Record<string, (env: Env, period: string, app: string) => Promise<string>> = {
 	"/admin": async (e, p, a) => renderSummary(await collectSummary(e, p, a), { session: true }),
 	"/admin/": async (e, p, a) => renderSummary(await collectSummary(e, p, a), { session: true }),
-	"/admin/usage": async (e, p, a) => renderUsage(await collectUsage(e, p, a), { session: true }),
-	"/admin/trend": async (e, p, a) => renderTrend(await collectTrend(e, p, a), { session: true }),
-	"/admin/geo": async (e, p, a) => renderGeo(await collectGeo(e, p, a), { session: true }),
+	"/admin/calls": async (e, p, a) => renderTrend(await collectTrend(e, p, a), { session: true }),
+	"/admin/calls/": async (e, p, a) => renderTrend(await collectTrend(e, p, a), { session: true }),
+	"/admin/calls/usage": async (e, p, a) => renderUsage(await collectUsage(e, p, a), { session: true }),
+	"/admin/calls/geo": async (e, p, a) => renderGeo(await collectGeo(e, p, a), { session: true }),
+};
 
+/**
+ * 옛 주소 → 새 주소. 탭을 다섯 개로 묶으면서 화면 주소가 바뀌었다.
+ * 북마크와 예전 메일에 실린 링크가 있어 301로 넘긴다(질의 문자열은 그대로 물고 간다).
+ */
+const MOVED: Record<string, string> = {
+	"/admin/trend": "/admin/calls",
+	"/admin/usage": "/admin/calls/usage",
+	"/admin/geo": "/admin/calls/geo",
+	"/admin/logs": "/admin/calls/logs",
+	"/admin/apps": "/admin/settings/apps",
+	"/admin/guide": "/admin/settings/guide",
+	"/admin/settings": "/admin/settings/apps",
+	"/admin/anomaly/detector": "/admin/anomaly",
 };
 
 /** 주소에서 로그 검색 조건을 읽는다. */
@@ -579,9 +596,10 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 			return handleAppsApi(request, env, url);
 		}
 
-		// ── 연결 가이드 (/admin/guide) · 원문 내려받기 (/admin/guide.md)
+		// ── 연결 가이드 (/admin/settings/guide) · 원문 내려받기 (/admin/guide.md)
 		//    다른 프로젝트에 건네줄 문서다. 관리자용 내용은 담지 않는다.
-		if (path === "/admin/guide" || path === "/admin/guide/" || path === "/admin/guide.md") {
+		//    내려받기 주소는 그대로 둔다 — 다른 곳에 이미 링크가 나가 있다.
+		if (path === "/admin/settings/guide" || path === "/admin/settings/guide/" || path === "/admin/guide.md") {
 			const unauth = await requireAdmin(request, env, url);
 			if (unauth) return unauth;
 			if (path === "/admin/guide.md") {
@@ -596,8 +614,8 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 			return html(renderGuide({ session: true }), { cache: false });
 		}
 
-		// ── 앱 관리 (/admin/apps) — 등록·모델 맵·상한·토큰 재발급
-		if (path === "/admin/apps" || path === "/admin/apps/") {
+		// ── 앱 관리 (/admin/settings/apps) — 등록·모델 맵·상한·토큰 재발급
+		if (path === "/admin/settings/apps" || path === "/admin/settings/apps/") {
 			const unauth = await requireAdmin(request, env, url);
 			if (unauth) return unauth;
 			if (request.method === "POST") return handleAppsPost(request, env);
@@ -630,16 +648,21 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 					{ cache: false },
 				);
 			}
-			if (raw === "mail") {
-				const kindRaw = url.searchParams.get("kind") || "";
-				const kind = ["anomaly", "train", "test"].includes(kindRaw) ? kindRaw : "";
-				return html(renderMails(await collectMails(env, period, kind), { session: true }), { cache: false });
-			}
 			const scope = raw === "traffic" ? "traffic" : "ai";
 			return html(
 				renderAnomaly(await collectAnomaly(env, period, appFilter, scope), { session: true }),
 				{ cache: false },
 			);
+		}
+
+		// ── 보낸 메일 (/admin/anomaly/mails)
+		if (path === "/admin/anomaly/mails" || path === "/admin/anomaly/mails/") {
+			const unauth = await requireAdmin(request, env, url);
+			if (unauth) return unauth;
+			const { period } = statScope(url);
+			const kindRaw = url.searchParams.get("kind") || "";
+			const kind = ["anomaly", "train", "test"].includes(kindRaw) ? kindRaw : "";
+			return html(renderMails(await collectMails(env, period, kind), { session: true }), { cache: false });
 		}
 
 		if (path.startsWith("/admin/anomaly/mail/")) {
@@ -658,6 +681,14 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 			);
 		}
 
+		if (MOVED[path] || MOVED[path.replace(/\/$/, "")]) {
+			const to = MOVED[path] ?? MOVED[path.replace(/\/$/, "")];
+			return new Response(null, {
+				status: 301,
+				headers: { Location: `${to}${url.search}`, "Cache-Control": "no-store" },
+			});
+		}
+
 		if (STAT_PAGES[path]) {
 			const unauth = await requireAdmin(request, env, url);
 			if (unauth) return unauth;
@@ -666,17 +697,30 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 		}
 
 		// ── 트래픽 (/admin/traffic) — 서비스 방문 기록. 기간과 서비스로 좁혀 본다.
-		if (path === "/admin/traffic" || path === "/admin/traffic/") {
+		const trafficView =
+			path === "/admin/traffic/bots" || path === "/admin/traffic/bots/"
+				? "bots"
+				: path === "/admin/traffic/paths" || path === "/admin/traffic/paths/"
+					? "paths"
+					: path === "/admin/traffic" || path === "/admin/traffic/"
+						? "visits"
+						: "";
+		if (trafficView) {
 			const unauth = await requireAdmin(request, env, url);
 			if (unauth) return unauth;
 			const { period } = statScope(url);
 			const raw = url.searchParams.get("site") || "";
 			const site = SITES[raw] ? raw : "";
-			return html(renderTraffic(await collectTraffic(env, period, site), { session: true }), { cache: false });
+			return html(
+				renderTraffic(await collectTraffic(env, period, site), trafficView as "visits" | "bots" | "paths", {
+					session: true,
+				}),
+				{ cache: false },
+			);
 		}
 
 		// ── 호출 로그 (/admin/logs · /admin/logs.csv)
-		if (path === "/admin/logs" || path === "/admin/logs/" || path === "/admin/logs.csv") {
+		if (path === "/admin/calls/logs" || path === "/admin/calls/logs/" || path === "/admin/logs.csv") {
 			const unauth = await requireAdmin(request, env, url);
 			if (unauth) return unauth;
 			const filter = logFilterOf(url);

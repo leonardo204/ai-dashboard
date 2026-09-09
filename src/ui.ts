@@ -237,6 +237,17 @@ textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:var(-
 .topbar form{flex:0 0 auto;}
 .topbar .in>form .btn{padding:7px 12px;}
 
+/* ── 하위 탭 — 상단 탭 아래 한 줄. 어느 화면에서나 같은 자리다. */
+.subbar{position:sticky;top:54px;z-index:19;background:var(--panel);border-bottom:1px solid var(--line);}
+.subbar .in{max-width:1120px;margin:0 auto;padding:0 18px;height:40px;display:flex;align-items:center;
+ gap:2px;overflow-x:auto;scrollbar-width:none;}
+.subbar .in::-webkit-scrollbar{display:none}
+.subbar a{font-size:var(--fs-sm);font-weight:700;color:var(--muted);padding:5px 11px;
+ border-radius:var(--r-sm);text-decoration:none;white-space:nowrap;}
+.subbar a:hover{background:var(--bg);color:var(--ink);}
+.subbar a.on{background:var(--accent-bg);color:var(--accent-fg);}
+@media(max-width:640px){.subbar .in{padding:0 12px;height:38px;}.subbar a{padding:5px 9px;}}
+
 /* ── 토스트 */
 .toasts{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);z-index:60;
  display:flex;flex-direction:column;gap:9px;align-items:center;pointer-events:none;width:min(420px,calc(100vw - 32px));}
@@ -1494,7 +1505,7 @@ document.addEventListener('click', function(e){
 // ─────────────────────────────────────────────────────────────
 
 /** 상단바 메뉴 키. */
-export type TabKey = "summary" | "usage" | "trend" | "geo" | "anomaly" | "traffic" | "logs" | "apps" | "guide";
+export type TabKey = "board" | "calls" | "traffic" | "anomaly" | "settings";
 
 export interface AdminOpts {
 	/** 세션 로그인으로 들어온 화면인지(= 로그아웃 버튼 노출). */
@@ -1507,23 +1518,60 @@ export interface AdminOpts {
 	flash?: string | null;
 	/** 화면을 열자마자 모달로 보여줄 발급 토큰 */
 	token?: string | null;
+	/** 상단 탭 아래 하위 탭 줄. 화면이 자기 조건(기간·앱)을 붙인 주소를 만들어 넘긴다. */
+	sub?: { key: string; items: { key: string; href: string; label: string }[] };
 }
 
 // 상단 메뉴는 조건 없는 주소로만 간다.
 // 화면마다 기간·앱을 따로 고르는데, 메뉴에 조건을 얹으면 한 화면에서 고른 값이
 // 나머지 화면까지 따라가 버린다. 화면을 옮기면 기본값(최근 30일·전체 앱)에서 다시 시작한다.
 // 화면 안의 "자세히 →"·도넛 조각·"로그 →"는 눌러서 파고드는 링크라 조건을 그대로 넘긴다.
+/**
+ * 상단 탭 다섯 개.
+ * 전에는 아홉 개가 같은 급으로 늘어서 있어 무엇이 무엇의 상세인지 알 수 없었다.
+ * 사용량·추이·지역·로그는 모두 "AI 호출"을 다른 각도로 본 것이라 그 아래로 넣었다.
+ */
 const NAV: { key: TabKey; href: string; label: string }[] = [
-	{ key: "summary", href: "/admin", label: "요약" },
-	{ key: "usage", href: "/admin/usage", label: "사용량" },
-	{ key: "trend", href: "/admin/trend", label: "추이" },
-	{ key: "geo", href: "/admin/geo", label: "지역" },
-	{ key: "anomaly", href: "/admin/anomaly", label: "이상탐지" },
+	{ key: "board", href: "/admin", label: "상황판" },
+	{ key: "calls", href: "/admin/calls", label: "AI 호출" },
 	{ key: "traffic", href: "/admin/traffic", label: "트래픽" },
-	{ key: "logs", href: "/admin/logs", label: "로그" },
-	{ key: "apps", href: "/admin/apps", label: "앱 관리" },
-	{ key: "guide", href: "/admin/guide", label: "가이드" },
+	{ key: "anomaly", href: "/admin/anomaly", label: "이상탐지" },
+	{ key: "settings", href: "/admin/settings", label: "설정" },
 ];
+
+/** 하위 탭 묶음 — 화면이 자기 기간·앱 조건을 붙인 주소를 넘겨 쓴다. */
+export const callsSub = (key: string, q = "") => ({
+	key,
+	items: [
+		{ key: "flow", href: `/admin/calls${q}`, label: "흐름" },
+		{ key: "usage", href: `/admin/calls/usage${q}`, label: "나눠 보기" },
+		{ key: "geo", href: `/admin/calls/geo${q}`, label: "지역" },
+		{ key: "logs", href: `/admin/calls/logs${q}`, label: "로그" },
+	],
+});
+export const trafficSub = (key: string, q = "") => ({
+	key,
+	items: [
+		{ key: "visits", href: `/admin/traffic${q}`, label: "방문" },
+		{ key: "bots", href: `/admin/traffic/bots${q}`, label: "크롤러" },
+		{ key: "paths", href: `/admin/traffic/paths${q}`, label: "경로" },
+	],
+});
+export const anomalySub = (key: string, period = "month") => ({
+	key,
+	items: [
+		{ key: "signals", href: `/admin/anomaly?period=${period}`, label: "받은 신호" },
+		{ key: "detector", href: `/admin/anomaly/detector?period=${period}`, label: "탐지기 상태" },
+		{ key: "mails", href: `/admin/anomaly/mails?period=${period}`, label: "메일" },
+	],
+});
+export const settingsSub = (key: string) => ({
+	key,
+	items: [
+		{ key: "apps", href: "/admin/settings/apps", label: "앱 관리" },
+		{ key: "guide", href: "/admin/settings/guide", label: "연결 가이드" },
+	],
+});
 
 export function shellAdmin(title: string, body: string, opts: AdminOpts = {}): string {
 	const nav = NAV.map(
@@ -1536,7 +1584,13 @@ export function shellAdmin(title: string, body: string, opts: AdminOpts = {}): s
   <nav>${nav}</nav>
   <span class="sp"></span>
   ${opts.session ? `<form method="post" action="/admin/logout"><button class="btn lo" type="submit" aria-label="로그아웃" data-tip="로그아웃"><svg class="ic" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg><span class="tx">로그아웃</span></button></form>` : ""}
-</div></header>`;
+</div></header>${
+			opts.sub && opts.sub.items.length
+				? `<div class="subbar"><div class="in">${opts.sub.items
+						.map((t) => `<a href="${t.href}"${opts.sub!.key === t.key ? ' class="on"' : ""}>${escapeHtml(t.label)}</a>`)
+						.join("")}</div></div>`
+				: ""
+		}`;
 	const flash =
 		opts.flash || opts.token
 			? `<div id="hz-flash" hidden data-msg="${escapeHtml(opts.flash ?? "")}" data-token="${escapeHtml(opts.token ?? "")}"></div>`

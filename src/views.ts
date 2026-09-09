@@ -2,12 +2,12 @@
  * 관리 화면 본문 — 화면 6개.
  *
  *   요약   /admin        한눈에 보는 지표·차트. 긴 표를 두지 않는다.
- *   사용량 /admin/usage  앱·모델·용도별 표
- *   추이   /admin/trend  기간별 흐름 + 요일×시각 히트맵
- *   지역   /admin/geo    지도 + 국가·도시별 표
+ *   사용량 /admin/calls/usage  앱·모델·용도별 표
+ *   추이   /admin/calls  기간별 흐름 + 요일×시각 히트맵
+ *   지역   /admin/calls/geo    지도 + 국가·도시별 표
  *   이상   /admin/anomaly 이상 신호 현황 · 모델 정보 · 탐지 서버 상태
- *   로그   /admin/logs   호출 1건씩 검색
- *   앱관리 /admin/apps   토큰·모델 맵·상한
+ *   로그   /admin/calls/logs   호출 1건씩 검색
+ *   앱관리 /admin/settings/apps   토큰·모델 맵·상한
  *
  * 데이터 조회는 stats.ts, 공통 틀·차트는 ui.ts에 있다.
  */
@@ -24,6 +24,7 @@ import {
 } from "./stats";
 import {
 	escapeHtml, usd, kst, shortNum, shellAdmin, pageHead, filterTabs, sectionHead, delta, kpiRow,
+	callsSub, trafficSub, anomalySub, settingsSub,
 	svgTrend, svgMap, svgShare, svgDonut, svgHeat, svgLevels, svgF1, svgTraffic, type AdminOpts,
 } from "./ui";
 import { SITES, siteName, siteUrl, THREAT_LABEL } from "./traffic";
@@ -91,7 +92,7 @@ export function renderSummary(s: SummaryData, opts: AdminOpts = {}): string {
 	const alerts: string[] = [];
 	if (s.error && errRate >= 5) {
 		alerts.push(
-			`<a class="al" href="/admin/logs${q}&status=error" style="text-decoration:none">실패율 <b>${errRate.toFixed(1)}%</b> · ${s.error.toLocaleString()}건 — 로그 보기 →</a>`,
+			`<a class="al" href="/admin/calls/logs${q}&status=error" style="text-decoration:none">실패율 <b>${errRate.toFixed(1)}%</b> · ${s.error.toLocaleString()}건 — 로그 보기 →</a>`,
 		);
 	}
 	if (s.prev && s.prev.cost > 0 && s.cost > s.prev.cost * 1.5) {
@@ -106,7 +107,7 @@ export function renderSummary(s: SummaryData, opts: AdminOpts = {}): string {
 	}
 	if (s.p95Latency >= 10_000) {
 		alerts.push(
-			`<a class="al" href="/admin/logs${q}&slow=10000" style="text-decoration:none">가장 느린 5%가 <b>${(s.p95Latency / 1000).toFixed(1)}초</b>를 넘어요 — 느린 호출 보기 →</a>`,
+			`<a class="al" href="/admin/calls/logs${q}&slow=10000" style="text-decoration:none">가장 느린 5%가 <b>${(s.p95Latency / 1000).toFixed(1)}초</b>를 넘어요 — 느린 호출 보기 →</a>`,
 		);
 	}
 
@@ -115,7 +116,7 @@ export function renderSummary(s: SummaryData, opts: AdminOpts = {}): string {
 			label: r.name,
 			value: r.total,
 			sub: `비용 ${usd(r.cost)}`,
-			href: `/admin/usage?period=${s.period}&app=${encodeURIComponent(r.key)}`,
+			href: `/admin/calls/usage?period=${s.period}&app=${encodeURIComponent(r.key)}`,
 		})),
 		"건",
 	);
@@ -124,7 +125,7 @@ export function renderSummary(s: SummaryData, opts: AdminOpts = {}): string {
 			label: shortModel(r.key),
 			value: r.total,
 			sub: `비용 ${usd(r.cost)}`,
-			href: `/admin/logs${q}&model=${encodeURIComponent(r.key)}`,
+			href: `/admin/calls/logs${q}&model=${encodeURIComponent(r.key)}`,
 		})),
 		"건",
 	);
@@ -228,31 +229,31 @@ ${anomalyBand(s.anomaly, `/admin/anomaly${q}`)}
 ${sectionHead("트래픽", { href: `/admin/traffic?period=${s.period}`, linkLabel: "트래픽에서 보기 →" })}
 ${trafficBand(s.traffic, `/admin/traffic?period=${s.period}`)}
 
-${sectionHead(`최근 호출 (${SUMMARY_RECENT}건)`, { href: `/admin/logs${q}`, linkLabel: "로그에서 더 보기 →", tip: "자동 갱신이 켜져 있으면 새 호출이 들어올 때마다 다시 그려져요.\n내부용 앱 호출은 빼고 보여줘요." })}
+${sectionHead(`최근 호출 (${SUMMARY_RECENT}건)`, { href: `/admin/calls/logs${q}`, linkLabel: "로그에서 더 보기 →", tip: "자동 갱신이 켜져 있으면 새 호출이 들어올 때마다 다시 그려져요.\n내부용 앱 호출은 빼고 보여줘요." })}
 <table class="recent calls lite"><colgroup><col class="c-ts"><col class="c-app"><col class="c-kind"><col class="c-model"><col class="c-st"><col class="c-http"><col class="c-lat"><col class="c-tok"><col class="c-cost"><col class="c-geo"><col class="c-err"></colgroup><tr><th>시각</th><th>앱</th><th>용도</th><th>모델</th><th>상태</th><th class="n">HTTP</th><th class="n">지연</th><th class="n">토큰</th><th class="n">비용</th><th>지역</th><th>오류 · 메타</th></tr>${recentRows}</table>
 
-${sectionHead(`추이 (${s.bucketLabel} 단위)`, { href: `/admin/trend${q}`, tip: TIP_TREND })}
+${sectionHead(`추이 (${s.bucketLabel} 단위)`, { href: `/admin/calls${q}`, tip: TIP_TREND })}
 ${svgTrend(s.buckets)}
 
 <div class="two">
-  <section>${sectionHead("앱별 비중", { href: `/admin/usage${q}` })}${appDonut}</section>
-  <section>${sectionHead("모델별 비중", { href: `/admin/usage${q}#model` })}${modelDonut}</section>
+  <section>${sectionHead("앱별 비중", { href: `/admin/calls/usage${q}` })}${appDonut}</section>
+  <section>${sectionHead("모델별 비중", { href: `/admin/calls/usage${q}#model` })}${modelDonut}</section>
 </div>
 
 <div class="two">
-  <section>${sectionHead("실패 상위", { href: `/admin/logs${q}&status=error`, linkLabel: "로그에서 보기 →" })}
+  <section>${sectionHead("실패 상위", { href: `/admin/calls/logs${q}&status=error`, linkLabel: "로그에서 보기 →" })}
     <table><tr><th class="n">HTTP</th><th class="n">건수</th><th>대표 메시지</th></tr>${errRows}</table>
   </section>
-  <section>${sectionHead(`호출 지역 (${s.countryCount}개국)`, { href: `/admin/geo${q}`, tip: TIP_GEO })}${geoShare}</section>
+  <section>${sectionHead(`호출 지역 (${s.countryCount}개국)`, { href: `/admin/calls/geo${q}`, tip: TIP_GEO })}${geoShare}</section>
 </div>
 
 </div>`,
-		{ ...opts, tab: "summary" },
+		{ ...opts, tab: "board" },
 	);
 }
 
 // ═════════════════════════════════════════════════════════════
-// 사용량 (/admin/usage)
+// 사용량 (/admin/calls/usage)
 // ═════════════════════════════════════════════════════════════
 
 export function renderUsage(u: UsageData, opts: AdminOpts = {}): string {
@@ -262,13 +263,13 @@ export function renderUsage(u: UsageData, opts: AdminOpts = {}): string {
 		? u.byApp
 				.map(
 					(r) =>
-						`<tr><td><a href="/admin/usage?period=${u.period}&app=${encodeURIComponent(r.key)}">${escapeHtml(r.name)}</a><br><span class="mono">${escapeHtml(r.key)}</span></td>` +
+						`<tr><td><a href="/admin/calls/usage?period=${u.period}&app=${encodeURIComponent(r.key)}">${escapeHtml(r.name)}</a><br><span class="mono">${escapeHtml(r.key)}</span></td>` +
 						`<td class="n">${r.total.toLocaleString()}${u.hasPrev ? delta(r.total, u.prevApp[r.key] ?? 0) : ""}</td>` +
 						`<td class="n g o1">${r.ok.toLocaleString()}</td><td class="n r">${r.error.toLocaleString()}</td>` +
 						`<td class="n o1">${(r.inTok + r.outTok).toLocaleString()}</td><td class="n">${usd(r.cost)}</td>` +
 						`<td class="n o2">${avgLat(r)}ms</td>` +
 						`<td class="n o2">${r.total ? usd(r.cost / r.total) : "-"}</td>` +
-						`<td><a href="/admin/logs?period=${u.period}&app=${encodeURIComponent(r.key)}">로그 →</a></td></tr>`,
+						`<td><a href="/admin/calls/logs?period=${u.period}&app=${encodeURIComponent(r.key)}">로그 →</a></td></tr>`,
 				)
 				.join("")
 		: `<tr><td colspan="9">데이터 없음</td></tr>`;
@@ -282,7 +283,7 @@ export function renderUsage(u: UsageData, opts: AdminOpts = {}): string {
 						`<td class="n r">${r.error.toLocaleString()}</td>` +
 						`<td class="n o1">${r.inTok.toLocaleString()}</td><td class="n o1">${r.outTok.toLocaleString()}</td>` +
 						`<td class="n">${usd(r.cost)}</td><td class="n o2">${avgLat(r)}ms</td>` +
-						`<td><a href="/admin/logs${q}&model=${encodeURIComponent(r.key)}">로그 →</a></td></tr>`,
+						`<td><a href="/admin/calls/logs${q}&model=${encodeURIComponent(r.key)}">로그 →</a></td></tr>`,
 				)
 				.join("")
 		: `<tr><td colspan="8">데이터 없음</td></tr>`;
@@ -295,7 +296,7 @@ export function renderUsage(u: UsageData, opts: AdminOpts = {}): string {
 						`<td class="n g o1">${r.ok.toLocaleString()}</td><td class="n r">${r.error.toLocaleString()}</td>` +
 						`<td class="n o1">${(r.inTok + r.outTok).toLocaleString()}</td><td class="n">${usd(r.cost)}</td>` +
 						`<td class="n o2">${avgLat(r)}ms</td>` +
-						`<td><a href="/admin/logs${q}&kind=${encodeURIComponent(r.key)}">로그 →</a></td></tr>`,
+						`<td><a href="/admin/calls/logs${q}&kind=${encodeURIComponent(r.key)}">로그 →</a></td></tr>`,
 				)
 				.join("")
 		: `<tr><td colspan="8">데이터 없음</td></tr>`;
@@ -304,7 +305,7 @@ export function renderUsage(u: UsageData, opts: AdminOpts = {}): string {
 		"사용량",
 		pageHead("사용량", `앱 · 모델 · 용도별 집계 · ${sinceLabel(u.since)}`, u.appFilter) +
 			`<div id="hz-body">
-${filterTabs("/admin/usage", u.period, u.appFilter, u.apps, PERIODS)}
+${filterTabs("/admin/calls/usage", u.period, u.appFilter, u.apps, PERIODS)}
 ${kpiRow([
 	{ label: "호출", value: u.total.toLocaleString(), size: "sm" },
 	{ label: "비용", value: usd(u.cost), size: "sm" },
@@ -324,12 +325,12 @@ ${sectionHead("용도별", { count: `${u.byKind.length}개`, tip: "용도는 앱
 <div class="cap"><table class="fx" id="tb-kind">${cols("", "96", "74:o1", "74", "84:o1", "84", "86:o2", "58")}<thead><tr><th>용도</th><th class="n">호출</th><th class="n o1">성공</th><th class="n">실패</th><th class="n o1">토큰</th><th class="n">비용</th><th class="n o2">평균 지연</th><th></th></tr></thead><tbody>${kindRows}</tbody></table></div>
 
 </div>`,
-		{ ...opts, tab: "usage" },
+		{ ...opts, tab: "calls", sub: callsSub("usage", q) },
 	);
 }
 
 // ═════════════════════════════════════════════════════════════
-// 추이 (/admin/trend)
+// 추이 (/admin/calls)
 // ═════════════════════════════════════════════════════════════
 
 export function renderTrend(t: TrendData, opts: AdminOpts = {}): string {
@@ -363,7 +364,7 @@ export function renderTrend(t: TrendData, opts: AdminOpts = {}): string {
 		"추이",
 		pageHead("추이", `기간별 호출·비용 흐름 · ${sinceLabel(t.since)}`, t.appFilter) +
 			`<div id="hz-body">
-${filterTabs("/admin/trend", t.period, t.appFilter, t.apps, PERIODS)}
+${filterTabs("/admin/calls", t.period, t.appFilter, t.apps, PERIODS)}
 ${sectionHead(`${t.bucketLabel} 단위 호출·비용`, {
 		tip: TIP_TREND,
 		note: t.total
@@ -387,12 +388,12 @@ ${sectionHead("구간별 상세", {
 
 <p class="foot">구간은 한국 시간(KST) 기준으로 끊어요.</p>
 </div>`,
-		{ ...opts, tab: "trend" },
+		{ ...opts, tab: "calls", sub: callsSub("flow", q) },
 	);
 }
 
 // ═════════════════════════════════════════════════════════════
-// 지역 (/admin/geo)
+// 지역 (/admin/calls/geo)
 // ═════════════════════════════════════════════════════════════
 
 export function renderGeo(g: GeoData, opts: AdminOpts = {}): string {
@@ -409,7 +410,7 @@ export function renderGeo(g: GeoData, opts: AdminOpts = {}): string {
 						`<td class="n o1">${(r.inTok + r.outTok).toLocaleString()}</td><td class="n">${usd(r.cost)}</td>` +
 						`<td class="n o2">${avgLat(r)}ms</td>` +
 						`<td class="bar o2"><span style="width:${Math.round((r.total / maxCountry) * 100)}%"></span></td>` +
-						`<td class="lk">${r.key === "(미상)" ? "" : `<a href="/admin/logs${q}&country=${encodeURIComponent(r.key)}">로그 →</a>`}</td></tr>`,
+						`<td class="lk">${r.key === "(미상)" ? "" : `<a href="/admin/calls/logs${q}&country=${encodeURIComponent(r.key)}">로그 →</a>`}</td></tr>`,
 				)
 				.join("")
 		: `<tr><td colspan="10">데이터 없음</td></tr>`;
@@ -451,7 +452,7 @@ export function renderGeo(g: GeoData, opts: AdminOpts = {}): string {
 	const trafficHref = `/admin/traffic?period=${g.period}${g.hitSite ? `&site=${encodeURIComponent(g.hitSite)}` : ""}`;
 	const hitSection = g.hitUnlinked
 		? `<p class="sm" style="margin:18px 2px 0">이 앱에는 짝이 되는 서비스가 지정되어 있지 않아 방문 지역을 함께 보여주지 못해요. ` +
-			`<a href="/admin/apps">앱 관리에서 연결하기 →</a> · <a href="/admin/geo?period=${g.period}">전체 앱으로 보기 →</a></p>`
+			`<a href="/admin/settings/apps">앱 관리에서 연결하기 →</a> · <a href="/admin/calls/geo?period=${g.period}">전체 앱으로 보기 →</a></p>`
 		: `${sectionHead(hitTitle, { href: trafficHref, linkLabel: "트래픽에서 보기 →" })}
 <div class="cap"><table class="fx" id="tb-hitgeo">${cols("160", "78", "72", "84:o1", "82:o1", "88:o1", ":o2", "78")}<thead><tr><th>국가</th><th class="n">방문</th><th class="n">사람</th><th class="n o1">고유 방문자</th><th class="n o1">AI 크롤러</th><th class="n o1">검색 크롤러</th><th class="o2">비중</th><th></th></tr></thead><tbody>${hitRows}</tbody></table></div>`;
 
@@ -459,7 +460,7 @@ export function renderGeo(g: GeoData, opts: AdminOpts = {}): string {
 		"지역",
 		pageHead("호출 지역", `국가 · 도시별 호출·방문 분포 · ${sinceLabel(g.since)}`, g.appFilter) +
 			`<div id="hz-body">
-${filterTabs("/admin/geo", g.period, g.appFilter, g.apps, PERIODS)}
+${filterTabs("/admin/calls/geo", g.period, g.appFilter, g.apps, PERIODS)}
 ${svgMap(g.points, g.geoUnknown, g.hitPoints, g.hitUnknown, g.hitSite ? siteName(g.hitSite) : "")}
 
 ${sectionHead("국가별 AI 호출", { tip: TIP_GEO, count: `${g.byCountry.filter((c) => c.key !== "(미상)").length}개국` })}
@@ -472,7 +473,7 @@ ${sectionHead(`지역 · 도시별 (상위 ${g.byRegion.length})`, { right: tabl
 
 <p class="foot">지도의 <b>보라색</b>은 AI 호출, <b>분홍색</b>은 서비스 방문이에요. 앱을 고르면 짝지어 둔 서비스의 방문만 함께 보여요.</p>
 </div>`,
-		{ ...opts, tab: "geo" },
+		{ ...opts, tab: "calls", sub: callsSub("geo", q) },
 	);
 }
 
@@ -603,39 +604,39 @@ const METRIC_LABEL: Record<string, string> = {
 const SIGNAL_GUIDE: Record<string, { todo: string; link?: (q: { period: string; app: string }) => [string, string] }> = {
 	call_spike: {
 		todo: "어느 IP가 몰아서 불렀는지, 앱이 되풀이해 호출한 건 아닌지 로그에서 봐 주세요.",
-		link: (q) => [`/admin/logs?period=${q.period}${q.app ? `&app=${encodeURIComponent(q.app)}` : ""}`, "로그에서 보기 →"],
+		link: (q) => [`/admin/calls/logs?period=${q.period}${q.app ? `&app=${encodeURIComponent(q.app)}` : ""}`, "로그에서 보기 →"],
 	},
 	error_rate: {
 		todo: "실패한 호출의 오류 메시지를 열어 같은 원인인지 확인해 주세요.",
-		link: (q) => [`/admin/logs?period=${q.period}&status=error${q.app ? `&app=${encodeURIComponent(q.app)}` : ""}`, "실패 호출 보기 →"],
+		link: (q) => [`/admin/calls/logs?period=${q.period}&status=error${q.app ? `&app=${encodeURIComponent(q.app)}` : ""}`, "실패 호출 보기 →"],
 	},
 	cost_spike: {
 		todo: "어떤 모델이 비용을 끌어올렸는지, 비싼 모델로 바뀐 건 아닌지 사용량에서 봐 주세요.",
-		link: (q) => [`/admin/usage?period=${q.period}${q.app ? `&app=${encodeURIComponent(q.app)}` : ""}`, "사용량에서 보기 →"],
+		link: (q) => [`/admin/calls/usage?period=${q.period}${q.app ? `&app=${encodeURIComponent(q.app)}` : ""}`, "사용량에서 보기 →"],
 	},
 	ip_surge: {
 		todo: "새로 들어온 IP가 실제 사용자인지, 한곳에서 흩뿌린 건 아닌지 봐 주세요.",
-		link: (q) => [`/admin/logs?period=${q.period}${q.app ? `&app=${encodeURIComponent(q.app)}` : ""}`, "로그에서 보기 →"],
+		link: (q) => [`/admin/calls/logs?period=${q.period}${q.app ? `&app=${encodeURIComponent(q.app)}` : ""}`, "로그에서 보기 →"],
 	},
 	new_ip_burst: {
 		todo: "처음 보는 IP가 한꺼번에 들어왔어요. 토큰이 새어 나간 건 아닌지 확인해 주세요.",
-		link: (q) => [`/admin/logs?period=${q.period}${q.app ? `&app=${encodeURIComponent(q.app)}` : ""}`, "로그에서 보기 →"],
+		link: (q) => [`/admin/calls/logs?period=${q.period}${q.app ? `&app=${encodeURIComponent(q.app)}` : ""}`, "로그에서 보기 →"],
 	},
 	new_country: {
 		todo: "낯선 나라에서 들어온 호출이에요. 쓰는 지역이 맞는지 확인해 주세요.",
-		link: (q) => [`/admin/geo?period=${q.period}${q.app ? `&app=${encodeURIComponent(q.app)}` : ""}`, "지역에서 보기 →"],
+		link: (q) => [`/admin/calls/geo?period=${q.period}${q.app ? `&app=${encodeURIComponent(q.app)}` : ""}`, "지역에서 보기 →"],
 	},
 	rate_limited: {
 		todo: "상한에 걸려 거절된 호출이에요. 상한을 올릴지, 부르는 쪽을 줄일지 정해 주세요.",
-		link: () => ["/admin/apps", "앱 상한 보기 →"],
+		link: () => ["/admin/settings/apps", "앱 상한 보기 →"],
 	},
 	model_anomaly: {
 		todo: "지표 여러 개가 함께 어긋난 구간이에요. 그 시각 호출을 훑어봐 주세요.",
-		link: (q) => [`/admin/logs?period=${q.period}${q.app ? `&app=${encodeURIComponent(q.app)}` : ""}`, "로그에서 보기 →"],
+		link: (q) => [`/admin/calls/logs?period=${q.period}${q.app ? `&app=${encodeURIComponent(q.app)}` : ""}`, "로그에서 보기 →"],
 	},
 	latency_slow: {
 		todo: "느려진 구간이에요. 어느 모델·용도에서 오래 걸렸는지 확인해 주세요.",
-		link: (q) => [`/admin/logs?period=${q.period}&slow=10000${q.app ? `&app=${encodeURIComponent(q.app)}` : ""}`, "느린 호출 보기 →"],
+		link: (q) => [`/admin/calls/logs?period=${q.period}&slow=10000${q.app ? `&app=${encodeURIComponent(q.app)}` : ""}`, "느린 호출 보기 →"],
 	},
 	traffic_drop: {
 		todo: "서비스가 살아 있는지, robots.txt와 사이트맵이 그대로인지 먼저 열어 봐 주세요.",
@@ -731,7 +732,7 @@ function anomalyExplain(r: AnomalyRowWithMail, period: string, traffic: boolean)
 		: `<div class="ln"><b>확인할 일</b><span>${escapeHtml(todo)}</span></div>`;
 
 	const mail = r.mailId
-		? `<a class="lk mail" href="/admin/anomaly?period=${period}&scope=mail#m-${r.mailId}">메일 «${escapeHtml(String(r.mailSubject ?? "").replace(/^\[AI Service\]\s*/, ""))}» 보기 →</a>`
+		? `<a class="lk mail" href="/admin/anomaly/mails?period=${period}#m-${r.mailId}">메일 «${escapeHtml(String(r.mailSubject ?? "").replace(/^\[AI Service\]\s*/, ""))}» 보기 →</a>`
 		: r.suppressed_reason
 			? `<span class="sm">메일은 보내지 않았어요 — ${escapeHtml(r.suppressed_reason)}</span>`
 			: r.detector === "model"
@@ -1217,9 +1218,10 @@ function anomalyHref(v: AnomalyNav): string {
 	const p = new URLSearchParams();
 	p.set("period", v.period);
 	if (v.view === "mail") {
-		p.set("scope", "mail");
 		if (v.kind) p.set("kind", v.kind);
-	} else if (v.view === "detail") {
+		return `/admin/anomaly/mails?${p.toString()}`;
+	}
+	if (v.view === "detail") {
 		p.set("scope", "detail");
 		p.set("for", v.scope);
 		if (v.sev) p.set("sev", v.sev);
@@ -1239,8 +1241,7 @@ function anomalyNavRow(cur: AnomalyNav): string {
 	const view = cur.view === "mail" ? "summary" : cur.view;
 	const left =
 		navTab("AI 호출", cur.view !== "mail" && cur.scope === "ai", anomalyHref({ ...cur, view, scope: "ai", app: "" })) +
-		navTab("트래픽", cur.view !== "mail" && cur.scope === "traffic", anomalyHref({ ...cur, view, scope: "traffic", app: "" })) +
-		navTab("메일 발송", cur.view === "mail", anomalyHref({ ...cur, view: "mail" }));
+		navTab("트래픽", cur.view !== "mail" && cur.scope === "traffic", anomalyHref({ ...cur, view, scope: "traffic", app: "" }));
 	const periods = Object.entries(PERIODS)
 		.map(([k, v]) => navTab(v.label, k === cur.period, anomalyHref({ ...cur, period: k })))
 		.join("");
@@ -1314,7 +1315,7 @@ export function renderAnomaly(a: AnomalyData, opts: AdminOpts = {}): string {
 							: "규칙"}</td>` +
 						`<td>${verdictTag(r.verdict, r.verdict_reason)}</td>` +
 						`<td>${r.mailId
-							? `<a href="/admin/anomaly?period=${a.period}&scope=mail#m-${r.mailId}" data-tip="${escapeHtml(String(r.mailSubject ?? ""))}">메일 보기 →</a>`
+							? `<a href="/admin/anomaly/mails?period=${a.period}#m-${r.mailId}" data-tip="${escapeHtml(String(r.mailSubject ?? ""))}">메일 보기 →</a>`
 							: r.notified_at
 								? bucketAt(r.notified_at)
 								: r.suppressed_reason
@@ -1532,7 +1533,7 @@ ${sectionHead("승격 심사", {
 
 <p class="foot">심각·주의 신호는 ${escapeHtml("zerolive7@gmail.com")}으로 메일이 나가요.</p>
 </div>`,
-		{ ...opts, tab: "anomaly" },
+		{ ...opts, tab: "anomaly", sub: anomalySub("signals", a.period) },
 	);
 }
 
@@ -1626,7 +1627,7 @@ ${sectionHead("보낸 메일 내역", {
 <div class="scroll cap"><table class="recent mail"><tr><th>보낸 시각</th><th>종류</th><th>갈래</th><th>등급</th><th>제목</th><th class="n">결과</th></tr>${rows}</table></div>
 
 </div>`,
-		{ ...opts, tab: "anomaly" },
+		{ ...opts, tab: "anomaly", sub: anomalySub("mails", d.period) },
 	);
 }
 
@@ -1653,7 +1654,7 @@ function anomalyBoardRow(r: AnomalyRowWithMail, period: string, traffic: boolean
 		`</td>` +
 		`<td>${verdictTag(r.verdict, null)}</td>` +
 		`<td class="n">${r.mailId
-			? `<a href="/admin/anomaly?period=${period}&scope=mail#m-${r.mailId}">메일 →</a>`
+			? `<a href="/admin/anomaly/mails?period=${period}#m-${r.mailId}">메일 →</a>`
 			: `<span class="sm">-</span>`}</td></tr>`;
 
 	const detail =
@@ -1699,12 +1700,12 @@ ${sectionHead("판정 상세", { tip: TIP_VERDICT, count: `${d.rows.length.toLoc
 <tr><th>구간</th><th>등급</th><th>신호</th><th>${traffic ? "서비스" : "앱"}</th><th>무슨 일인가</th><th>검증</th><th class="n">메일</th></tr>${rows}</table></div>
 
 </div>`,
-		{ ...opts, tab: "anomaly" },
+		{ ...opts, tab: "anomaly", sub: anomalySub("signals", d.period) },
 	);
 }
 
 // ═════════════════════════════════════════════════════════════
-// 로그 (/admin/logs)
+// 로그 (/admin/calls/logs)
 // ═════════════════════════════════════════════════════════════
 
 /** 지금 검색 조건을 주소로 되돌린다. over로 일부만 바꿔 링크를 만든다. */
@@ -1738,7 +1739,7 @@ export function renderLogs(l: LogsData, opts: AdminOpts = {}): string {
 		{ label: "10초 이상", href: logQuery(f, { slow: 10_000, before: 0 }), on: f.slow === 10_000 },
 		{ label: "오늘", href: logQuery(f, { from: todayKst(), to: todayKst(), before: 0 }), on: f.from === todayKst() },
 	]
-		.map((b) => `<a class="${b.on ? "on" : ""}" href="/admin/logs${b.href}">${b.label}</a>`)
+		.map((b) => `<a class="${b.on ? "on" : ""}" href="/admin/calls/logs${b.href}">${b.label}</a>`)
 		.join("");
 
 	// 내부용 앱(검증·메일 에이전트) 범위. 요약 화면은 이미 빼고 세는데 로그만 섞여 나오면
@@ -1754,7 +1755,7 @@ export function renderLogs(l: LogsData, opts: AdminOpts = {}): string {
 			]
 				.map(
 					(b) =>
-						`<a class="${f.own === b.v ? "on" : ""}" href="/admin/logs${logQuery(f, { own: b.v, before: 0 })}">${b.label}</a>`,
+						`<a class="${f.own === b.v ? "on" : ""}" href="/admin/calls/logs${logQuery(f, { own: b.v, before: 0 })}">${b.label}</a>`,
 				)
 				.join("");
 
@@ -1793,7 +1794,7 @@ export function renderLogs(l: LogsData, opts: AdminOpts = {}): string {
 		"호출 로그",
 		pageHead("호출 로그", "조건을 걸어 호출 1건씩 살펴봐요. 줄을 누르면 상세가 펼쳐져요.", f.app) +
 			`<div id="hz-body">
-<form class="flt" method="get" action="/admin/logs">
+<form class="flt" method="get" action="/admin/calls/logs">
   <input type="hidden" name="period" value="${escapeHtml(f.period)}">
   <div class="row">
     <div class="fld"><label>시작 날짜 (KST)</label><input type="date" name="from" value="${escapeHtml(f.from)}"></div>
@@ -1811,7 +1812,7 @@ export function renderLogs(l: LogsData, opts: AdminOpts = {}): string {
     <div class="fld"><label>국가 코드</label><input name="country" value="${escapeHtml(f.country)}" placeholder="KR"></div>
     <div class="fld"><label>IP</label><input name="ip" value="${escapeHtml(f.ip)}" placeholder="1.2.3.4"></div>
     <div class="fld"><label>찾을 말 (오류 · 메타 · 모델)</label><input name="q" value="${escapeHtml(f.q)}" placeholder="rate limit"></div>
-    <div class="acts"><button class="btn p" type="submit">검색</button><a class="btn" href="/admin/logs?period=${escapeHtml(f.period)}">초기화</a></div>
+    <div class="acts"><button class="btn p" type="submit">검색</button><a class="btn" href="/admin/calls/logs?period=${escapeHtml(f.period)}">초기화</a></div>
   </div>
   <div class="quick">${quick}${ownChips}</div>
 </form>
@@ -1836,14 +1837,14 @@ export function renderLogs(l: LogsData, opts: AdminOpts = {}): string {
 <div class="pg">
   <span class="cnt">${f.before ? "이어서 보는 중" : "가장 최근부터"}</span>
   <span class="nav">
-    <a class="btn${f.before ? "" : " off"}" href="/admin/logs${logQuery(f, { before: 0 })}">처음으로</a>
-    <a class="btn${l.hasMore ? "" : " off"}" href="/admin/logs${logQuery(f, { before: lastId })}">다음 ${f.limit}건 →</a>
+    <a class="btn${f.before ? "" : " off"}" href="/admin/calls/logs${logQuery(f, { before: 0 })}">처음으로</a>
+    <a class="btn${l.hasMore ? "" : " off"}" href="/admin/calls/logs${logQuery(f, { before: lastId })}">다음 ${f.limit}건 →</a>
   </span>
 </div>
 
 <p class="foot">CSV는 조건에 맞는 최근 5000건까지 내려받아요.</p>
 </div>`,
-		{ ...opts, tab: "logs" },
+		{ ...opts, tab: "calls", sub: callsSub("logs", `?period=${f.period}${f.app ? `&app=${encodeURIComponent(f.app)}` : ""}`) },
 	);
 }
 /** 토큰 가운데를 가린다. 어깨너머로 보이는 것도 막고 줄바꿈도 줄어든다. */
@@ -1887,14 +1888,14 @@ function appCard(a: AppConfig): string {
       <div class="id mono">${escapeHtml(a.id)}</div></div>
     <div class="acts">
       <button type="button" class="btn" data-toggle="${escapeHtml(ed)}" data-on="편집 닫기" data-off="편집">편집</button>
-      <form class="inline" method="post" action="/admin/apps">${post("toggle")}
+      <form class="inline" method="post" action="/admin/settings/apps">${post("toggle")}
         <button class="btn" type="submit">${a.active ? "중지" : "재개"}</button></form>
-      <form class="inline" method="post" action="/admin/apps"
+      <form class="inline" method="post" action="/admin/settings/apps"
             data-confirm-title="${escapeHtml(a.name)} 토큰을 새로 발급할까요?"
             data-confirm="지금 토큰은 즉시 막혀요. 앱에 새 토큰을 넣기 전까지 호출이 실패해요."
             data-confirm-ok="재발급" data-danger="1">${post("regen")}
         <button class="btn" type="submit">토큰 재발급</button></form>
-      <form class="inline" method="post" action="/admin/apps"
+      <form class="inline" method="post" action="/admin/settings/apps"
             data-confirm-title="${escapeHtml(a.name)} 앱을 삭제할까요?"
             data-confirm="토큰이 즉시 무효가 되고 이 앱은 더 이상 호출할 수 없어요. 지난 호출 기록은 통계에 그대로 남아요."
             data-confirm-ok="삭제" data-danger="1">${post("delete")}
@@ -1910,12 +1911,12 @@ function appCard(a: AppConfig): string {
     <div class="af wide"><div class="k">용도별 모델</div><div class="v">${modelChips(a.models)}</div></div>
     <div class="af"><div class="k">짝이 되는 서비스</div>
       <div class="v">${a.site
-		? `<a href="/admin/geo?period=month&app=${encodeURIComponent(a.id)}">${escapeHtml(siteName(a.site))}</a>`
+		? `<a href="/admin/calls/geo?period=month&app=${encodeURIComponent(a.id)}">${escapeHtml(siteName(a.site))}</a>`
 		: `<span class="sm">연결 안 함</span>`}</div></div>
     ${a.note ? `<div class="af wide"><div class="k">메모</div><div class="v">${escapeHtml(a.note)}</div></div>` : ""}
   </div>
   <div class="aedit" id="${escapeHtml(ed)}" hidden>
-    <form method="post" action="/admin/apps">${post("save")}
+    <form method="post" action="/admin/settings/apps">${post("save")}
       <div class="grid2">
         <div class="fld"><label>이름</label><input name="name" value="${escapeHtml(a.name)}"></div>
         <div class="fld"><label>메모</label><input name="note" value="${escapeHtml(a.note ?? "")}"></div>
@@ -1943,7 +1944,7 @@ function passkeyRow(p: PasskeyRow): string {
     <div class="nm">${escapeHtml(p.label || "이름 없는 기기")}</div>
     <div class="sm">등록 ${kst(p.created_at)} · ${p.last_used_at ? `마지막 사용 ${kst(p.last_used_at)}` : "아직 쓰지 않음"}</div>
   </div>
-  <form method="post" action="/admin/apps" class="sm" onsubmit="return confirm('이 패스키를 지울까요? 그 기기로는 더 이상 로그인할 수 없어요.')">
+  <form method="post" action="/admin/settings/apps" class="sm" onsubmit="return confirm('이 패스키를 지울까요? 그 기기로는 더 이상 로그인할 수 없어요.')">
     <input type="hidden" name="action" value="passkey-delete">
     <input type="hidden" name="cred" value="${escapeHtml(p.cred_id)}">
     <button class="btn" type="submit">해제</button>
@@ -1971,7 +1972,7 @@ export function renderApps(apps: AppConfig[], passkeys: PasskeyRow[] = [], opts:
 </div>
 
 <div class="panel" id="new-app" hidden>
-  <form method="post" action="/admin/apps">
+  <form method="post" action="/admin/settings/apps">
     <input type="hidden" name="action" value="create">
     <div class="grid2">
       <div class="fld"><label>앱 id (영문·숫자·하이픈)</label><input name="id" placeholder="my-app" required></div>
@@ -2025,7 +2026,7 @@ Content-Type: application/json
 <p class="sm" style="margin:9px 0 0">비용은 OpenRouter가 응답에 실어주는 실제 청구액(웹검색 요금 포함)으로 기록해요. 이 단가표는 청구액이 없는 과거 기록을 추정할 때만 써요.</p></div></div>
 
 <p class="foot">모델은 제한하지 않아요 — <a href="https://openrouter.ai/models" target="_blank" rel="noopener">OpenRouter 카탈로그</a>의 이름을 그대로 쓰면 돼요(목록: <span class="mono">GET /admin/api/models</span>).</p>`,
-		{ ...opts, tab: "apps" },
+		{ ...opts, tab: "settings", sub: settingsSub("apps") },
 	);
 }
 
@@ -2147,8 +2148,17 @@ function notFoundPanel(t: TrafficData): string {
 </div>`;
 }
 
-export function renderTraffic(t: TrafficData, opts: AdminOpts = {}): string {
+/**
+ * 트래픽 — 하위 탭 셋으로 나눠 본다.
+ * 한 화면에 열한 칸을 쌓아 두니 무엇을 보러 왔는지에 따라 매번 다른 곳을 찾아 스크롤해야 했다.
+ *   방문   지금 얼마나 들어오나 · 어느 서비스인가
+ *   크롤러 AI·검색 크롤러가 무엇을 읽어 갔나
+ *   경로   사람이 어디서 들어와 어디를 열었나 · 없는 주소 요청
+ */
+export function renderTraffic(t: TrafficData, view: "visits" | "bots" | "paths" = "visits", opts: AdminOpts = {}): string {
 	const q = trafficQuery(t.period, t.siteFilter);
+	// 기간·서비스를 바꿔도 보던 하위 탭에 그대로 머문다.
+	const base = view === "bots" ? "/admin/traffic/bots" : view === "paths" ? "/admin/traffic/paths" : "/admin/traffic";
 	const siteShare = svgShare(
 		t.bySite.map((r) => ({
 			label: r.name,
@@ -2224,7 +2234,7 @@ export function renderTraffic(t: TrafficData, opts: AdminOpts = {}): string {
 		"트래픽",
 		pageHead("트래픽", `서비스 방문 · ${sinceLabel(t.since)}`, t.siteFilter) +
 			`<div id="hz-body">
-${filterTabs("/admin/traffic", t.period, t.siteFilter, t.sites, PERIODS, "",
+${filterTabs(base, t.period, t.siteFilter, t.sites, PERIODS, "",
 	t.siteFilter && siteUrl(t.siteFilter)
 		? `<a class="tab alt" href="${siteUrl(t.siteFilter)}" target="_blank" rel="noopener">${escapeHtml(siteName(t.siteFilter))} 열기 ↗</a>`
 		: "",
@@ -2240,6 +2250,7 @@ ${kpiRow([
 	{ label: "마지막 기록", value: t.lastTs ? ago(Date.now() - t.lastTs) : "-", size: "sm" },
 ], 6)}
 
+${view !== "visits" ? "" : `
 ${sectionHead(`${t.bucketLabel} 단위 방문`, {
 	tip: "사람인지 크롤러인지는 브라우저가 밝힌 이름(User-Agent)으로 갈라요.\n고유 방문자는 IP를 가린 값으로 세고, 정적 파일(이미지·스타일) 요청은 세지 않아요.",
 })}
@@ -2253,6 +2264,13 @@ ${svgTraffic(t.buckets)}
 </div>
 
 <div class="two">
+  <section>${sectionHead("서비스별 요약")}
+    <div class="scroll cap"><table><thead><tr><th>서비스</th><th class="n">방문</th><th class="n">사람</th><th class="n">고유</th><th class="n">AI</th><th class="n">검색</th><th class="n">바로가기</th></tr></thead><tbody>${siteRows}</tbody></table></div>
+  </section>
+</div>
+`}
+${view !== "bots" ? "" : `
+<div class="two">
   <section>${sectionHead("AI 크롤러 (AEO)", {
 	tip: "ChatGPT·Claude·Perplexity 같은 서비스가 문서를 읽어가는 기록이에요.\n여기 방문이 늘면 AI 답변에 실릴 바탕이 쌓이고 있다는 뜻이에요.",
 })}${botTable(t.aiBots, "아직 AI 크롤러가 다녀간 기록이 없어요.")}</section>
@@ -2260,19 +2278,20 @@ ${svgTraffic(t.buckets)}
 </div>
 
 <div class="two">
+  <section>${sectionHead("AI 크롤러가 읽어간 경로")}
+    <div class="cap"><table><thead><tr><th>경로</th><th class="n">방문</th></tr></thead><tbody>${botPathRows}</tbody></table></div>
+  </section>
+  <section>${sectionHead("최근 크롤러 방문")}
+    <div class="scroll cap"><table class="recent"><tr><th>시각</th><th>서비스</th><th>종류</th><th>크롤러</th><th>경로</th><th class="n">응답</th></tr>${recentRows}</table></div>
+  </section>
+</div>
+`}
+${view !== "paths" ? "" : `
+<div class="two">
   <section>${sectionHead("사람이 들어온 경로", {
 	tip: "'AI 답변'은 AI 서비스 화면에서 링크를 눌러 실제로 넘어온 방문이에요.\n크롤러 방문이 성과로 이어졌는지는 이 숫자로 봐요.",
 	note: `AI 답변 ${aiRefs.toLocaleString()}건 · 검색 ${searchRefs.toLocaleString()}건` })}
     <div class="cap"><table><thead><tr><th>구분</th><th>출처</th><th class="n">방문</th></tr></thead><tbody>${refRows}</tbody></table></div>
-  </section>
-  <section>${sectionHead("AI 크롤러가 읽어간 경로")}
-    <div class="cap"><table><thead><tr><th>경로</th><th class="n">방문</th></tr></thead><tbody>${botPathRows}</tbody></table></div>
-  </section>
-</div>
-
-<div class="two">
-  <section>${sectionHead("서비스별 요약")}
-    <div class="scroll cap"><table><thead><tr><th>서비스</th><th class="n">방문</th><th class="n">사람</th><th class="n">고유</th><th class="n">AI</th><th class="n">검색</th><th class="n">바로가기</th></tr></thead><tbody>${siteRows}</tbody></table></div>
   </section>
   <section>${sectionHead("많이 열린 경로")}
     <div class="scroll cap"><table><thead><tr><th>경로</th><th class="n">전체</th><th class="n">사람</th><th class="n">크롤러</th></tr></thead><tbody>${pathRows}</tbody></table></div>
@@ -2285,14 +2304,10 @@ ${sectionHead(`없는 주소 요청 (404) · ${t.notFound.total.toLocaleString()
 		"'우리 쪽 깨진 링크'로 잡힌 것만 고치면 되고, 같은 주소에 200이 찍히면 그때는 바로 살펴봐야 해요.",
 })}
 ${notFoundPanel(t)}
-
-${sectionHead("최근 크롤러 방문")}
-<div class="scroll cap"><table class="recent"><tr><th>시각</th><th>서비스</th><th>종류</th><th>크롤러</th><th>경로</th><th class="n">응답</th></tr>${recentRows}</table></div>
-
-
+`}
 <p class="foot">각 서비스가 응답을 보낸 뒤 방문 한 건씩을 이 대시보드로 보내요.</p>
 </div>`,
-		{ ...opts, tab: "traffic" },
+		{ ...opts, tab: "traffic", sub: trafficSub(view, q) },
 	);
 }
 

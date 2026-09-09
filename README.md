@@ -18,13 +18,15 @@ OpenRouter 앞단에 서는 **AI 프록시 + 사용량 대시보드**입니다. 
 | --- | --- |
 | `POST /v1/ai` | 채팅·비전·웹검색 |
 | `POST /v1/embeddings` | 임베딩 |
-| `GET /admin` | 요약 대시보드 (세션 로그인) |
-| `GET /admin/usage` | 앱·모델·용도별 사용량 |
-| `GET /admin/trend` | 기간별 추이 · 요일×시각 히트맵 |
-| `GET /admin/geo` | 국가·도시별 호출 분포 |
-| `GET /admin/logs` | 호출 로그 검색 (`/admin/logs.csv` 로 내려받기) |
-| `GET /admin/apps` | 앱 관리 화면 |
-| `GET /admin/guide` | 연결 가이드 (`/admin/guide.md` 로 원문 내려받기) |
+| `GET /admin` | 상황판 (세션 로그인) |
+| `GET /admin/calls` | AI 호출 — 흐름(기본). 기간별 추이 · 요일×시각 히트맵 |
+| `GET /admin/calls/usage` | 앱·모델·용도별 사용량 |
+| `GET /admin/calls/geo` | 국가·도시별 호출 분포 |
+| `GET /admin/calls/logs` | 호출 로그 검색 (`/admin/logs.csv` 로 내려받기) |
+| `GET /admin/traffic` | 트래픽 — 방문(기본) · `/bots` 크롤러 · `/paths` 경로 |
+| `GET /admin/anomaly` | 이상탐지 — 받은 신호(기본) · `/mails` 보낸 메일 |
+| `GET /admin/settings/apps` | 앱 관리 화면 |
+| `GET /admin/settings/guide` | 연결 가이드 (`/admin/guide.md` 로 원문 내려받기) |
 | `/admin/api/apps` | 앱 등록·수정 API |
 | `/admin/api/models` | OpenRouter 모델 카탈로그 |
 | `/admin/stats.json` | 통계 JSON |
@@ -45,7 +47,7 @@ src/
   proxy.ts      OpenRouter 중계 — 인증·상한·형식 변환·로깅
   stats.ts      앱 레지스트리 · 화면별 집계 쿼리 · 로그 검색
   ui.ts         관리 화면 공통 틀 · 스타일 · 차트(SVG)
-  views.ts      화면 본문 (요약 · 사용량 · 추이 · 지역 · 로그 · 앱 관리)
+  views.ts      화면 본문 (상황판 · AI 호출 · 트래픽 · 이상탐지 · 설정)
   guide.ts      연결 가이드 화면 · 마크다운 렌더
   guide-md.ts   자동 생성 — 가이드 원문 (npm run gen:guide)
   worldmap.ts   지도용 육지 외곽선 (Natural Earth 110m, 퍼블릭 도메인)

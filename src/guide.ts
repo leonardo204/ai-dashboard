@@ -1,5 +1,5 @@
 /**
- * 연결 가이드 화면 (/admin/guide) · 원문 내려받기 (/admin/guide.md)
+ * 연결 가이드 화면 (/admin/settings/guide) · 원문 내려받기 (/admin/guide.md)
  *
  * 다른 프로젝트에 건네주는 문서라 관리자용 내용(앱 등록·토큰 발급·통계 조회·앱 관리 API·
  * 서버 구성)은 담지 않는다. 원본은 docs/PROXY-CLIENT-GUIDE.md 하나뿐이고,
@@ -7,7 +7,7 @@
  * 화면은 그 원문을 그대로 그리므로 보이는 것과 내려받는 것이 항상 같다.
  */
 
-import { escapeHtml, shellAdmin, type AdminOpts } from "./ui";
+import { escapeHtml, shellAdmin, settingsSub, type AdminOpts } from "./ui";
 import { GUIDE_MD, GUIDE_FILENAME } from "./guide-md";
 
 export { GUIDE_MD, GUIDE_FILENAME };
@@ -155,9 +155,9 @@ export function renderGuide(opts: AdminOpts = {}): string {
     <button type="button" class="btn" id="g-copy">전체 복사</button>
   </div>
 </div>
-<div class="gnote">받는 쪽에서는 <b>앱 id</b>와 <b>앱 토큰</b>만 있으면 연결됩니다. 두 값은 <a href="/admin/apps">앱 관리</a>에서 만들어 따로 전달하세요.</div>
+<div class="gnote">받는 쪽에서는 <b>앱 id</b>와 <b>앱 토큰</b>만 있으면 연결됩니다. 두 값은 <a href="/admin/settings/apps">앱 관리</a>에서 만들어 따로 전달하세요.</div>
 <div class="mdx">${mdToHtml(GUIDE_MD.replace(/^#\s+.*\n+/, ""))}</div>
 <textarea id="g-src" hidden>${escapeHtml(GUIDE_MD)}</textarea>`,
-		{ ...opts, tab: "guide" },
+		{ ...opts, tab: "settings", sub: settingsSub("guide") },
 	);
 }
