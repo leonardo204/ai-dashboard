@@ -34,7 +34,7 @@ import { handleChat, handleEmbeddings, type ProxyEnv } from "./proxy";
 import { renderGuide, GUIDE_MD, GUIDE_FILENAME } from "./guide";
 import {
 	collectStats, collectSummary, collectUsage, collectTrend, collectGeo, queryLogs, logsCsv,
-	listApps, getApp, upsertApp, deleteApp, newToken, pulse, exportCalls, PERIODS, LOG_PAGE,
+	listApps, getApp, upsertApp, deleteApp, newToken, pulse, exportCalls, normPeriod, LOG_PAGE,
 	collectAnomaly, collectAnomalyBoard, pushAnomaly, collectMails, getMailHtml, listPasskeys, passkeyCount, deletePasskey,
 	collectTraffic,
 	type AppConfig, type LogFilter,
@@ -270,7 +270,7 @@ const apiErr = (status: number, message: string) => apiJson({ error: message }, 
 function statScope(url: URL): { period: string; appFilter: string } {
 	const raw = url.searchParams.get("period") || "month";
 	return {
-		period: PERIODS[raw] ? raw : "month",
+		period: normPeriod(raw),
 		appFilter: url.searchParams.get("app") || "",
 	};
 }
@@ -310,9 +310,8 @@ function logFilterOf(url: URL): LogFilter {
 		const v = Number(g(k));
 		return isFinite(v) && v > 0 ? Math.floor(v) : 0;
 	};
-	const raw = g("period") || "month";
 	return {
-		period: PERIODS[raw] ? raw : "month",
+		period: normPeriod(g("period")),
 		app: g("app"),
 		model: g("model"),
 		kind: g("kind"),

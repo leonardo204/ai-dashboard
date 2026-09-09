@@ -515,14 +515,26 @@ export async function touchPasskey(env: StatsEnv, credId: string, counter: numbe
 // ─────────────────────────────────────────────────────────────
 // 집계
 // ─────────────────────────────────────────────────────────────
+/**
+ * 기간 탭 넷.
+ * 반기·년은 뺐다 — 그 길이를 보려던 이유가 "청구서와 맞춰보기"였는데,
+ * 상황판의 열두 달 막대가 그 일을 더 잘한다. 옛 주소는 normPeriod()가 받아 준다.
+ */
 export const PERIODS: Record<string, { label: string; days: number; bucket: "day" | "week" | "month" }> = {
-	week: { label: "주", days: 7, bucket: "day" },
-	month: { label: "월", days: 30, bucket: "day" },
-	quarter: { label: "분기", days: 90, bucket: "week" },
-	half: { label: "반기", days: 182, bucket: "week" },
-	year: { label: "년", days: 365, bucket: "month" },
+	week: { label: "7일", days: 7, bucket: "day" },
+	month: { label: "30일", days: 30, bucket: "day" },
+	quarter: { label: "90일", days: 90, bucket: "week" },
 	all: { label: "전체", days: 0, bucket: "month" },
 };
+
+/** 주소로 들어온 기간 값을 지금 쓰는 넷 중 하나로 맞춘다. 없어진 값도 500 없이 받는다. */
+export function normPeriod(raw: string | null | undefined): string {
+	const v = (raw || "").trim();
+	if (PERIODS[v]) return v;
+	if (v === "half") return "quarter";
+	if (v === "year") return "all";
+	return "month";
+}
 
 /** KST(+9h) 기준 버킷 표현식. */
 function bucketExpr(b: "day" | "week" | "month", col = "ts"): string {
