@@ -1065,6 +1065,7 @@ label.chk input{margin-top:3px;flex:0 0 auto;}
  .clock{gap:8px;}
  .clock .t{font-size:var(--fs-lg);}
  .tabs{gap:6px;margin-bottom:10px;}
+ .tabs>span[style]{display:none;}
  .tab{font-size:var(--fs-sm);padding:6px 11px;}
  .sect{gap:var(--sp-1);margin:20px 0 var(--sp-2);}
  .kpis{gap:var(--sp-2);}
@@ -1695,8 +1696,10 @@ export function filterTabs(
 					`<a class="tab${appFilter === a.id ? " on" : ""}${a.internal ? " dim" : ""}" href="${q(period, a.id)}"${a.internal ? ' data-tip="내부용 앱"' : ""}>${escapeHtml(a.name)}${a.active ? "" : " (중지)"}</a>`,
 			)
 			.join("");
+	// 기간은 어느 화면에서나 오른쪽 위 같은 자리에 둔다. 이상탐지 화면이 이미 그랬는데
+	// 나머지가 왼쪽이라, 탭을 옮겨 다닐 때마다 눈이 좌우로 튀었다.
 	return (
-		`<div class="tabs">${periodTabs}<span style="flex:1"></span>${rightLink}</div>` +
+		`<div class="tabs"><span style="flex:1"></span>${periodTabs}${rightLink}</div>` +
 		`<div class="tabs">${appTabs}${rightBelow ? `<span style="flex:1"></span>${rightBelow}` : ""}</div>`
 	);
 }
