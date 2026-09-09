@@ -23,7 +23,7 @@ import {
 	type TrafficData, type TrafficBrief,
 } from "./stats";
 import {
-	escapeHtml, usd, kst, shortNum, shellAdmin, pageHead, filterTabs, sectionHead, delta,
+	escapeHtml, usd, kst, shortNum, shellAdmin, pageHead, filterTabs, sectionHead, delta, kpiRow,
 	svgTrend, svgMap, svgShare, svgDonut, svgHeat, svgLevels, svgF1, svgTraffic, type AdminOpts,
 } from "./ui";
 import { SITES, siteName, siteUrl, THREAT_LABEL } from "./traffic";
@@ -73,18 +73,6 @@ export function renderSummary(s: SummaryData, opts: AdminOpts = {}): string {
 
 	// 호출 수 카드 안 미니 그래프 — 축·라벨 없이 흐름만 보여준다.
 	const sparkData = s.buckets.slice(0, 24).slice().reverse();
-	const sparkMax = Math.max(1, ...sparkData.map((b) => b.total));
-	const spark = sparkData.length
-		? `<svg viewBox="0 0 100 24" preserveAspectRatio="none">` +
-			sparkData
-				.map((b, i) => {
-					const w = 100 / sparkData.length;
-					const h = Math.max(b.total ? 1.5 : 0, (b.total / sparkMax) * 22);
-					return `<rect x="${(i * w + w * 0.15).toFixed(2)}" y="${(24 - h).toFixed(2)}" width="${(w * 0.7).toFixed(2)}" height="${h.toFixed(2)}" rx="0.8"/>`;
-				})
-				.join("") +
-			`</svg>`
-		: "";
 
 	// 눈여겨볼 것만 앱 탭 줄 오른쪽에. 평소에는 아무것도 뜨지 않는다.
 	const alerts: string[] = [];
@@ -108,9 +96,6 @@ export function renderSummary(s: SummaryData, opts: AdminOpts = {}): string {
 			`<a class="al" href="/admin/logs${q}&slow=10000" style="text-decoration:none">가장 느린 5%가 <b>${(s.p95Latency / 1000).toFixed(1)}초</b>를 넘어요 — 느린 호출 보기 →</a>`,
 		);
 	}
-
-	const mini = (l: string, v: string, tone = "", extra = "") =>
-		`<div class="m"><div class="l">${l}</div><div class="v ${tone}">${v}${extra}</div></div>`;
 
 	const appDonut = svgDonut(
 		s.byApp.map((r) => ({
@@ -178,36 +163,42 @@ ${filterTabs(
 	`<a class="tab alt" href="/admin/stats.json${q}">JSON</a>`,
 	alerts.length ? `<div class="alerts">${alerts.join("")}</div>` : "",
 )}
-<div class="kpi">
-  <div class="k1">
-    <div class="l">호출 수</div>
-    <div class="v">${s.total.toLocaleString()}<span class="u">건</span>${s.prev ? delta(s.total, s.prev.total) : ""}</div>
-    <div class="s">${s.error ? `<b class="r">실패 ${s.error.toLocaleString()}건</b> · ` : ""}성공률 ${okRate}%</div>
-    <div class="spark">${spark}</div>
-  </div>
-  <div class="k1">
-    <div class="l">비용</div>
-    <div class="v">${usd(s.cost)}${s.prev ? delta(s.cost, s.prev.cost, true) : ""}</div>
-    <div class="s">${s.total ? `호출당 ${usd(s.cost / s.total)}` : "호출 없음"}</div>
-    <div class="meter"><span style="width:${Math.min(100, Math.round((s.inTokens / Math.max(1, s.inTokens + s.outTokens)) * 100))}%"></span></div>
-    <div class="s2">입력 ${shortNum(s.inTokens)} · 출력 ${shortNum(s.outTokens)} 토큰</div>
-  </div>
-  <div class="k1">
-    <div class="l">평균 지연</div>
-    <div class="v">${s.avgLatency.toLocaleString()}<span class="u">ms</span>${s.prev ? delta(s.avgLatency, s.prev.avgLatency, true) : ""}</div>
-    <div class="s">p95 ${s.p95Latency.toLocaleString()}ms</div>
-    <div class="meter lat"><span style="width:${Math.min(100, Math.round((s.avgLatency / Math.max(1, s.p95Latency)) * 100))}%"></span></div>
-    <div class="s2">가장 느린 5%는 ${s.p95Latency.toLocaleString()}ms를 넘어요</div>
-  </div>
-</div>
-<div class="kpi2">
-${mini("성공", s.ok.toLocaleString(), "g")}
-${mini("실패", s.error.toLocaleString(), s.error ? "r" : "")}
-${mini("입력 토큰", shortNum(s.inTokens))}
-${mini("출력 토큰", shortNum(s.outTokens))}
-${mini("고유 IP", s.uniqueIPs.toLocaleString())}
-${mini("사용 모델", `${s.modelCount}종`)}
-</div>
+${kpiRow([
+	{
+		label: "호출 수",
+		value: s.total.toLocaleString(),
+		unit: "건",
+		delta: s.prev ? { cur: s.total, prev: s.prev.total } : undefined,
+		sub: `${s.error ? `<b class="r">실패 ${s.error.toLocaleString()}건</b> · ` : ""}성공률 ${okRate}%`,
+		spark: sparkData.map((b) => b.total),
+	},
+	{
+		label: "비용",
+		value: usd(s.cost),
+		delta: s.prev ? { cur: s.cost, prev: s.prev.cost, higherIsWorse: true } : undefined,
+		sub: s.total ? `호출당 ${usd(s.cost / s.total)}` : "호출 없음",
+		meter: (s.inTokens / Math.max(1, s.inTokens + s.outTokens)) * 100,
+		sub2: `입력 ${shortNum(s.inTokens)} · 출력 ${shortNum(s.outTokens)} 토큰`,
+	},
+	{
+		label: "평균 지연",
+		value: s.avgLatency.toLocaleString(),
+		unit: "ms",
+		delta: s.prev ? { cur: s.avgLatency, prev: s.prev.avgLatency, higherIsWorse: true } : undefined,
+		sub: `p95 ${s.p95Latency.toLocaleString()}ms`,
+		meter: (s.avgLatency / Math.max(1, s.p95Latency)) * 100,
+		meterTone: "lat",
+		sub2: `가장 느린 5%는 ${s.p95Latency.toLocaleString()}ms를 넘어요`,
+	},
+], 3)}
+${kpiRow([
+	{ label: "성공", value: s.ok.toLocaleString(), tone: "ok", size: "sm" },
+	{ label: "실패", value: s.error.toLocaleString(), tone: s.error ? "bad" : undefined, size: "sm" },
+	{ label: "입력 토큰", value: shortNum(s.inTokens), size: "sm" },
+	{ label: "출력 토큰", value: shortNum(s.outTokens), size: "sm" },
+	{ label: "고유 IP", value: s.uniqueIPs.toLocaleString(), size: "sm" },
+	{ label: "사용 모델", value: `${s.modelCount}종`, size: "sm" },
+], 6)}
 
 ${sectionHead("월별 비용", {
 	note: s.monthly.length
@@ -302,14 +293,14 @@ export function renderUsage(u: UsageData, opts: AdminOpts = {}): string {
 		pageHead("사용량", `앱 · 모델 · 용도별 집계 · ${sinceLabel(u.since)}`, u.appFilter) +
 			`<div id="hz-body">
 ${filterTabs("/admin/usage", u.period, u.appFilter, u.apps, PERIODS)}
-<div class="kpi2" style="margin-bottom:4px">
-  <div class="m"><div class="l">호출</div><div class="v">${u.total.toLocaleString()}</div></div>
-  <div class="m"><div class="l">비용</div><div class="v">${usd(u.cost)}</div></div>
-  <div class="m"><div class="l">앱</div><div class="v">${u.byApp.length}</div></div>
-  <div class="m"><div class="l">모델</div><div class="v">${u.byModel.length}</div></div>
-  <div class="m"><div class="l">용도</div><div class="v">${u.byKind.length}</div></div>
-  <div class="m"><div class="l">호출당 비용</div><div class="v">${u.total ? usd(u.cost / u.total) : "-"}</div></div>
-</div>
+${kpiRow([
+	{ label: "호출", value: u.total.toLocaleString(), size: "sm" },
+	{ label: "비용", value: usd(u.cost), size: "sm" },
+	{ label: "앱", value: String(u.byApp.length), size: "sm" },
+	{ label: "모델", value: String(u.byModel.length), size: "sm" },
+	{ label: "용도", value: String(u.byKind.length), size: "sm" },
+	{ label: "호출당 비용", value: u.total ? usd(u.cost / u.total) : "-", size: "sm" },
+], 6)}
 
 ${sectionHead("앱별", { count: `${u.byApp.length}개` })}
 <div class="cap"><table class="fx" id="tb-app">${cols("", "96", "74:o1", "74", "84:o1", "84", "86:o2", "92:o2", "58")}<thead><tr><th>앱</th><th class="n">호출</th><th class="n o1">성공</th><th class="n">실패</th><th class="n o1">토큰</th><th class="n">비용</th><th class="n o2">평균 지연</th><th class="n o2">호출당 비용</th><th></th></tr></thead><tbody>${appRows}</tbody></table></div>
@@ -832,9 +823,6 @@ function agentBrief(a: AnomalyData): string {
 		.map(([k, v]) => `<span class="agc"><i>${escapeHtml(String(k))}</i>${escapeHtml(String(v))}</span>`)
 		.join("");
 
-	const card = (l: string, v: string, tone = "", extra = "") =>
-		`<div class="m"><div class="l">${l}</div><div class="v ${tone}">${v}${extra}</div></div>`;
-
 	const sigRows = (g.by_signal ?? []).length
 		? (g.by_signal ?? [])
 				.map((r) => {
@@ -869,14 +857,14 @@ function agentBrief(a: AnomalyData): string {
 	return `${what}
 <div class="agchips">${off ? `<span class="agc off"><i>상태</i>꺼져 있어요</span>` : `<span class="agc on"><i>상태</i>돌고 있어요</span>`}${chips}</div>
 
-<div class="kpi2" style="margin-bottom:4px">
-  ${card("본 판정", (g.total ?? 0).toLocaleString(), "", `<span class="sm"> · 24시간 ${(g.day1 ?? 0).toLocaleString()}</span>`)}
-  ${card("정탐으로 봄", hit.toLocaleString())}
-  ${card("오탐으로 봄", miss.toLocaleString())}
-  ${card("정탐률", rate === null ? "-" : pct1(rate))}
-  ${card("확인할 일 적음", (g.acted ?? 0).toLocaleString())}
-  ${card("마지막 판정", g.last_at ? ago(Date.now() - g.last_at) : "-")}
-</div>
+${kpiRow([
+	{ label: "본 판정", value: `${(g.total ?? 0).toLocaleString()}<span class="sm"> · 24시간 ${(g.day1 ?? 0).toLocaleString()}</span>`, size: "sm" },
+	{ label: "정탐으로 봄", value: hit.toLocaleString(), size: "sm" },
+	{ label: "오탐으로 봄", value: miss.toLocaleString(), size: "sm" },
+	{ label: "정탐률", value: rate === null ? "-" : pct1(rate), size: "sm" },
+	{ label: "확인할 일 적음", value: (g.acted ?? 0).toLocaleString(), size: "sm" },
+	{ label: "마지막 판정", value: g.last_at ? ago(Date.now() - g.last_at) : "-", size: "sm" },
+], 6)}
 
 <div class="two">
   <section>${sectionHead("날짜별 검증 건수")}
@@ -1273,9 +1261,6 @@ export function renderAnomaly(a: AnomalyData, opts: AdminOpts = {}): string {
 	const q = `?period=${a.period}${a.appFilter ? `&app=${encodeURIComponent(a.appFilter)}` : ""}&scope=${a.scope}`;
 	const nav: AnomalyNav = { scope: a.scope, view: "summary", period: a.period, app: a.appFilter };
 
-	const card = (l: string, v: string, tone = "", extra = "") =>
-		`<div class="m"><div class="l">${l}</div><div class="v ${tone}">${v}${extra}</div></div>`;
-
 	const sevDonut = svgDonut(
 		[
 			{ label: "심각", value: a.critical },
@@ -1472,14 +1457,14 @@ ${warmupNotice(a)}
   <span class="sm">아래 숫자는 <b>${escapeHtml(sinceLabel(a.since))}</b> 쌓인 값이에요. 옆의 ‘24시간’은 그중 최근 하루에 잡힌 수예요.</span>
   <a href="/admin/anomaly?period=${a.period}&scope=detail&for=${a.scope}${a.appFilter ? `&app=${encodeURIComponent(a.appFilter)}` : ""}">${a.critical ? `심각 ${a.critical.toLocaleString()}건 ` : ""}자세히 보기 →</a>
 </div>
-<div class="kpi2" style="margin-bottom:4px">
-  ${card("이상 신호", a.total.toLocaleString(), "", delta(a.total, a.prevTotal, true) + `<span class="sm"> · 24시간 ${a.recent24.toLocaleString()}</span>`)}
-  ${card("심각", a.critical.toLocaleString(), a.critical ? "r" : "", `<span class="sm"> · 24시간 ${a.critical24.toLocaleString()}</span>`)}
-  ${card("주의", a.warn.toLocaleString(), "", a.info ? `<span class="sm"> · 참고 ${a.info.toLocaleString()}</span>` : "")}
-  ${card("메일 발송", a.notified.toLocaleString(), "", alertState?.suppressed ? `<span class="sm"> · 억제 ${alertState.suppressed}</span>` : "")}
-  ${card("마지막 탐지", a.lastDetected ? ago(Date.now() - a.lastDetected) : "-")}
-  ${card("쓰는 모델", escapeHtml(a.models.find((m) => m.status === "active")?.version ?? "규칙만"))}
-</div>
+${kpiRow([
+	{ label: "이상 신호", value: a.total.toLocaleString(), delta: { cur: a.total, prev: a.prevTotal, higherIsWorse: true }, sub: `24시간 ${a.recent24.toLocaleString()}건`, size: "sm" },
+	{ label: "심각", value: a.critical.toLocaleString(), tone: a.critical ? "bad" : undefined, sub: `24시간 ${a.critical24.toLocaleString()}건`, size: "sm" },
+	{ label: "주의", value: a.warn.toLocaleString(), sub: a.info ? `참고 ${a.info.toLocaleString()}건` : "", size: "sm" },
+	{ label: "메일 발송", value: a.notified.toLocaleString(), sub: alertState?.suppressed ? `억제 ${alertState.suppressed}건` : "", size: "sm" },
+	{ label: "마지막 탐지", value: a.lastDetected ? ago(Date.now() - a.lastDetected) : "-", size: "sm" },
+	{ label: "쓰는 모델", value: escapeHtml(a.models.find((m) => m.status === "active")?.version ?? "규칙만"), size: "sm" },
+], 6)}
 
 ${sectionHead(`${a.bucketLabel} 단위 이상 신호`)}
 ${svgLevels(a.buckets)}
@@ -1591,9 +1576,6 @@ function mailRow(m: MailRow): string {
 }
 
 export function renderMails(d: MailsData, opts: AdminOpts = {}): string {
-	const card = (l: string, v: string, tone = "") =>
-		`<div class="m"><div class="l">${l}</div><div class="v ${tone}">${v}</div></div>`;
-
 	const nav: AnomalyNav = { scope: "ai", view: "mail", period: d.period, kind: d.kind };
 	const kindTab = (k: string, label: string, n?: number) =>
 		navTab(`${label}${n === undefined ? "" : ` ${n}`}`, d.kind === k, anomalyHref({ ...nav, kind: k }));
@@ -1610,14 +1592,14 @@ ${anomalyNavRow(nav)}
 ${anomalyViewRow(nav, kindTab("", "전체", d.total) + kindTab("anomaly", "이상 알림", d.anomaly) + kindTab("train", "학습 결과", d.train) + kindTab("test", "점검", d.test))}
 ${serverBarOf(d.state, d.heartbeatAge)}
 
-<div class="kpi2" style="margin-bottom:4px">
-  ${card("보낸 메일", d.total.toLocaleString())}
-  ${card("이상 알림", d.anomaly.toLocaleString())}
-  ${card("학습 결과", d.train.toLocaleString())}
-  ${card("점검", d.test.toLocaleString())}
-  ${card("보내지 못함", d.failed.toLocaleString(), d.failed ? "r" : "")}
-  ${card("마지막 발송", d.lastSent ? ago(Date.now() - d.lastSent) : "-")}
-</div>
+${kpiRow([
+	{ label: "보낸 메일", value: d.total.toLocaleString(), size: "sm" },
+	{ label: "이상 알림", value: d.anomaly.toLocaleString(), size: "sm" },
+	{ label: "학습 결과", value: d.train.toLocaleString(), size: "sm" },
+	{ label: "점검", value: d.test.toLocaleString(), size: "sm" },
+	{ label: "보내지 못함", value: d.failed.toLocaleString(), tone: d.failed ? "bad" : undefined, size: "sm" },
+	{ label: "마지막 발송", value: d.lastSent ? ago(Date.now() - d.lastSent) : "-", size: "sm" },
+], 6)}
 
 ${sectionHead("보낸 메일 내역", { href: `/admin/anomaly?period=${d.period}`, linkLabel: "이상 신호 보기 →" })}
 <div class="scroll cap"><table class="recent mail"><tr><th>보낸 시각</th><th>종류</th><th>갈래</th><th>등급</th><th>제목</th><th class="n">결과</th></tr>${rows}</table></div>
@@ -1667,9 +1649,6 @@ function anomalyBoardRow(r: AnomalyRowWithMail, period: string, traffic: boolean
 
 export function renderAnomalyDetail(d: AnomalyBoardData, opts: AdminOpts = {}): string {
 	const traffic = d.forScope === "traffic";
-	const card = (l: string, v: string, tone = "") =>
-		`<div class="m"><div class="l">${l}</div><div class="v ${tone}">${v}</div></div>`;
-
 	const nav: AnomalyNav = {
 		scope: d.forScope, view: "detail", period: d.period, app: d.appFilter, sev: d.sev,
 	};
@@ -2155,9 +2134,6 @@ function notFoundPanel(t: TrafficData): string {
 
 export function renderTraffic(t: TrafficData, opts: AdminOpts = {}): string {
 	const q = trafficQuery(t.period, t.siteFilter);
-	const card = (l: string, v: string, tone = "", extra = "") =>
-		`<div class="m"><div class="l">${l}</div><div class="v ${tone}">${v}${extra}</div></div>`;
-
 	const siteShare = svgShare(
 		t.bySite.map((r) => ({
 			label: r.name,
@@ -2240,14 +2216,14 @@ ${filterTabs("/admin/traffic", t.period, t.siteFilter, t.sites, PERIODS, "",
 	{ key: "site", allLabel: "전체 서비스" },
 )}
 
-<div class="kpi2" style="margin-bottom:4px">
-  ${card("방문", t.total.toLocaleString(), "", delta(t.total, t.prevTotal))}
-  ${card("사람", t.human.toLocaleString(), "", delta(t.human, t.prevHuman))}
-  ${card("고유 방문자", t.uniq.toLocaleString())}
-  ${card("AI 크롤러", t.ai.toLocaleString(), "", delta(t.ai, t.prevAI))}
-  ${card("검색 크롤러", t.search.toLocaleString())}
-  ${card("마지막 기록", t.lastTs ? ago(Date.now() - t.lastTs) : "-")}
-</div>
+${kpiRow([
+	{ label: "방문", value: t.total.toLocaleString(), delta: { cur: t.total, prev: t.prevTotal }, size: "sm" },
+	{ label: "사람", value: t.human.toLocaleString(), delta: { cur: t.human, prev: t.prevHuman }, size: "sm" },
+	{ label: "고유 방문자", value: t.uniq.toLocaleString(), size: "sm" },
+	{ label: "AI 크롤러", value: t.ai.toLocaleString(), delta: { cur: t.ai, prev: t.prevAI }, size: "sm" },
+	{ label: "검색 크롤러", value: t.search.toLocaleString(), size: "sm" },
+	{ label: "마지막 기록", value: t.lastTs ? ago(Date.now() - t.lastTs) : "-", size: "sm" },
+], 6)}
 
 ${sectionHead(`${t.bucketLabel} 단위 방문`)}
 ${svgTraffic(t.buckets)}

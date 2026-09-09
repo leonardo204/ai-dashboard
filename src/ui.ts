@@ -58,26 +58,28 @@ h1{font-size:var(--fs-lg);margin:0 0 4px;}h2{font-size:var(--fs-md);margin:26px 
 .tab.dim{color:var(--muted);border-style:dashed;background:transparent;}
 .tab.dim.on{background:var(--accent-bd);border-color:var(--accent-bd);color:var(--muted);border-style:solid;}
 /* ── 요약 지표: 큰 카드 3 + 작은 카드 6 (줄바꿈이 어정쩡하게 남지 않도록 열 수를 고정) */
-.kpi{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;}
-.k1{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);padding:16px 18px 14px;
- display:flex;flex-direction:column;min-height:132px;}
-.k1 .l{font-size:var(--fs-sm);font-weight:700;color:var(--muted);letter-spacing:.2px;}
-.k1 .v{font-size:var(--fs-xl);font-weight:800;letter-spacing:-1px;line-height:1.15;margin-top:3px;font-variant-numeric:tabular-nums;}
-.k1 .v .u{font-size:var(--fs-lg);font-weight:700;color:var(--muted);margin-left:3px;letter-spacing:0;}
-.k1 .s{font-size:var(--fs-sm);color:var(--muted);margin-top:3px;}
-.k1 .s2{font-size:var(--fs-xs);color:var(--muted);margin-top:5px;}
-.k1 .spark{margin-top:auto;padding-top:10px;height:30px;}
-.k1 .spark svg{width:100%;height:24px;display:block;}
-.k1 .spark rect{fill:var(--accent-bd);}
-.k1 .meter{margin-top:auto;height:7px;border-radius:var(--r-pill);background:var(--accent-bg);overflow:hidden;}
-.k1 .meter span{display:block;height:100%;border-radius:var(--r-pill);background:linear-gradient(90deg,var(--accent),var(--accent-2));}
-.k1 .meter.lat span{background:linear-gradient(90deg,var(--info),var(--accent));}
-.kpi2{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-top:10px;}
-.m{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);padding:11px 13px;}
-.m .l{font-size:var(--fs-xs);color:var(--muted);font-weight:700;}
-.m .v{font-size:var(--fs-lg);font-weight:800;margin-top:1px;font-variant-numeric:tabular-nums;}
-@media(max-width:900px){.kpi{grid-template-columns:1fr}.kpi2{grid-template-columns:repeat(3,1fr)}}
-@media(max-width:520px){.kpi2{grid-template-columns:repeat(2,1fr)}}
+.kpis{display:grid;grid-template-columns:repeat(var(--kn,4),1fr);gap:var(--sp-3);}
+.kpis + .kpis{margin-top:10px;}
+.kpc{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);padding:15px 17px 13px;
+ display:flex;flex-direction:column;min-height:126px;}
+.kpc .l{font-size:var(--fs-sm);font-weight:700;color:var(--muted);letter-spacing:.2px;}
+.kpc .v{font-size:var(--fs-xl);font-weight:800;letter-spacing:-1px;line-height:1.15;margin-top:3px;font-variant-numeric:tabular-nums;}
+.kpc .v .u{font-size:var(--fs-lg);font-weight:700;color:var(--muted);margin-left:3px;letter-spacing:0;}
+.kpc .s{font-size:var(--fs-sm);color:var(--muted);margin-top:3px;}
+.kpc .s2{font-size:var(--fs-xs);color:var(--muted);margin-top:5px;}
+.kpc .spark{margin-top:auto;padding-top:10px;height:30px;}
+.kpc .spark svg{width:100%;height:24px;display:block;}
+.kpc .spark rect{fill:var(--accent-bd);}
+.kpc .meter{margin-top:auto;height:7px;border-radius:var(--r-pill);background:var(--accent-bg);overflow:hidden;}
+.kpc .meter span{display:block;height:100%;border-radius:var(--r-pill);background:linear-gradient(90deg,var(--accent),var(--accent-2));}
+.kpc .meter.lat span{background:linear-gradient(90deg,var(--info),var(--accent));}
+/* 작은 카드 — 같은 구성요소를 크기만 줄여 쓴다 */
+.kpc.sm{min-height:0;padding:10px 12px;}
+.kpc.sm .l{font-size:var(--fs-xs);letter-spacing:0;}
+.kpc.sm .v{font-size:var(--fs-lg);letter-spacing:-.2px;margin-top:1px;}
+.kpc .v .g{color:var(--ok);}.kpc .v .r{color:var(--bad);}
+@media(max-width:900px){.kpis{grid-template-columns:repeat(min(var(--kn,4),3),1fr);}}
+@media(max-width:520px){.kpis{grid-template-columns:repeat(min(var(--kn,4),2),1fr);}}
 
 /* ── 차트 */
 .chart{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);padding:14px 12px 8px;}
@@ -1054,7 +1056,8 @@ label.chk input{margin-top:3px;flex:0 0 auto;}
  .tabs{gap:6px;margin-bottom:10px;}
  .tab{font-size:var(--fs-sm);padding:6px 11px;}
  .sect{gap:var(--sp-1);margin:20px 0 var(--sp-2);}
- .kpi2{grid-template-columns:repeat(2,1fr);gap:8px;}
+ .kpis{gap:var(--sp-2);}
+ .kpc.sm{padding:9px 11px;}
  .m{padding:9px 11px;}
  .m .v{font-size:var(--fs-lg);}
  .two{gap:12px;}
@@ -1132,7 +1135,7 @@ label.chk input{margin-top:3px;flex:0 0 auto;}
  table.recent.calls.mbc td:nth-child(10),table.recent.calls.mbc td:nth-child(11){display:none !important;}
 }
 @media(max-width:360px){
- .kpi2{grid-template-columns:1fr;}
+ .kpis{grid-template-columns:1fr;}
  .anb .nums{grid-template-columns:repeat(2,1fr);}
 }
 `;
@@ -1679,6 +1682,71 @@ export function sectionHead(title: string, opts: SectionOpts = {}): string {
  * 직전 같은 기간과 비교한 증감 표시.
  * higherIsWorse가 참이면 늘어난 쪽을 빨갛게(실패·비용·지연), 거짓이면 파랗게 본다.
  */
+export interface KpiSpec {
+	label: string;
+	/** 이미 쓸 모양으로 만든 값. HTML을 그대로 넣는다. */
+	value: string;
+	/** 숫자 뒤 단위(건·ms). */
+	unit?: string;
+	/** 직전 같은 기간과 견준 값. prev가 없으면 그리지 않는다. */
+	delta?: { cur: number; prev: number; higherIsWorse?: boolean };
+	/** 큰 숫자 아래 한 줄. */
+	sub?: string;
+	/** 그 아래 더 작은 줄. */
+	sub2?: string;
+	/** 0~100. 채움 막대를 그린다. */
+	meter?: number;
+	meterTone?: "lat";
+	/** 카드 안 미니 막대 그래프에 쓸 값들(시간순). */
+	spark?: number[];
+	size?: "lg" | "sm";
+	/** 값 색 — 실패처럼 그 자체가 신호인 숫자에만. */
+	tone?: "ok" | "bad";
+	/** 카드에 마우스를 올렸을 때 나오는 설명. 작은 카드로 늘리는 대신 여기에 담는다. */
+	tip?: string;
+}
+
+/** 카드 안 미니 막대 — 축도 눈금도 없이 흐름만 보여준다. */
+export function sparkline(values: number[]): string {
+	if (!values.length) return "";
+	const max = Math.max(1, ...values);
+	const w = 100 / values.length;
+	const bars = values
+		.map((v, i) => {
+			const h = Math.max(v ? 1.5 : 0, (v / max) * 22);
+			return `<rect x="${(i * w + w * 0.15).toFixed(2)}" y="${(24 - h).toFixed(2)}" width="${(w * 0.7).toFixed(2)}" height="${h.toFixed(2)}" rx="0.8"/>`;
+		})
+		.join("");
+	return `<svg viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true">${bars}</svg>`;
+}
+
+/**
+ * 지표 카드 — 화면의 모든 숫자 카드가 이 함수 하나를 쓴다.
+ * 이름표 → 큰 숫자 → 직전 기간 대비 → 추이선이나 보조 한 줄 순으로 읽힌다.
+ * 전에는 큰 카드와 작은 카드가 다른 마크업이라 같은 뜻인데 모양이 갈렸다.
+ */
+export function kpiCard(c: KpiSpec): string {
+	const d = c.delta && c.delta.prev ? delta(c.delta.cur, c.delta.prev, c.delta.higherIsWorse) : "";
+	const tail = c.spark
+		? `<div class="spark">${sparkline(c.spark)}</div>`
+		: c.meter !== undefined
+			? `<div class="meter${c.meterTone ? ` ${c.meterTone}` : ""}"><span style="width:${Math.max(0, Math.min(100, Math.round(c.meter)))}%"></span></div>`
+			: "";
+	return `<div class="kpc${c.size === "sm" ? " sm" : ""}"${c.tip ? ` data-tip="${escapeHtml(c.tip)}"` : ""}>` +
+		`<div class="l">${escapeHtml(c.label)}</div>` +
+		`<div class="v">${c.tone ? `<span class="${c.tone === "ok" ? "g" : "r"}">${c.value}</span>` : c.value}` +
+		(c.unit ? `<span class="u">${escapeHtml(c.unit)}</span>` : "") + d + `</div>` +
+		(c.sub ? `<div class="s">${c.sub}</div>` : "") +
+		tail +
+		(c.sub2 ? `<div class="s2">${c.sub2}</div>` : "") +
+		`</div>`;
+}
+
+/** 카드 한 줄. cols는 넓은 화면에서의 칸 수다(좁아지면 3 → 2 → 1로 접힌다). */
+export function kpiRow(cards: KpiSpec[], cols = 4): string {
+	return `<div class="kpis" style="--kn:${cols}">${cards.map(kpiCard).join("")}</div>`;
+}
+
 export function delta(cur: number, prev: number, higherIsWorse = false): string {
 	if (!prev) return "";
 	const pct = ((cur - prev) / prev) * 100;
