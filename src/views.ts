@@ -128,7 +128,7 @@ export function renderBoard(b: BoardData, opts: AdminOpts = {}): string {
 
 	return shellAdmin(
 		"상황판",
-		pageHead("상황판", `지금 상태 · ${sinceLabel(b.since)}`, b.appFilter) +
+		pageHead("상황판", `지금 상태 · ${sinceLabel(b.since)}`) +
 			`<div id="hz-body">
 ${filterTabs("/admin", b.period, b.appFilter, b.apps, PERIODS)}
 
@@ -220,7 +220,7 @@ ${kpiRow([
   <a href="/admin/anomaly${q}"><b>이상탐지</b><span>열린 신호 ${b.anomaly.openTotal.toLocaleString()}건 · 판정 ${b.anomaly.judged.toLocaleString()}건 · 서버 ${ago(b.anomaly.heartbeatAge)}</span><i>→</i></a>
 </div>
 </div>`,
-		{ ...opts, tab: "board" },
+		{ ...opts, tab: "board", heartbeatAge: b.anomaly.heartbeatAge, appFilter: b.appFilter },
 	);
 }
 
@@ -275,7 +275,7 @@ export function renderUsage(u: UsageData, opts: AdminOpts = {}): string {
 
 	return shellAdmin(
 		"사용량",
-		pageHead("사용량", `앱 · 모델 · 용도별 집계 · ${sinceLabel(u.since)}`, u.appFilter) +
+		pageHead("사용량", `앱 · 모델 · 용도별 집계 · ${sinceLabel(u.since)}`) +
 			`<div id="hz-body">
 ${filterTabs("/admin/calls/usage", u.period, u.appFilter, u.apps, PERIODS)}
 ${kpiRow([
@@ -297,7 +297,7 @@ ${sectionHead("용도별", { count: `${u.byKind.length}개`, tip: "용도는 앱
 <div class="cap"><table class="fx" id="tb-kind">${cols("", "96", "74:o1", "74", "84:o1", "84", "86:o2", "58")}<thead><tr><th>용도</th><th class="n">호출</th><th class="n o1">성공</th><th class="n">실패</th><th class="n o1">토큰</th><th class="n">비용</th><th class="n o2">평균 지연</th><th></th></tr></thead><tbody>${kindRows}</tbody></table></div>
 
 </div>`,
-		{ ...opts, tab: "calls", sub: callsSub("usage", q) },
+		{ ...opts, tab: "calls", sub: callsSub("usage", q), appFilter: u.appFilter },
 	);
 }
 
@@ -344,7 +344,7 @@ export function renderTrend(t: TrendData, opts: AdminOpts = {}): string {
 
 	return shellAdmin(
 		"AI 호출",
-		pageHead("AI 호출", `호출·비용 흐름 · ${sinceLabel(t.since)}`, t.appFilter) +
+		pageHead("AI 호출", `호출·비용 흐름 · ${sinceLabel(t.since)}`) +
 			`<div id="hz-body">
 ${filterTabs("/admin/calls", t.period, t.appFilter, t.apps, PERIODS)}
 ${sectionHead(`${t.bucketLabel} 단위 호출·비용`, {
@@ -375,9 +375,8 @@ ${sectionHead("구간별 상세", {
 	})}
 <div class="scroll cap"><table id="tb-bucket"><thead><tr><th>구간</th><th>비중</th><th class="n">호출</th><th class="n">서비스</th><th class="n">내부 도구</th><th class="n">성공</th><th class="n">실패</th><th class="n">토큰</th><th class="n">비용</th><th class="n">내부 도구 비용</th></tr></thead><tbody>${rows}</tbody></table></div>
 
-<p class="foot">구간은 한국 시간(KST) 기준으로 끊어요.</p>
 </div>`,
-		{ ...opts, tab: "calls", sub: callsSub("flow", q) },
+		{ ...opts, tab: "calls", sub: callsSub("flow", q), appFilter: t.appFilter },
 	);
 }
 
@@ -447,7 +446,7 @@ export function renderGeo(g: GeoData, opts: AdminOpts = {}): string {
 
 	return shellAdmin(
 		"지역",
-		pageHead("호출 지역", `국가 · 도시별 호출·방문 분포 · ${sinceLabel(g.since)}`, g.appFilter) +
+		pageHead("호출 지역", `국가 · 도시별 호출·방문 분포 · ${sinceLabel(g.since)}`) +
 			`<div id="hz-body">
 ${filterTabs("/admin/calls/geo", g.period, g.appFilter, g.apps, PERIODS)}
 ${svgMap(g.points, g.geoUnknown, g.hitPoints, g.hitUnknown, g.hitSite ? siteName(g.hitSite) : "")}
@@ -462,7 +461,7 @@ ${sectionHead(`지역 · 도시별 (상위 ${g.byRegion.length})`, { right: tabl
 
 <p class="foot">지도의 <b>보라색</b>은 AI 호출, <b>분홍색</b>은 서비스 방문이에요. 앱을 고르면 짝지어 둔 서비스의 방문만 함께 보여요.</p>
 </div>`,
-		{ ...opts, tab: "calls", sub: callsSub("geo", q) },
+		{ ...opts, tab: "calls", sub: callsSub("geo", q), appFilter: g.appFilter },
 	);
 }
 
@@ -1417,12 +1416,11 @@ function renderAnomalyScreen(a: AnomalyData, view: "signals" | "detector", opts:
 			signals
 				? `${traffic ? "평소와 다른 방문 흐름" : "평소와 다른 호출 흐름"} · ${sinceLabel(a.since)}`
 				: `이상탐지 에이전트가 어떻게 배우고 있나 · ${sinceLabel(a.since)}`,
-			a.appFilter,
 		) +
 			`<div id="hz-body">
 ${anomalyNavRow(nav)}
 ${anomalyAppRow(nav, traffic ? SITE_TABS : a.apps, traffic)}
-${serverBar(a)}
+${signals ? "" : serverBar(a)}
 ${warmupNotice(a)}
 ${!signals ? "" : `
 ${kpiRow([
@@ -1497,7 +1495,7 @@ ${sectionHead("승격 심사", {
 `}
 <p class="foot">심각·주의 신호는 ${escapeHtml("zerolive7@gmail.com")}으로 메일이 나가요.</p>
 </div>`,
-		{ ...opts, tab: "anomaly", sub: anomalySub(signals ? "signals" : "detector", a.period) },
+		{ ...opts, tab: "anomaly", sub: anomalySub(signals ? "signals" : "detector", a.period), heartbeatAge: a.heartbeatAge, appFilter: a.appFilter },
 	);
 }
 
@@ -1565,7 +1563,7 @@ export function renderMails(d: MailsData, opts: AdminOpts = {}): string {
 
 	return shellAdmin(
 		"보낸 메일",
-		pageHead("이상탐지", `보낸 알림 메일 · ${sinceLabel(d.since)}`, "") +
+		pageHead("이상탐지", `보낸 알림 메일 · ${sinceLabel(d.since)}`) +
 			`<div id="hz-body">
 ${anomalyNavRow(nav)}
 ${anomalyViewRow(nav, kindTab("", "전체", d.total) + kindTab("anomaly", "이상 알림", d.anomaly) + kindTab("train", "학습 결과", d.train) + kindTab("test", "점검", d.test))}
@@ -1591,7 +1589,7 @@ ${sectionHead("보낸 메일 내역", {
 <div class="scroll cap"><table class="recent mail"><tr><th>보낸 시각</th><th>종류</th><th>갈래</th><th>등급</th><th>제목</th><th class="n">결과</th></tr>${rows}</table></div>
 
 </div>`,
-		{ ...opts, tab: "anomaly", sub: anomalySub("mails", d.period) },
+		{ ...opts, tab: "anomaly", sub: anomalySub("mails", d.period), heartbeatAge: d.heartbeatAge },
 	);
 }
 
@@ -1650,13 +1648,11 @@ export function renderAnomalyDetail(d: AnomalyBoardData, opts: AdminOpts = {}): 
 		pageHead(
 			"이상탐지",
 			`${traffic ? "서비스 방문" : "AI 호출"} 판정 상세 · ${sinceLabel(d.since)}`,
-			d.appFilter,
 		) +
 			`<div id="hz-body">
 ${anomalyNavRow(nav)}
 ${anomalyViewRow(nav, sevTabs)}
 ${anomalyAppRow(nav, apps, traffic)}
-${serverBarOf(d.state, d.heartbeatAge)}
 
 ${sectionHead("판정 상세", { tip: TIP_VERDICT, count: `${d.rows.length.toLocaleString()}건${d.total > d.rows.length ? ` / ${d.total.toLocaleString()}건` : ""}${d.critical24 ? ` · 최근 24시간 심각 <b class="r">${d.critical24.toLocaleString()}</b>건` : ""}`, href: `/admin/anomaly?period=${d.period}&scope=${d.forScope}`, linkLabel: "요약으로 돌아가기 →" })}
 <div class="cap tall"><table class="anb2">
@@ -1664,7 +1660,7 @@ ${sectionHead("판정 상세", { tip: TIP_VERDICT, count: `${d.rows.length.toLoc
 <tr><th>구간</th><th>등급</th><th>신호</th><th>${traffic ? "서비스" : "앱"}</th><th>무슨 일인가</th><th>검증</th><th class="n">메일</th></tr>${rows}</table></div>
 
 </div>`,
-		{ ...opts, tab: "anomaly", sub: anomalySub("signals", d.period) },
+		{ ...opts, tab: "anomaly", sub: anomalySub("signals", d.period), heartbeatAge: d.heartbeatAge, appFilter: d.appFilter },
 	);
 }
 
@@ -1756,7 +1752,7 @@ export function renderLogs(l: LogsData, opts: AdminOpts = {}): string {
 
 	return shellAdmin(
 		"호출 로그",
-		pageHead("호출 로그", "조건을 걸어 호출 1건씩 살펴봐요. 줄을 누르면 상세가 펼쳐져요.", f.app) +
+		pageHead("호출 로그", "조건을 걸어 호출 1건씩 살펴봐요. 줄을 누르면 상세가 펼쳐져요.") +
 			`<div id="hz-body">
 <form class="flt" method="get" action="/admin/calls/logs">
   <input type="hidden" name="period" value="${escapeHtml(f.period)}">
@@ -2196,7 +2192,7 @@ export function renderTraffic(t: TrafficData, view: "visits" | "bots" | "paths" 
 
 	return shellAdmin(
 		"트래픽",
-		pageHead("트래픽", `서비스 방문 · ${sinceLabel(t.since)}`, t.siteFilter) +
+		pageHead("트래픽", `서비스 방문 · ${sinceLabel(t.since)}`) +
 			`<div id="hz-body">
 ${filterTabs(base, t.period, t.siteFilter, t.sites, PERIODS, "",
 	t.siteFilter && siteUrl(t.siteFilter)

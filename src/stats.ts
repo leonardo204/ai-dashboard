@@ -1011,6 +1011,20 @@ const VERDICT_MISS = ["rule_fp", "model_fp", "both_fp"];
 //   그래서 예전 요약 화면이 돌리던 열네 개 집계 대신 일곱 개만 돈다.
 // ─────────────────────────────────────────────────────────────
 
+/**
+ * 이상탐지 서버가 마지막으로 무엇이든 밀어 넣은 뒤 지난 시간(ms).
+ * 모든 화면 맨 위 상태줄이 이 값 하나를 쓴다. 표가 작아 조회가 가볍다.
+ */
+export async function heartbeatAge(env: StatsEnv): Promise<number | null> {
+	try {
+		const row = await env.DB.prepare("SELECT MAX(updated_at) AS t FROM anomaly_state").first<{ t: number | null }>();
+		return row?.t ? Date.now() - row.t : null;
+	} catch {
+		// 표가 아직 없는 환경 — 화면은 그대로 열리고 상태만 "기록 없음"이 된다.
+		return null;
+	}
+}
+
 /** 상황판에 보여줄 열린 신호 수 — 세 건이면 "지금 무슨 일인가"는 충분히 읽힌다. */
 export const BOARD_SIGNALS = 3;
 

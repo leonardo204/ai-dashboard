@@ -33,7 +33,7 @@
 import { handleChat, handleEmbeddings, type ProxyEnv } from "./proxy";
 import { renderGuide, GUIDE_MD, GUIDE_FILENAME } from "./guide";
 import {
-	collectStats, collectBoard, collectUsage, collectTrend, collectGeo, queryLogs, logsCsv,
+	collectStats, collectBoard, heartbeatAge, collectUsage, collectTrend, collectGeo, queryLogs, logsCsv,
 	listApps, getApp, upsertApp, deleteApp, newToken, pulse, exportCalls, normPeriod, LOG_PAGE,
 	collectAnomaly, collectAnomalyBoard, pushAnomaly, collectMails, getMailHtml, listPasskeys, passkeyCount, deletePasskey,
 	collectTraffic,
@@ -282,10 +282,23 @@ function statScope(url: URL): { period: string; appFilter: string } {
 const STAT_PAGES: Record<string, (env: Env, period: string, app: string) => Promise<string>> = {
 	"/admin": async (e, p, a) => renderBoard(await collectBoard(e, p, a), { session: true }),
 	"/admin/": async (e, p, a) => renderBoard(await collectBoard(e, p, a), { session: true }),
-	"/admin/calls": async (e, p, a) => renderTrend(await collectTrend(e, p, a), { session: true }),
-	"/admin/calls/": async (e, p, a) => renderTrend(await collectTrend(e, p, a), { session: true }),
-	"/admin/calls/usage": async (e, p, a) => renderUsage(await collectUsage(e, p, a), { session: true }),
-	"/admin/calls/geo": async (e, p, a) => renderGeo(await collectGeo(e, p, a), { session: true }),
+	// 상태줄에 쓸 탐지 서버 신호는 화면 집계와 나란히 묻는다(왕복을 늘리지 않는다).
+	"/admin/calls": async (e, p, a) => {
+		const [d, beat] = await Promise.all([collectTrend(e, p, a), heartbeatAge(e)]);
+		return renderTrend(d, { session: true, heartbeatAge: beat });
+	},
+	"/admin/calls/": async (e, p, a) => {
+		const [d, beat] = await Promise.all([collectTrend(e, p, a), heartbeatAge(e)]);
+		return renderTrend(d, { session: true, heartbeatAge: beat });
+	},
+	"/admin/calls/usage": async (e, p, a) => {
+		const [d, beat] = await Promise.all([collectUsage(e, p, a), heartbeatAge(e)]);
+		return renderUsage(d, { session: true, heartbeatAge: beat });
+	},
+	"/admin/calls/geo": async (e, p, a) => {
+		const [d, beat] = await Promise.all([collectGeo(e, p, a), heartbeatAge(e)]);
+		return renderGeo(d, { session: true, heartbeatAge: beat });
+	},
 };
 
 /**
@@ -721,10 +734,9 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 			const { period } = statScope(url);
 			const raw = url.searchParams.get("site") || "";
 			const site = SITES[raw] ? raw : "";
+			const [tdata, tbeat] = await Promise.all([collectTraffic(env, period, site), heartbeatAge(env)]);
 			return html(
-				renderTraffic(await collectTraffic(env, period, site), trafficView as "visits" | "bots" | "paths", {
-					session: true,
-				}),
+				renderTraffic(tdata, trafficView as "visits" | "bots" | "paths", { session: true, heartbeatAge: tbeat }),
 				{ cache: false },
 			);
 		}
@@ -744,7 +756,8 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 					},
 				});
 			}
-			return html(renderLogs(await queryLogs(env, filter), { session: true }), { cache: false });
+			const [ldata, lbeat] = await Promise.all([queryLogs(env, filter), heartbeatAge(env)]);
+			return html(renderLogs(ldata, { session: true, heartbeatAge: lbeat, appFilter: filter.app }), { cache: false });
 		}
 
 		// ── 통계 JSON (/admin/stats.json) — 스크립트·CI용. 예전 응답 형태를 그대로 둔다.

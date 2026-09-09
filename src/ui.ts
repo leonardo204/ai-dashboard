@@ -188,13 +188,17 @@ textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:var(-
 .head .ht{min-width:0;flex:1 1 auto;}
 .head h1{margin:0 0 3px;}
 .head .sub{margin:0;}
-.clock{flex:0 0 auto;display:flex;align-items:center;gap:11px;
- background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);padding:7px 8px 7px 13px;
- box-shadow:0 1px 2px color-mix(in srgb,var(--ink) 4%,transparent);}
-.clock .tw{line-height:1.15;text-align:right;}
-.clock .t{font-size:var(--fs-lg);font-weight:800;letter-spacing:-.2px;
- font-variant-numeric:tabular-nums;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}
-.clock .d{font-size:var(--fs-xs);color:var(--muted);margin-top:1px;white-space:nowrap;}
+/* 상단 상태줄 — 시각 · 자동 갱신 · 탐지 서버 · 기준 시간대. 어느 화면에서나 같은 자리다. */
+.hzs{display:flex;align-items:center;gap:7px;font-size:var(--fs-xs);color:var(--muted);
+ font-weight:700;white-space:nowrap;flex:0 0 auto;}
+.hzs .t{font-variant-numeric:tabular-nums;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}
+.hzs .sep{color:var(--line);}
+.hzs .beat{display:inline-flex;align-items:center;gap:5px;cursor:default;}
+.hzs .beat i{width:7px;height:7px;border-radius:50%;background:var(--ok);display:block;}
+.hzs .beat.stale i{background:var(--warn);}
+.hzs .beat.down i{background:var(--bad);}
+.hzs .beat.down{color:var(--bad-fg);}
+.hzs .live.off{border-style:dashed;}
 .live{display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:var(--fs-xs);font-weight:700;
  color:var(--muted);background:var(--bg);border:1px solid var(--line);border-radius:var(--r-pill);
  padding:5px 11px;cursor:pointer;width:auto;white-space:nowrap;
@@ -209,11 +213,7 @@ textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:var(-
 @keyframes beat{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.3;transform:scale(.75)}}
 /* 탭 두 줄(기간·앱)은 한 덩어리로 보이게 간격을 좁힌다 */
 .tabs + .tabs{margin-top:-6px;}
-@media(max-width:760px){
-  .head{flex-direction:column;align-items:stretch;gap:11px;}
-  .clock{justify-content:space-between;}
-  .clock .tw{text-align:left;}
-}
+@media(max-width:760px){.head{gap:11px;}}
 
 /* ── 상단바 */
 .topbar{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--panel) 88%,transparent);backdrop-filter:blur(10px);
@@ -495,8 +495,9 @@ const ADMIN_JS = `
     if (!t) return;
     var now = new Date();
     t.textContent = TF.format(now);
+    // 상단 상태줄은 좁아서 날짜를 다 적을 자리가 없다. 날짜는 마우스를 올렸을 때 본다.
     var d = document.getElementById('hz-date');
-    if (d) d.textContent = DF.format(now) + ' KST';
+    if (d) d.setAttribute('data-tip', DF.format(now) + ' · 한국 시간 기준');
   }
   tickClock();
   setInterval(tickClock, 1000);
@@ -608,6 +609,8 @@ const EXTRA_CSS = `
 .topbar nav{overflow-x:auto;scrollbar-width:none;}
 .topbar nav::-webkit-scrollbar{display:none}
 .topbar nav a{white-space:nowrap;}
+@media(max-width:900px){.hzs .t,.hzs .kst,.hzs .sep{display:none}.hzs .live .tx,.hzs #hz-live-t{display:none}
+ .hzs .live{padding:5px 7px}.hzs .beat .tx{display:none}}
 @media(max-width:640px){.topbar .in{gap:8px;padding:0 12px}.topbar .bd span{display:none}
  .topbar nav{margin-left:0;}.topbar nav a{font-size:var(--fs-sm);padding:6px 9px;}
  .topbar .in>form .btn{font-size:var(--fs-sm);padding:6px 10px;}}
@@ -1120,8 +1123,6 @@ label.chk input{margin-top:3px;flex:0 0 auto;}
  .wrap{padding:16px 12px 60px;}
  h1{font-size:var(--fs-lg);}
  .head{gap:10px;}
- .clock{gap:8px;}
- .clock .t{font-size:var(--fs-lg);}
  .tabs{gap:6px;margin-bottom:10px;}
  .tabs>span[style]{display:none;}
  .tab{font-size:var(--fs-sm);padding:6px 11px;}
@@ -1589,6 +1590,12 @@ export interface AdminOpts {
 	flash?: string | null;
 	/** 화면을 열자마자 모달로 보여줄 발급 토큰 */
 	token?: string | null;
+	/** 이상탐지 서버가 마지막 신호를 보낸 뒤 지난 시간(ms). 없으면 상태줄에 서버 칸을 그리지 않는다. */
+	heartbeatAge?: number | null;
+	/** 이 화면이 자동 갱신을 쓰는지. 로그처럼 보던 목록이 흔들리면 안 되는 화면은 false. */
+	live?: boolean;
+	/** 자동 갱신이 감시할 앱 조건 */
+	appFilter?: string;
 	/** 상단 탭 아래 하위 탭 줄. 화면이 자기 조건(기간·앱)을 붙인 주소를 만들어 넘긴다. */
 	sub?: { key: string; items: { key: string; href: string; label: string }[] };
 }
@@ -1644,6 +1651,42 @@ export const settingsSub = (key: string) => ({
 	],
 });
 
+/**
+ * 모든 화면 맨 위 한 줄 — 지금 시각 · 자동 갱신 · 탐지 서버 · 기준 시간대.
+ * 전에는 이 셋이 화면마다 다른 자리(제목 옆 시계, 이상탐지 화면의 상태 띠, 각주의 KST)에 흩어져 있었다.
+ */
+function statusBar(opts: AdminOpts): string {
+	const live = opts.live !== false;
+	const age = opts.heartbeatAge;
+	const beat =
+		age === undefined
+			? ""
+			: `<span class="sep">·</span><span class="beat ${
+					age === null || age > 15 * 60_000 ? "down" : age > 5 * 60_000 ? "stale" : "ok"
+				}" data-tip="${escapeHtml(
+					age === null
+						? "이상탐지 서버에서 아직 신호가 오지 않았어요."
+						: `이상탐지 서버 신호 ${agoShort(age)}`,
+				)}"><i></i><span class="tx">탐지 서버</span></span>`;
+	return `<span class="hzs" id="hz-clock" data-app="${escapeHtml(opts.appFilter ?? "")}" data-live="${live ? "1" : "0"}">
+  <span class="t" id="hz-time">--:--:--</span>
+  ${live
+			? `<span class="sep">·</span><button type="button" class="live" id="hz-live" title="끄면 화면을 자동으로 다시 그리지 않아요"><i></i><span id="hz-live-t">자동 갱신</span></button>`
+			: `<span class="sep">·</span><span class="live off" data-tip="이 화면은 보던 목록이 흔들리지 않게 자동 갱신을 쓰지 않아요"><i></i>자동 갱신 끔</span>`}
+  ${beat}
+  <span class="sep">·</span><span class="kst" id="hz-date">KST</span>
+</span>`;
+}
+
+/** 상태줄에 들어갈 짧은 표기 — 화면 본문의 ago()와 같은 규칙이다. */
+function agoShort(ms: number): string {
+	const s = Math.max(0, Math.round(ms / 1000));
+	if (s < 60) return "방금";
+	if (s < 3600) return `${Math.floor(s / 60)}분 전`;
+	if (s < 86400) return `${Math.floor(s / 3600)}시간 전`;
+	return `${Math.floor(s / 86400)}일 전`;
+}
+
 export function shellAdmin(title: string, body: string, opts: AdminOpts = {}): string {
 	const nav = NAV.map(
 		(n) => `<a href="${n.href}"${opts.tab === n.key ? ' class="on"' : ""}>${n.label}</a>`,
@@ -1654,6 +1697,7 @@ export function shellAdmin(title: string, body: string, opts: AdminOpts = {}): s
   <span class="bd"><i></i><span>AI Service</span></span>
   <nav>${nav}</nav>
   <span class="sp"></span>
+  ${opts.bare ? "" : statusBar(opts)}
   ${opts.session ? `<form method="post" action="/admin/logout"><button class="btn lo" type="submit" aria-label="로그아웃" data-tip="로그아웃"><svg class="ic" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg><span class="tx">로그아웃</span></button></form>` : ""}
 </div></header>${
 			opts.sub && opts.sub.items.length
@@ -1718,18 +1762,11 @@ export function renderLogin(
  * live가 false면 시계만 돌고 자동 갱신은 하지 않는다(로그 화면에서 쓴다 —
  * 보던 목록이 몇 초마다 다시 그려지면 읽을 수가 없다).
  */
-export function pageHead(title: string, sub: string, appFilter: string, live = true): string {
+export function pageHead(title: string, sub: string): string {
 	return `<div class="head">
   <div class="ht">
     <h1>${escapeHtml(title)}</h1>
     <p class="sub">${sub}</p>
-  </div>
-  <div class="clock"${live ? ` id="hz-clock" data-app="${escapeHtml(appFilter)}"` : ""}>
-    <div class="tw">
-      <div class="t" id="hz-time">--:--:--</div>
-      <div class="d" id="hz-date">KST</div>
-    </div>
-    ${live ? `<button type="button" class="live" id="hz-live" title="끄면 화면을 자동으로 다시 그리지 않아요"><i></i><span id="hz-live-t">자동 갱신</span></button>` : ""}
   </div>
 </div>`;
 }
