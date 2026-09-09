@@ -240,7 +240,8 @@ ${svgTrend(s.buckets)}
   <section>${sectionHead(`호출 지역 (${s.countryCount}개국)`, `/admin/geo${q}`)}${geoShare}</section>
 </div>
 
-<p class="foot">월별 비용은 기간 탭과 상관없이 늘 최근 열두 달을 보여줘요. 청구가 달 단위로 오니까요. 막대의 흐린 윗부분은 이상탐지·메일 도구처럼 <b>내부용</b>으로 표시한 앱이 쓴 몫이에요. 달은 한국 시간(KST) 기준으로 끊는데 실제 청구는 UTC 기준이라 월말·월초에 조금 다를 수 있어요.<br>
+<p class="foot">추이 막대는 아래가 서비스, 흐린 위쪽이 내부 도구 몫이에요. 비용 꺾은선은 진한 선이 전체, 점선이 서비스 몫이라 두 선의 간격이 내부 도구가 쓴 돈이에요. 성공·실패 건수는 막대에 마우스를 올리면 나와요.<br>
+월별 비용은 기간 탭과 상관없이 늘 최근 열두 달을 보여줘요. 청구가 달 단위로 오니까요. 막대의 흐린 윗부분은 이상탐지·메일 도구처럼 <b>내부용</b>으로 표시한 앱이 쓴 몫이에요. 달은 한국 시간(KST) 기준으로 끊는데 실제 청구는 UTC 기준이라 월말·월초에 조금 다를 수 있어요.<br>
 최근 호출은 자동 갱신이 켜져 있으면 새 호출이 들어올 때마다 다시 그려져요.<br>숫자 옆 ▲▼는 직전 같은 기간과 비교한 값이에요.<br>${FOOT_COST}<br>${FOOT_GEO}</p>
 </div>`,
 		{ ...opts, tab: "summary" },
@@ -335,15 +336,23 @@ export function renderTrend(t: TrendData, opts: AdminOpts = {}): string {
 
 	const rows = t.buckets.length
 		? t.buckets
-				.map(
-					(b) =>
-						`<tr><td>${escapeHtml(b.b)}</td><td class="bar"><span style="width:${Math.round((b.total / maxB) * 100)}%"></span></td>` +
-						`<td class="n">${b.total.toLocaleString()}</td><td class="n g">${b.ok.toLocaleString()}</td>` +
+				.map((b) => {
+					const innPct = b.total ? Math.round((b.internal / b.total) * 100) : 0;
+					return `<tr><td>${escapeHtml(b.b)}</td><td class="bar" data-tip="${escapeHtml(
+						`서비스 ${(b.total - b.internal).toLocaleString()}건 · 내부 도구 ${b.internal.toLocaleString()}건`,
+					)}"><span style="width:${Math.round((b.total / maxB) * 100)}%">${
+						innPct ? `<i style="width:${innPct}%"></i>` : ""
+					}</span></td>` +
+						`<td class="n">${b.total.toLocaleString()}</td>` +
+						`<td class="n">${(b.total - b.internal).toLocaleString()}</td>` +
+						`<td class="n dim">${b.internal.toLocaleString()}</td>` +
+						`<td class="n g">${b.ok.toLocaleString()}</td>` +
 						`<td class="n r">${b.error.toLocaleString()}</td><td class="n">${b.tokens.toLocaleString()}</td>` +
-						`<td class="n">${usd(b.cost)}</td></tr>`,
-				)
+						`<td class="n">${usd(b.cost)}</td>` +
+						`<td class="n dim">${usd(b.internalCost)}</td></tr>`;
+				})
 				.join("")
-		: `<tr><td colspan="7">데이터 없음</td></tr>`;
+		: `<tr><td colspan="10">데이터 없음</td></tr>`;
 
 	const peak = t.heat.reduce((a, b) => (b.n > (a?.n ?? 0) ? b : a), t.heat[0]);
 	const WD = ["일", "월", "화", "수", "목", "금", "토"];
@@ -353,16 +362,24 @@ export function renderTrend(t: TrendData, opts: AdminOpts = {}): string {
 		pageHead("추이", `기간별 호출·비용 흐름 · ${sinceLabel(t.since)}`, t.appFilter) +
 			`<div id="hz-body">
 ${filterTabs("/admin/trend", t.period, t.appFilter, t.apps, PERIODS)}
-<div class="sh2"><h2>${t.bucketLabel} 단위 호출·비용</h2></div>
+<div class="sh2"><h2>${t.bucketLabel} 단위 호출·비용</h2><span class="sm">${
+		t.total
+			? `서비스 ${(t.total - t.internal).toLocaleString()}건 · 내부 도구 ${t.internal.toLocaleString()}건 (${
+					t.total ? Math.round((t.internal / t.total) * 100) : 0
+				}%)`
+			: "기록 없음"
+	}</span></div>
 ${svgTrend(t.buckets)}
 
 <div class="sh2"><h2>언제 몰리나 (요일 × 시각, KST)</h2>${peak ? `<span class="sm">가장 많은 때: ${WD[peak.w]}요일 ${peak.h}시 · ${peak.n.toLocaleString()}건</span>` : ""}</div>
 ${svgHeat(t.heat)}
 
-<div class="sh2"><h2>구간별 상세</h2><span class="sm">전체 ${t.total.toLocaleString()}건 · ${usd(t.cost)}</span></div>
-<div class="scroll cap"><table id="tb-bucket"><thead><tr><th>구간</th><th>비중</th><th class="n">호출</th><th class="n">성공</th><th class="n">실패</th><th class="n">토큰</th><th class="n">비용</th></tr></thead><tbody>${rows}</tbody></table></div>
+<div class="sh2"><h2>구간별 상세</h2><span class="sm">전체 ${t.total.toLocaleString()}건 · ${usd(t.cost)}${
+		t.internal ? ` · 내부 도구 ${t.internal.toLocaleString()}건 · ${usd(t.internalCost)}` : ""
+	}</span></div>
+<div class="scroll cap"><table id="tb-bucket"><thead><tr><th>구간</th><th>비중</th><th class="n">호출</th><th class="n">서비스</th><th class="n">내부 도구</th><th class="n">성공</th><th class="n">실패</th><th class="n">토큰</th><th class="n">비용</th><th class="n">내부 도구 비용</th></tr></thead><tbody>${rows}</tbody></table></div>
 
-<p class="foot">구간은 한국 시간(KST) 기준으로 끊어요.<br>${FOOT_COST}</p>
+<p class="foot">막대의 흐린 윗부분과 표의 '내부 도구' 칸은 이상탐지·메일 도구처럼 <b>내부용</b>으로 표시한 앱이 낸 몫이에요. 비용 꺾은선은 진한 선이 전체, 점선이 서비스 몫이라 두 선의 간격이 내부 도구가 쓴 돈이에요.<br>구간은 한국 시간(KST) 기준으로 끊어요.<br>${FOOT_COST}</p>
 </div>`,
 		{ ...opts, tab: "trend" },
 	);

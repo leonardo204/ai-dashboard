@@ -578,7 +578,7 @@ export interface StatsSummary {
 	byApp: (GroupRow & { name: string })[];
 	byModel: GroupRow[];
 	byKind: GroupRow[];
-	buckets: { b: string; total: number; ok: number; error: number; tokens: number; cost: number }[];
+	buckets: Bucket[];
 	errors: { http: number | null; count: number; sample: string | null }[];
 	metaKeys: { key: string; values: { v: string; c: number }[]; total: number }[];
 	byCountry: (GroupRow & { ips: number })[];
@@ -632,10 +632,10 @@ async function collectStatsInner(env: StatsEnv, period: string, appFilter: strin
 			).all<{ app: string; kind: string; model: string | null; total: number; ok: number | null; error: number | null; inTok: number; outTok: number; realCost: number; eIn: number; eOut: number; lat: number }>(),
 
 			bind(
-				`SELECT ${bexpr} AS b, model, COUNT(*) AS total, SUM(status='ok') AS ok, SUM(status='error') AS error,` +
+				`SELECT ${bexpr} AS b, model,` + INN + ` COUNT(*) AS total, SUM(status='ok') AS ok, SUM(status='error') AS error,` +
 					" COALESCE(SUM(in_tokens),0) AS inTok, COALESCE(SUM(out_tokens),0) AS outTok, COALESCE(SUM(cost),0) AS realCost, COALESCE(SUM(CASE WHEN " + NEEDS_EST + " THEN in_tokens ELSE 0 END),0) AS eIn, COALESCE(SUM(CASE WHEN " + NEEDS_EST + " THEN out_tokens ELSE 0 END),0) AS eOut" +
-					` FROM calls WHERE ts >= ?1${appWhere} GROUP BY b, model ORDER BY b DESC`,
-			).all<{ b: string; model: string | null; total: number; ok: number | null; error: number | null; inTok: number; outTok: number; realCost: number; eIn: number; eOut: number }>(),
+					` FROM calls WHERE ts >= ?1${appWhere} GROUP BY b, model, inn ORDER BY b DESC`,
+			).all<{ b: string; model: string | null; inn: number; total: number; ok: number | null; error: number | null; inTok: number; outTok: number; realCost: number; eIn: number; eOut: number }>(),
 
 			bind(
 				`SELECT http, COUNT(*) AS c, MAX(err) AS sample FROM calls WHERE ts >= ?1${appWhere} AND status='error' GROUP BY http ORDER BY c DESC LIMIT 8`,
@@ -700,11 +700,13 @@ async function collectStatsInner(env: StatsEnv, period: string, appFilter: strin
 	}
 
 	// 추이 버킷
-	const bmap = new Map<string, { b: string; total: number; ok: number; error: number; tokens: number; cost: number }>();
+	const bmap = new Map<string, Bucket>();
 	for (const r of bucketRows.results ?? []) {
-		const cur = bmap.get(r.b) ?? { b: r.b, total: 0, ok: 0, error: 0, tokens: 0, cost: 0 };
+		const cur = bmap.get(r.b) ?? emptyBucket(r.b);
+		const c = mergeCost(r.realCost, r.model, r.eIn, r.eOut);
 		cur.total += r.total; cur.ok += r.ok ?? 0; cur.error += r.error ?? 0;
-		cur.tokens += r.inTok + r.outTok; cur.cost += mergeCost(r.realCost, r.model, r.eIn, r.eOut);
+		cur.tokens += r.inTok + r.outTok; cur.cost += c;
+		if (r.inn) { cur.internal += r.total; cur.internalCost += c; }
 		bmap.set(r.b, cur);
 	}
 	const buckets = Array.from(bmap.values()).sort((a, b) => (a.b < b.b ? 1 : -1)).slice(0, 30);
@@ -851,7 +853,17 @@ export interface Bucket {
 	error: number;
 	tokens: number;
 	cost: number;
+	/** 그중 내부용 앱(이상탐지·메일 도구)이 낸 호출과 비용. 서비스 몫은 total-internal, cost-internalCost. */
+	internal: number;
+	internalCost: number;
 }
+
+/** 내부용 앱이면 1. 구간·달 집계에서 서비스 몫과 내부 도구 몫을 가르는 데 쓴다. */
+const INN = " CASE WHEN app IN (SELECT id FROM apps WHERE internal = 1) THEN 1 ELSE 0 END AS inn,";
+
+/** 빈 구간 한 칸. */
+const emptyBucket = (b: string): Bucket =>
+	({ b, total: 0, ok: 0, error: 0, tokens: 0, cost: 0, internal: 0, internalCost: 0 });
 
 /** 기간 문자열 → 시작 시각과 직전 같은 기간의 시작 시각. */
 export function periodInfo(period: string) {
@@ -1041,8 +1053,8 @@ async function collectSummaryInner(
 		).all<AggRow & { app: string; model: string | null }>(),
 
 		bind(
-			`SELECT ${bexpr} AS b, model,${AGG} FROM calls WHERE ts >= ?1${appWhere} GROUP BY b, model ORDER BY b DESC`,
-		).all<AggRow & { b: string; model: string | null }>(),
+			`SELECT ${bexpr} AS b, model,${INN}${AGG} FROM calls WHERE ts >= ?1${appWhere} GROUP BY b, model, inn ORDER BY b DESC`,
+		).all<AggRow & { b: string; model: string | null; inn: number }>(),
 
 		bind(`SELECT COUNT(DISTINCT ip) AS n FROM calls WHERE ts >= ?1${appWhere}`).first<{ n: number }>(),
 
@@ -1110,13 +1122,13 @@ async function collectSummaryInner(
 		(appFilter
 			? env.DB.prepare(
 					`SELECT ${bucketExpr("month")} AS m, model,` +
-						" CASE WHEN app IN (SELECT id FROM apps WHERE internal = 1) THEN 1 ELSE 0 END AS inn," +
+						INN +
 						AGG +
 						" FROM calls WHERE ts >= ?1 AND app = ?2 GROUP BY m, model, inn",
 				).bind(monthSince, appFilter)
 			: env.DB.prepare(
 					`SELECT ${bucketExpr("month")} AS m, model,` +
-						" CASE WHEN app IN (SELECT id FROM apps WHERE internal = 1) THEN 1 ELSE 0 END AS inn," +
+						INN +
 						AGG +
 						" FROM calls WHERE ts >= ?1 GROUP BY m, model, inn",
 				).bind(monthSince)
@@ -1138,9 +1150,11 @@ async function collectSummaryInner(
 
 	const bmap = new Map<string, Bucket>();
 	for (const r of bucketRows.results ?? []) {
-		const cur = bmap.get(r.b) ?? { b: r.b, total: 0, ok: 0, error: 0, tokens: 0, cost: 0 };
+		const cur = bmap.get(r.b) ?? emptyBucket(r.b);
+		const c = mergeCost(r.realCost, r.model, r.eIn, r.eOut);
 		cur.total += r.total; cur.ok += r.ok ?? 0; cur.error += r.error ?? 0;
-		cur.tokens += r.inTok + r.outTok; cur.cost += mergeCost(r.realCost, r.model, r.eIn, r.eOut);
+		cur.tokens += r.inTok + r.outTok; cur.cost += c;
+		if (r.inn) { cur.internal += r.total; cur.internalCost += c; }
 		bmap.set(r.b, cur);
 	}
 	const buckets = Array.from(bmap.values()).sort((a, b) => (a.b < b.b ? 1 : -1)).slice(0, 30);
@@ -1331,6 +1345,9 @@ export interface TrendData {
 	heat: { w: number; h: number; n: number }[];
 	total: number;
 	cost: number;
+	/** 그중 내부용 앱(이상탐지·메일 도구) 몫. */
+	internal: number;
+	internalCost: number;
 }
 
 export async function collectTrend(env: StatsEnv, period: string, appFilter: string): Promise<TrendData> {
@@ -1350,8 +1367,8 @@ async function collectTrendInner(env: StatsEnv, period: string, appFilter: strin
 	const [apps, bucketRows, heatRows] = await Promise.all([
 		appBriefs(env),
 		bind(
-			`SELECT ${bexpr} AS b, model,${AGG} FROM calls WHERE ts >= ?1${appWhere} GROUP BY b, model ORDER BY b DESC`,
-		).all<AggRow & { b: string; model: string | null }>(),
+			`SELECT ${bexpr} AS b, model,${INN}${AGG} FROM calls WHERE ts >= ?1${appWhere} GROUP BY b, model, inn ORDER BY b DESC`,
+		).all<AggRow & { b: string; model: string | null; inn: number }>(),
 		bind(
 			`SELECT CAST(strftime('%w', ${kstBase}) AS INTEGER) AS w,` +
 				` CAST(strftime('%H', ${kstBase}) AS INTEGER) AS h, COUNT(*) AS n` +
@@ -1360,12 +1377,13 @@ async function collectTrendInner(env: StatsEnv, period: string, appFilter: strin
 	]);
 
 	const bmap = new Map<string, Bucket>();
-	let total = 0, cost = 0;
+	let total = 0, cost = 0, internal = 0, internalCost = 0;
 	for (const r of bucketRows.results ?? []) {
 		const c = mergeCost(r.realCost, r.model, r.eIn, r.eOut);
-		const cur = bmap.get(r.b) ?? { b: r.b, total: 0, ok: 0, error: 0, tokens: 0, cost: 0 };
+		const cur = bmap.get(r.b) ?? emptyBucket(r.b);
 		cur.total += r.total; cur.ok += r.ok ?? 0; cur.error += r.error ?? 0;
 		cur.tokens += r.inTok + r.outTok; cur.cost += c;
+		if (r.inn) { cur.internal += r.total; cur.internalCost += c; internal += r.total; internalCost += c; }
 		bmap.set(r.b, cur);
 		total += r.total;
 		cost += c;
@@ -1381,6 +1399,8 @@ async function collectTrendInner(env: StatsEnv, period: string, appFilter: strin
 		heat: heatRows.results ?? [],
 		total,
 		cost,
+		internal,
+		internalCost,
 	};
 }
 

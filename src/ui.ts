@@ -56,6 +56,7 @@ h1{font-size:20px;margin:0 0 4px;}h2{font-size:14px;margin:26px 0 9px;color:var(
 .chart .ax.end{text-anchor:end;}.chart .ax.mid{text-anchor:middle;}.chart .ax.cst{fill:#C85A95;}
 .chart .b-ok{fill:var(--accent);}
 .chart .b-er{fill:#e2686b;}
+.chart .b-in{fill:var(--accent);opacity:.32;}
 .chart .lv-c{fill:#d1495b;}.chart .lv-w{fill:#E0A33B;}.chart .lv-i{fill:#7fa8e0;}
 .chart.lvl svg{aspect-ratio:1000/200;min-height:150px;}
 .chart .lg .s-c{background:#d1495b;}.chart .lg .s-w{background:#E0A33B;}.chart .lg .s-i{background:#7fa8e0;}
@@ -64,6 +65,8 @@ h1{font-size:20px;margin:0 0 4px;}h2{font-size:14px;margin:26px 0 9px;color:var(
 .chart .lg .s-s{background:#35A7FF;}.chart .lg .s-o{background:#cfd6e4;}
 .chart .hit{fill:transparent;}
 .chart .bg:hover .b-ok{fill:#7a45dd;}
+.chart .bg:hover .b-in{opacity:.5;}
+.chart .cl.svc{stroke-dasharray:5 4;stroke-width:1.6;opacity:.85;}
 .chart .bg:hover .hit{fill:rgba(146,95,240,.07);}
 .chart .cl{fill:none;stroke:#C85A95;stroke-width:2;stroke-linejoin:round;stroke-linecap:round;}
 .chart .cd{fill:#fff;stroke:#C85A95;stroke-width:1.6;}
@@ -71,7 +74,9 @@ h1{font-size:20px;margin:0 0 4px;}h2{font-size:14px;margin:26px 0 9px;color:var(
 .chart .lg .k{display:inline-flex;align-items:center;gap:5px;}
 .chart .lg i{width:9px;height:9px;border-radius:3px;display:block;}
 .chart .lg .s-ok{background:var(--accent);}.chart .lg .s-er{background:#e2686b;}
+.chart .lg .s-in{background:var(--accent);opacity:.32;}
 .chart .lg .s-ct{background:#C85A95;border-radius:50%;}
+.chart .lg .s-cs{background:transparent;border-top:2px dashed #C85A95;height:0;border-radius:0;width:12px;}
 .empty{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:26px;
  text-align:center;color:var(--muted);font-size:13px;}
 
@@ -119,9 +124,14 @@ th{background:#fafbfc;font-weight:700;color:var(--muted);font-size:12px;}
 tr:last-child td{border-bottom:none;}
 .n{text-align:right;font-variant-numeric:tabular-nums;}
 .g{color:var(--g);}.r{color:var(--r);}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;}
-td.bar{width:30%;}td.bar span{display:block;height:9px;background:var(--accent);border-radius:5px;min-width:2px;}
+td.bar{width:30%;}td.bar span{display:block;height:9px;background:var(--accent);border-radius:5px;min-width:2px;position:relative;overflow:hidden;}
+td.bar span i{position:absolute;right:0;top:0;bottom:0;display:block;background:#c9bdf0;}
 /* 서비스 방문 표는 지도와 같은 보조색을 쓴다 — 어느 쪽 기록인지 색만 봐도 알게. */
 td.bar.hit span{background:#C85A95;}
+td.n.dim{color:var(--muted);}
+/* 구간별 상세 — 좁은 화면에서는 계산해서 알 수 있는 칸(서비스·토큰)을 접어 가로 스크롤을 막는다. */
+@media(max-width:760px){#tb-bucket th:nth-child(4),#tb-bucket td:nth-child(4),
+ #tb-bucket th:nth-child(8),#tb-bucket td:nth-child(8){display:none;}}
 td.err{color:var(--muted);font-size:11px;max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .foot{margin-top:22px;color:var(--muted);font-size:12px;}
 .sm{font-size:11px;color:var(--muted);}
@@ -1715,8 +1725,13 @@ export const shortNum = (v: number): string =>
 	v >= 1_000_000 ? `${(v / 1_000_000).toFixed(1)}M` : v >= 1000 ? `${(v / 1000).toFixed(v >= 10_000 ? 0 : 1)}k` : String(v);
 
 /**
- * 추이 차트 — 성공·실패 누적 막대 + 비용 꺾은선(오른쪽 축).
- * 값은 서버에서 좌표로 굳혀 보내고, 자세한 수치는 막대의 title(마우스 올리면 표시)로 준다.
+ * 추이 차트 — 서비스·내부 도구 누적 막대 + 비용 꺾은선 두 줄(오른쪽 축).
+ *
+ * 막대 아래쪽이 서비스가 낸 호출, 흐린 위쪽이 이상탐지·메일 도구처럼 내부용으로
+ * 표시한 앱 몫이다. 꺾은선은 전체 비용(진한 선)과 서비스 비용(점선)을 함께 그려
+ * 둘 사이 간격이 곧 내부 도구가 쓴 돈이 된다. 성공·실패 건수는 막대에서 빼고
+ * 툴팁과 구간별 상세 표에 남겼다.
+ * 값은 서버에서 좌표로 굳혀 보내고, 자세한 수치는 마우스를 올리면 나온다.
  */
 export function svgTrend(buckets: StatsSummary["buckets"]): string {
 	const data = buckets.slice(0, 30).slice().reverse();   // 최신이 앞이라 뒤집어 시간순으로
@@ -1743,20 +1758,30 @@ export function svgTrend(buckets: StatsSummary["buckets"]): string {
 	const bars = data
 		.map((d, i) => {
 			const x = cx(i) - bw / 2;
-			const okH = ((d.ok / maxCall) * ih) || 0;
-			const erH = ((d.error / maxCall) * ih) || 0;
-			const okY = T + ih - okH;
-			const erY = okY - erH;
-			const title = `${d.b}\n호출 ${d.total.toLocaleString()}건 (성공 ${d.ok.toLocaleString()} · 실패 ${d.error.toLocaleString()})\n토큰 ${d.tokens.toLocaleString()} · 비용 ${usd(d.cost)}`;
+			const inn = d.internal ?? 0;
+			const svc = Math.max(0, d.total - inn);
+			const svcH = ((svc / maxCall) * ih) || 0;
+			const innH = ((inn / maxCall) * ih) || 0;
+			const svcY = T + ih - svcH;
+			const innY = svcY - innH;
+			const innCost = d.internalCost ?? 0;
+			const title =
+				`${d.b}\n호출 ${d.total.toLocaleString()}건 — 서비스 ${svc.toLocaleString()} · 내부 도구 ${inn.toLocaleString()}` +
+				`\n성공 ${d.ok.toLocaleString()} · 실패 ${d.error.toLocaleString()}` +
+				`\n비용 ${usd(d.cost)} — 서비스 ${usd(d.cost - innCost)} · 내부 도구 ${usd(innCost)}` +
+				`\n토큰 ${d.tokens.toLocaleString()}`;
 			return `<g class="bg" data-tip="${escapeHtml(title)}">` +
 				`<rect x="${x.toFixed(1)}" y="${T}" width="${bw.toFixed(1)}" height="${ih}" class="hit"/>` +
-				`<rect x="${x.toFixed(1)}" y="${okY.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(okH, d.ok ? 1.5 : 0).toFixed(1)}" rx="2" class="b-ok"/>` +
-				(d.error ? `<rect x="${x.toFixed(1)}" y="${erY.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(erH, 1.5).toFixed(1)}" rx="2" class="b-er"/>` : "") +
+				`<rect x="${x.toFixed(1)}" y="${svcY.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(svcH, svc ? 1.5 : 0).toFixed(1)}" rx="2" class="b-ok"/>` +
+				(inn ? `<rect x="${x.toFixed(1)}" y="${innY.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(innH, 1.5).toFixed(1)}" rx="2" class="b-in"/>` : "") +
 				`</g>`;
 		})
 		.join("");
 
+	const svcCost = (d: (typeof data)[number]) => Math.max(0, d.cost - (d.internalCost ?? 0));
+	const hasInn = data.some((d) => (d.internal ?? 0) > 0 || (d.internalCost ?? 0) > 0);
 	const line = data.map((d, i) => `${cx(i).toFixed(1)},${yCost(d.cost).toFixed(1)}`).join(" ");
+	const line2 = hasInn ? data.map((d, i) => `${cx(i).toFixed(1)},${yCost(svcCost(d)).toFixed(1)}`).join(" ") : "";
 	const dots = data.map((d, i) => `<circle cx="${cx(i).toFixed(1)}" cy="${yCost(d.cost).toFixed(1)}" r="2.6" class="cd"/>`).join("");
 
 	// x축 라벨 — 겹치지 않게 일정 간격으로만
@@ -1769,9 +1794,11 @@ export function svgTrend(buckets: StatsSummary["buckets"]): string {
 
 	return `<div class="chart">
 <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="기간별 호출·비용 추이">
-${grid}${bars}<polyline points="${line}" class="cl"/>${dots}${xlab}
+${grid}${bars}${line2 ? `<polyline points="${line2}" class="cl svc"/>` : ""}<polyline points="${line}" class="cl"/>${dots}${xlab}
 </svg>
-<div class="lg"><span class="k"><i class="s-ok"></i>성공</span><span class="k"><i class="s-er"></i>실패</span><span class="k"><i class="s-ct"></i>비용(오른쪽 축)</span></div>
+<div class="lg"><span class="k"><i class="s-ok"></i>서비스 호출</span><span class="k"><i class="s-in"></i>내부 도구 호출</span><span class="k"><i class="s-ct"></i>전체 비용(오른쪽 축)</span>${
+		hasInn ? `<span class="k"><i class="s-cs"></i>서비스 비용</span>` : ""
+	}</div>
 </div>`;
 }
 
