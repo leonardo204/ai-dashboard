@@ -34,6 +34,8 @@ function navQuery(period: string, appFilter: string): string {
 	return `?period=${period}${appFilter ? `&app=${encodeURIComponent(appFilter)}` : ""}`;
 }
 const shortModel = (m: string) => m.replace(/^[^/]+\//, "");
+/** 앱 아이디 → 사람이 읽는 이름. 없으면 아이디를 그대로 쓴다. */
+const nameOfApp = (apps: { id: string; name: string }[], id: string) => apps.find((a) => a.id === id)?.name ?? id;
 const sinceLabel = (since: number) => (since ? `${kst(since).slice(0, 5)} 이후` : "전체 기간");
 const avgLat = (r: GroupRow) => (r.total ? Math.round(r.latency / r.total) : 0);
 
@@ -325,6 +327,7 @@ export function renderTrend(t: TrendData, opts: AdminOpts = {}): string {
 	const q = navQuery(t.period, t.appFilter);
 	const maxB = Math.max(1, ...t.buckets.map((b) => b.total));
 
+	const focus = t.focus;
 	const rows = t.buckets.length
 		? t.buckets
 				.map((b) => {
@@ -371,8 +374,39 @@ ${sectionHead(`${t.bucketLabel} 단위 호출·비용`, {
 				}%)`
 			: "기록 없음",
 	})}
-${svgTrend(t.buckets)}
+${svgTrend(
+		t.buckets,
+		t.marks.map((m) => ({
+			b: m.b,
+			level: m.level as "critical" | "warn" | "info",
+			labels: m.labels,
+			href: `/admin/calls${q}&bucket=${encodeURIComponent(m.b)}`,
+		})),
+	)}
 
+${focus
+		? `${sectionHead(`${focus.b} 구간에서 누가 불렀나`, {
+				href: `/admin/calls${q}`,
+				linkLabel: "구간 선택 지우기 ✕",
+				tip: "그래프의 색 띠를 누르면 그 구간만 갈라 봐요.\n이상 신호가 잡힌 시각에 어느 앱·모델이 몰렸는지 바로 견줄 수 있어요.",
+			})}
+<div class="two">
+  <section>${hbars(
+			focus.byApp.map((r) => ({
+				label: nameOfApp(t.apps, r.key),
+				value: r.total,
+				sub: `비용 ${usd(r.cost)}`,
+				href: `/admin/calls/logs?period=${t.period}&app=${encodeURIComponent(r.key)}&from=${focus.b}&to=${focus.b}`,
+			})),
+			{ unit: "건", top: 6 },
+		)}</section>
+  <section>${hbars(
+			focus.byModel.map((r) => ({ label: shortModel(r.key), value: r.total, sub: `비용 ${usd(r.cost)}` })),
+			{ unit: "건", top: 6 },
+		)}</section>
+</div>
+`
+		: ""}
 ${sectionHead("언제 몰리나 (요일 × 시각, KST)", { note: peak ? `가장 많은 때: ${WD[peak.w]}요일 ${peak.h}시 · ${peak.n.toLocaleString()}건` : "" })}
 ${svgHeat(t.heat)}
 

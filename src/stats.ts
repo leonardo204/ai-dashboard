@@ -1567,6 +1567,10 @@ export interface TrendData {
 	heat: { w: number; h: number; n: number }[];
 	/** 실패 상위 — 옛 요약 화면에 있던 칸이 이리로 내려왔다. */
 	errors: { http: number | null; count: number; sample: string | null }[];
+	/** 이상 신호가 잡힌 구간 — 그래프에 색 띠로 얹는다. */
+	marks: { b: string; level: string; labels: string[] }[];
+	/** 구간 하나를 골랐을 때, 그 구간에서 누가 얼마나 불렀나(띠를 누르면 열린다). */
+	focus: { b: string; byApp: { key: string; name: string; total: number; cost: number }[]; byModel: { key: string; total: number; cost: number }[] } | null;
 	total: number;
 	cost: number;
 	/** 그중 내부용 앱(이상탐지·메일 도구) 몫. */
@@ -1574,11 +1578,11 @@ export interface TrendData {
 	internalCost: number;
 }
 
-export async function collectTrend(env: StatsEnv, period: string, appFilter: string): Promise<TrendData> {
-	return withSchema(env, () => collectTrendInner(env, period, appFilter));
+export async function collectTrend(env: StatsEnv, period: string, appFilter: string, bucket = ""): Promise<TrendData> {
+	return withSchema(env, () => collectTrendInner(env, period, appFilter, bucket));
 }
 
-async function collectTrendInner(env: StatsEnv, period: string, appFilter: string): Promise<TrendData> {
+async function collectTrendInner(env: StatsEnv, period: string, appFilter: string, bucket = ""): Promise<TrendData> {
 	const { p, since } = periodInfo(period);
 	const appWhere = appFilter ? " AND app = ?2" : "";
 	const bind = (sql: string) => {
@@ -1588,7 +1592,8 @@ async function collectTrendInner(env: StatsEnv, period: string, appFilter: strin
 	const bexpr = bucketExpr(p.bucket);
 	const kstBase = "ts/1000, 'unixepoch', '+9 hours'";
 
-	const [apps, bucketRows, heatRows, errRows] = await Promise.all([
+	const bexprTs = bucketExpr(p.bucket);
+	const [apps, bucketRows, heatRows, errRows, markRows, focusRows] = await Promise.all([
 		appBriefs(env),
 		bind(
 			`SELECT ${bexpr} AS b, model,${INN}${AGG} FROM calls WHERE ts >= ?1${appWhere} GROUP BY b, model, inn ORDER BY b DESC`,
@@ -1602,7 +1607,38 @@ async function collectTrendInner(env: StatsEnv, period: string, appFilter: strin
 			`SELECT http, COUNT(*) AS c, MAX(err) AS sample FROM calls WHERE ts >= ?1${appWhere} AND status='error'` +
 				" GROUP BY http ORDER BY c DESC LIMIT 5",
 		).all<{ http: number | null; c: number; sample: string | null }>(),
+		// 이상 신호가 잡힌 구간 — 호출 버킷과 같은 잣대로 끊어야 그래프 위에 겹쳐 놓을 수 있다.
+		env.DB.prepare(
+			`SELECT ${bucketExpr(p.bucket, "bucket")} AS b,` +
+				" MIN(CASE severity WHEN 'critical' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END) AS lv," +
+				" GROUP_CONCAT(DISTINCT COALESCE(label, signal)) AS labels" +
+				" FROM anomalies WHERE bucket >= ?1 AND scope='ai'" +
+				" AND (verdict IS NULL OR verdict NOT IN ('rule_fp','model_fp','both_fp'))" +
+				" GROUP BY b ORDER BY b DESC LIMIT 60",
+		).bind(since).all<{ b: string; lv: number; labels: string | null }>(),
+		// 고른 구간 한 칸만 — 띠를 눌렀을 때 "그때 누가 불렀나"에 답한다.
+		bucket
+			? (appFilter
+					? env.DB.prepare(
+							`SELECT COALESCE(app,'(미상)') AS app, model,${AGG} FROM calls` +
+								` WHERE ${bexprTs} = ?1 AND app = ?2 GROUP BY app, model`,
+						).bind(bucket, appFilter)
+					: env.DB.prepare(
+							`SELECT COALESCE(app,'(미상)') AS app, model,${AGG} FROM calls` +
+								` WHERE ${bexprTs} = ?1 GROUP BY app, model`,
+						).bind(bucket)
+				).all<AggRow & { app: string; model: string | null }>()
+			: Promise.resolve({ results: [] as (AggRow & { app: string; model: string | null })[] }),
 	]);
+
+	// 고른 구간의 앱·모델 몫
+	const fApp = new Map<string, GroupRow>();
+	const fModel = new Map<string, GroupRow>();
+	for (const r of focusRows.results ?? []) {
+		const u = unitOf(r, r.model);
+		addTo(fApp, r.app, u);
+		addTo(fModel, r.model ?? "(미상)", u);
+	}
 
 	const bmap = new Map<string, Bucket>();
 	let total = 0, cost = 0, internal = 0, internalCost = 0;
@@ -1626,6 +1662,18 @@ async function collectTrendInner(env: StatsEnv, period: string, appFilter: strin
 		buckets: Array.from(bmap.values()).sort((a, b) => (a.b < b.b ? 1 : -1)).slice(0, 60),
 		heat: heatRows.results ?? [],
 		errors: (errRows.results ?? []).map((r) => ({ http: r.http, count: r.c, sample: r.sample })),
+		focus: bucket
+			? {
+					b: bucket,
+					byApp: Array.from(fApp.values()).sort(desc).map((r) => ({ key: r.key, name: r.key, total: r.total, cost: r.cost })),
+					byModel: Array.from(fModel.values()).sort(desc).map((r) => ({ key: r.key, total: r.total, cost: r.cost })),
+				}
+			: null,
+		marks: (markRows.results ?? []).map((r) => ({
+			b: r.b,
+			level: r.lv === 0 ? "critical" : r.lv === 1 ? "warn" : "info",
+			labels: (r.labels ?? "").split(",").filter(Boolean),
+		})),
 		total,
 		cost,
 		internal,

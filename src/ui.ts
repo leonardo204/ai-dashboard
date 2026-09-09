@@ -97,6 +97,12 @@ h1{font-size:var(--fs-lg);margin:0 0 4px;}h2{font-size:var(--fs-md);margin:26px 
 .chart .lg .s-h{background:var(--accent);}.chart .lg .s-a{background:var(--accent-2);}
 .chart .lg .s-s{background:var(--info);}.chart .lg .s-o{background:var(--int);}
 .chart .hit{fill:transparent;}
+/* 이상 구간 띠 — 값을 가리지 않게 옅게 깔고, 누르면 그 신호로 간다 */
+.chart .mk{fill:color-mix(in srgb,var(--warn) 16%,transparent);cursor:pointer;}
+.chart .mk.critical{fill:color-mix(in srgb,var(--bad) 16%,transparent);}
+.chart .mk.info{fill:color-mix(in srgb,var(--info) 14%,transparent);}
+.chart .mk:hover{fill:color-mix(in srgb,var(--warn) 30%,transparent);}
+.chart .mk.critical:hover{fill:color-mix(in srgb,var(--bad) 30%,transparent);}
 .chart .bg:hover .b-ok{fill:var(--accent-fg);}
 .chart .bg:hover .b-in{opacity:.5;}
 .chart .cl.svc{stroke-dasharray:5 4;stroke-width:1.6;opacity:.85;}
@@ -106,6 +112,7 @@ h1{font-size:var(--fs-lg);margin:0 0 4px;}h2{font-size:var(--fs-md);margin:26px 
 .chart .lg{display:flex;gap:14px;justify-content:center;padding:6px 0 4px;font-size:var(--fs-xs);color:var(--muted);font-weight:600;}
 .chart .lg .k{display:inline-flex;align-items:center;gap:5px;}
 .chart .lg i{width:9px;height:9px;border-radius:25%;display:block;}
+.chart .lg .s-mk{background:color-mix(in srgb,var(--warn) 40%,transparent);}
 .chart .lg .s-ok{background:var(--accent);}.chart .lg .s-er{background:var(--bad);}
 .chart .lg .s-in{background:var(--accent);opacity:.32;}
 .chart .lg .s-ct{background:var(--accent-2);border-radius:50%;}
@@ -1933,7 +1940,21 @@ export const shortNum = (v: number): string =>
  * 툴팁과 구간별 상세 표에 남겼다.
  * 값은 서버에서 좌표로 굳혀 보내고, 자세한 수치는 마우스를 올리면 나온다.
  */
-export function svgTrend(buckets: StatsSummary["buckets"]): string {
+export interface TrendMark {
+	/** 버킷 이름 — 그래프의 x 값과 같은 문자열이어야 한다. */
+	b: string;
+	level: "critical" | "warn" | "info";
+	/** 마우스를 올렸을 때 보여줄 신호 이름들 */
+	labels: string[];
+	href: string;
+}
+
+/**
+ * 추이 차트 — 성공·실패 대신 서비스·내부 도구로 쌓고, 비용은 오른쪽 축에 꺾은선으로.
+ * marks가 있으면 이상 신호가 잡힌 구간에 색 띠를 얹는다.
+ * 그래프에서 튄 곳과 탐지기가 짚은 곳이 같은지 눈으로 바로 맞춰 볼 수 있다.
+ */
+export function svgTrend(buckets: StatsSummary["buckets"], marks: TrendMark[] = []): string {
 	const data = buckets.slice(0, 30).slice().reverse();   // 최신이 앞이라 뒤집어 시간순으로
 	if (!data.length) return `<div class="empty">이 기간에 호출이 없어요.</div>`;
 
@@ -1952,6 +1973,18 @@ export function svgTrend(buckets: StatsSummary["buckets"]): string {
 			return `<line x1="${L}" y1="${y.toFixed(1)}" x2="${L + iw}" y2="${y.toFixed(1)}" class="gl"/>` +
 				`<text x="${L - 8}" y="${(y + 4).toFixed(1)}" class="ax end">${shortNum(Math.round(maxCall * f))}</text>` +
 				`<text x="${L + iw + 8}" y="${(y + 4).toFixed(1)}" class="ax cst">$${(maxCost * f).toFixed(maxCost < 0.1 ? 4 : 2)}</text>`;
+		})
+		.join("");
+
+	// ── 이상 구간 띠 — 막대 뒤에 깔아 값을 가리지 않는다.
+	const markOf = new Map(marks.map((m) => [m.b, m]));
+	const bandW = (iw / data.length) * 0.9;
+	const bands = data
+		.map((d, i) => {
+			const m = markOf.get(d.b);
+			if (!m) return "";
+			const tip = `${d.b} · 이상 신호 ${m.labels.length}건\n${m.labels.slice(0, 4).join("\n")}`;
+			return `<a href="${m.href}"><rect class="mk ${m.level}" x="${(cx(i) - bandW / 2).toFixed(1)}" y="${T}" width="${bandW.toFixed(1)}" height="${ih}" data-tip="${escapeHtml(tip)}"/></a>`;
 		})
 		.join("");
 
@@ -1994,9 +2027,9 @@ export function svgTrend(buckets: StatsSummary["buckets"]): string {
 
 	return `<div class="chart">
 <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="기간별 호출·비용 추이">
-${grid}${bars}${line2 ? `<polyline points="${line2}" class="cl svc"/>` : ""}<polyline points="${line}" class="cl"/>${dots}${xlab}
+${grid}${bands}${bars}${line2 ? `<polyline points="${line2}" class="cl svc"/>` : ""}<polyline points="${line}" class="cl"/>${dots}${xlab}
 </svg>
-<div class="lg"><span class="k"><i class="s-ok"></i>서비스 호출</span><span class="k"><i class="s-in"></i>내부 도구 호출</span><span class="k"><i class="s-ct"></i>전체 비용(오른쪽 축)</span>${
+<div class="lg">${marks.length ? `<span class="k"><i class="s-mk"></i>이상 구간</span>` : ""}<span class="k"><i class="s-ok"></i>서비스 호출</span><span class="k"><i class="s-in"></i>내부 도구 호출</span><span class="k"><i class="s-ct"></i>전체 비용(오른쪽 축)</span>${
 		hasInn ? `<span class="k"><i class="s-cs"></i>서비스 비용</span>` : ""
 	}</div>
 </div>`;

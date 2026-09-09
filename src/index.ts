@@ -279,18 +279,18 @@ function statScope(url: URL): { period: string; appFilter: string } {
  * 경로 → (조회 + 렌더). 화면마다 자기 집계만 돈다.
  * 예전에는 /admin 한 장이 12개 집계를 전부 돌려, 보지도 않는 표 때문에 느렸다.
  */
-const STAT_PAGES: Record<string, (env: Env, period: string, app: string) => Promise<string>> = {
+/** AI 호출 흐름 — 그래프의 이상 구간 띠를 누르면 ?bucket= 이 붙어 그 구간만 갈라 본다. */
+async function callsFlow(env: Env, period: string, app: string, bucket = ""): Promise<string> {
+	const [d, beat] = await Promise.all([collectTrend(env, period, app, bucket), heartbeatAge(env)]);
+	return renderTrend(d, { session: true, heartbeatAge: beat });
+}
+
+const STAT_PAGES: Record<string, (env: Env, period: string, app: string, bucket: string) => Promise<string>> = {
 	"/admin": async (e, p, a) => renderBoard(await collectBoard(e, p, a), { session: true }),
 	"/admin/": async (e, p, a) => renderBoard(await collectBoard(e, p, a), { session: true }),
 	// 상태줄에 쓸 탐지 서버 신호는 화면 집계와 나란히 묻는다(왕복을 늘리지 않는다).
-	"/admin/calls": async (e, p, a) => {
-		const [d, beat] = await Promise.all([collectTrend(e, p, a), heartbeatAge(e)]);
-		return renderTrend(d, { session: true, heartbeatAge: beat });
-	},
-	"/admin/calls/": async (e, p, a) => {
-		const [d, beat] = await Promise.all([collectTrend(e, p, a), heartbeatAge(e)]);
-		return renderTrend(d, { session: true, heartbeatAge: beat });
-	},
+	"/admin/calls": callsFlow,
+	"/admin/calls/": callsFlow,
 	"/admin/calls/usage": async (e, p, a) => {
 		const [d, beat] = await Promise.all([collectUsage(e, p, a), heartbeatAge(e)]);
 		return renderUsage(d, { session: true, heartbeatAge: beat });
@@ -716,7 +716,10 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 			const unauth = await requireAdmin(request, env, url);
 			if (unauth) return unauth;
 			const { period, appFilter } = statScope(url);
-			return html(await STAT_PAGES[path](env, period, appFilter), { cache: false });
+			return html(
+				await STAT_PAGES[path](env, period, appFilter, (url.searchParams.get("bucket") || "").slice(0, 10)),
+				{ cache: false },
+			);
 		}
 
 		// ── 트래픽 (/admin/traffic) — 서비스 방문 기록. 기간과 서비스로 좁혀 본다.
