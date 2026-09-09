@@ -24,7 +24,7 @@ import {
 import {
 	escapeHtml, usd, kst, shortNum, shellAdmin, pageHead, filterTabs, sectionHead, delta, kpiRow,
 	callsSub, trafficSub, anomalySub, settingsSub,
-	svgTrend, svgMap, svgShare, svgDonut, svgHeat, svgLevels, svgF1, svgTraffic, type AdminOpts,
+	svgTrend, svgMap, hbars, svgHeat, svgLevels, svgF1, svgTraffic, type AdminOpts,
 } from "./ui";
 import { SITES, siteName, siteUrl, THREAT_LABEL } from "./traffic";
 import { findChanges } from "./changes";
@@ -286,6 +286,22 @@ ${kpiRow([
 	{ label: "용도", value: String(u.byKind.length), size: "sm" },
 	{ label: "호출당 비용", value: u.total ? usd(u.cost / u.total) : "-", size: "sm" },
 ], 6)}
+
+<div class="two">
+  <section>${sectionHead("앱별 비중")}${hbars(
+	u.byApp.map((r) => ({
+		label: r.name,
+		value: r.total,
+		sub: `비용 ${usd(r.cost)}`,
+		href: `/admin/calls/logs?period=${u.period}&app=${encodeURIComponent(r.key)}`,
+	})),
+	{ unit: "건" },
+)}</section>
+  <section>${sectionHead("모델별 비중")}${hbars(
+	u.byModel.map((r) => ({ label: shortModel(r.key), value: r.total, sub: `비용 ${usd(r.cost)}` })),
+	{ unit: "건" },
+)}</section>
+</div>
 
 ${sectionHead("앱별", { count: `${u.byApp.length}개`, tip: TIP_COST })}
 <div class="cap"><table class="fx" id="tb-app">${cols("", "96", "74:o1", "74", "84:o1", "84", "86:o2", "92:o2", "58")}<thead><tr><th>앱</th><th class="n">호출</th><th class="n o1">성공</th><th class="n">실패</th><th class="n o1">토큰</th><th class="n">비용</th><th class="n o2">평균 지연</th><th class="n o2">호출당 비용</th><th></th></tr></thead><tbody>${appRows}</tbody></table></div>
@@ -952,77 +968,8 @@ function modelMetrics(raw: string | null): string {
 	return parts.length ? parts.join(" · ") : "-";
 }
 
-/** 심각도 비중 도넛 — 요약 칸 왼쪽에 들어가는 작은 판. 가운데에 전체 건수를 적는다. */
+/** 등급 색 — 화면 어디서나 같은 뜻으로 쓴다. */
 const SEV_COLOR: Record<string, string> = { critical: "var(--bad)", warn: "var(--warn)", info: "var(--info)" };
-
-function sevDonut(a: { critical: number; warn: number; info: number; total: number }): string {
-	return smallDonut(
-		[
-			{ label: "심각", v: a.critical, color: SEV_COLOR.critical },
-			{ label: "주의", v: a.warn, color: SEV_COLOR.warn },
-			{ label: "참고", v: a.info, color: SEV_COLOR.info },
-		],
-		a.total,
-		"심각도 비중",
-	);
-}
-
-/**
- * 작은 도넛 + 범례 — 요약 화면 칸에서 쓴다.
- * 값이 0인 항목은 아예 그리지 않는다. 조각이 하나뿐이면 원형 링으로 그린다.
- */
-function smallDonut(rows: { label: string; v: number; color: string }[], total: number, aria: string): string {
-	const parts = rows.filter((r) => r.v > 0);
-	const sum = parts.reduce((x, y) => x + y.v, 0) || 1;
-
-	// 고리를 얇게 잡아 가운데 구멍을 넓힌다. 숫자가 다섯 자리를 넘어도 좌우에 여백이 남는다.
-	const C = 48, R = 44, r = 32;
-	const pt = (ang: number, rad: number) =>
-		`${(C + rad * Math.cos(ang)).toFixed(2)},${(C + rad * Math.sin(ang)).toFixed(2)}`;
-
-	let acc = -Math.PI / 2;
-	const arcs =
-		parts.length === 1
-			? `<circle cx="${C}" cy="${C}" r="${(R + r) / 2}" fill="none" style="stroke:${parts[0].color}" stroke-width="${R - r}" data-tip="${escapeHtml(`${parts[0].label} ${parts[0].v.toLocaleString()}건 (100%)`)}"/>`
-			: parts
-					.map((s) => {
-						const ang = (s.v / sum) * Math.PI * 2;
-						const a0 = acc;
-						const a1 = acc + ang;
-						acc = a1;
-						const large = ang > Math.PI ? 1 : 0;
-						const d = `M ${pt(a0, R)} A ${R} ${R} 0 ${large} 1 ${pt(a1, R)} L ${pt(a1, r)} A ${r} ${r} 0 ${large} 0 ${pt(a0, r)} Z`;
-						const tip = `${s.label} ${s.v.toLocaleString()}건 (${((s.v / sum) * 100).toFixed(0)}%)`;
-						return `<path d="${d}" style="fill:${s.color}" data-tip="${escapeHtml(tip)}"/>`;
-					})
-					.join("");
-
-	// 방문 수는 몇십만까지 커진다. 도넛 가운데는 자리가 좁아서 다섯 자리가 넘으면
-	// 줄여 쓰고(12.3k · 1.2M) 글자도 한 단계씩 줄인다. 정확한 값은 마우스를 올리면 나온다.
-	const center = donutNum(total);
-	const cvSize = center.length <= 4 ? 18 : center.length <= 5 ? 16 : center.length <= 6 ? 14 : 12;
-
-	const legend = parts
-		.map(
-			(s) =>
-				`<div class="lg" data-tip="${escapeHtml(`${s.label} ${s.v.toLocaleString()}건 (${((s.v / sum) * 100).toFixed(0)}%)`)}">` +
-				`<i style="background:${s.color}"></i>` +
-				`<span class="nm">${s.label}</span><b>${escapeHtml(donutNum(s.v))}</b></div>`,
-		)
-		.join("");
-
-	return `<div class="sevd">
-  <svg viewBox="0 0 ${C * 2} ${C * 2}" role="img" aria-label="${escapeHtml(aria)}" data-tip="${escapeHtml(`전체 ${total.toLocaleString()}건`)}">
-    ${arcs}
-    <text x="${C}" y="${C - 2}" class="cv" style="font-size:${cvSize}px">${escapeHtml(center)}</text>
-    <text x="${C}" y="${C + 12}" class="cl">건</text>
-  </svg>
-  <div class="lgs">${legend}</div>
-</div>`;
-}
-
-/** 좁은 자리에 넣을 숫자 — 다섯 자리까지는 그대로, 그보다 크면 줄여 쓴다. */
-const donutNum = (v: number) => (v < 100_000 ? v.toLocaleString() : shortNum(v));
 
 /** 달 표시 — 해가 바뀌는 자리에서만 연도를 붙인다. */
 function monthLabel(m: string, prev?: string): string {
@@ -1223,22 +1170,22 @@ function renderAnomalyScreen(a: AnomalyData, view: "signals" | "detector", opts:
 	const q = `?period=${a.period}${a.appFilter ? `&app=${encodeURIComponent(a.appFilter)}` : ""}&scope=${a.scope}`;
 	const nav: AnomalyNav = { scope: a.scope, view: "summary", period: a.period, app: a.appFilter };
 
-	const sevDonut = svgDonut(
+	const sevBars = hbars(
 		[
-			{ label: "심각", value: a.critical },
-			{ label: "주의", value: a.warn },
-			{ label: "참고", value: a.info },
-		].filter((r) => r.value > 0),
-		"건",
+			{ label: "심각", value: a.critical, color: SEV_COLOR.critical },
+			{ label: "주의", value: a.warn, color: SEV_COLOR.warn },
+			{ label: "참고", value: a.info, color: SEV_COLOR.info },
+		],
+		{ unit: "건" },
 	);
 
-	const signalShare = svgShare(
+	const signalShare = hbars(
 		a.bySignal.map((r) => ({
 			label: r.label,
 			value: r.total,
 			sub: r.critical ? `심각 ${r.critical}건` : "",
 		})),
-		"건",
+		{ unit: "건" },
 	);
 
 	const isFp = (r: AnomalyRowWithMail) => ["rule_fp", "model_fp", "both_fp"].includes(r.verdict ?? "");
@@ -1453,7 +1400,7 @@ ${svgLevels(a.buckets)}
 `}
 ${signals ? "" : `
 <div class="two">
-  <section>${sectionHead("심각도 비중")}${sevDonut}</section>
+  <section>${sectionHead("심각도 비중")}${sevBars}</section>
   <section>${sectionHead("신호별 분포")}${signalShare}</section>
 </div>
 
@@ -2018,17 +1965,16 @@ function shortPath(p: string, n = 42): string {
 	return v.length <= n ? v : `${v.slice(0, n - 12)}…${v.slice(-10)}`;
 }
 
-function trafficDonut(t: { human: number; ai: number; search: number; social: number; bot: number; total: number }): string {
-	return smallDonut(
+function trafficKinds(t: { human: number; ai: number; search: number; social: number; bot: number }): string {
+	return hbars(
 		[
-			{ label: "사람", v: t.human, color: KIND_COLOR.human },
-			{ label: "AI 크롤러", v: t.ai, color: KIND_COLOR.ai },
-			{ label: "검색 크롤러", v: t.search, color: KIND_COLOR.search },
-			{ label: "SNS", v: t.social, color: KIND_COLOR.social },
-			{ label: "기타 봇", v: t.bot, color: KIND_COLOR.other },
+			{ label: "사람", value: t.human, color: KIND_COLOR.human },
+			{ label: "AI 크롤러", value: t.ai, color: KIND_COLOR.ai },
+			{ label: "검색 크롤러", value: t.search, color: KIND_COLOR.search },
+			{ label: "SNS", value: t.social, color: KIND_COLOR.social },
+			{ label: "기타 봇", value: t.bot, color: KIND_COLOR.other },
 		],
-		t.total,
-		"방문 종류 비중",
+		{ unit: "건" },
 	);
 }
 
@@ -2119,13 +2065,14 @@ export function renderTraffic(t: TrafficData, view: "visits" | "bots" | "paths" 
 	const q = trafficQuery(t.period, t.siteFilter);
 	// 기간·서비스를 바꿔도 보던 하위 탭에 그대로 머문다.
 	const base = view === "bots" ? "/admin/traffic/bots" : view === "paths" ? "/admin/traffic/paths" : "/admin/traffic";
-	const siteShare = svgShare(
+	const siteShare = hbars(
 		t.bySite.map((r) => ({
 			label: r.name,
 			value: r.total,
 			sub: `사람 ${r.human.toLocaleString()} · AI 크롤러 ${r.ai.toLocaleString()} · 검색 크롤러 ${r.search.toLocaleString()}`,
+			href: `/admin/traffic${trafficQuery(t.period, r.key)}`,
 		})),
-		"건",
+		{ unit: "건" },
 	);
 
 	const refRows = t.refs.length
@@ -2218,7 +2165,7 @@ ${svgTraffic(t.buckets)}
 
 <div class="two">
   <section>${sectionHead("방문 종류 비중")}
-    <div class="panel">${trafficDonut(t)}</div>
+    ${trafficKinds(t)}
   </section>
   <section>${sectionHead("서비스별 방문")}${siteShare}</section>
 </div>

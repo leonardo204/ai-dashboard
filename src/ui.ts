@@ -144,11 +144,14 @@ h1{font-size:var(--fs-lg);margin:0 0 4px;}h2{font-size:var(--fs-md);margin:26px 
 .two h2{margin-top:26px;}
 .shares{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);padding:14px 16px;}
 .sh{margin-bottom:12px;}.sh:last-child{margin-bottom:0;}
-.sh-t{display:flex;justify-content:space-between;gap:10px;font-size:var(--fs-md);font-weight:700;align-items:baseline;}
+.sh-t{display:flex;justify-content:space-between;gap:10px;font-size:var(--fs-sm);font-weight:700;align-items:baseline;}
+.sh-n{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.sh-n a{color:inherit;text-decoration:none;}
+.sh-n a:hover{text-decoration:underline;}
 .sh-v{color:var(--muted);font-weight:600;font-size:var(--fs-sm);font-variant-numeric:tabular-nums;}
 .sh-v b{color:var(--ink);}
 .sh-b{height:9px;border-radius:var(--r-pill);background:var(--tint);overflow:hidden;margin-top:5px;}
-.sh-b span{display:block;height:100%;border-radius:var(--r-pill);}
+.sh-b span{display:block;height:100%;border-radius:var(--r-pill);background:var(--accent);}
 .sh-s{font-size:var(--fs-xs);color:var(--muted);margin-top:3px;}
 table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line);
  border-radius:var(--r-md);overflow:hidden;font-size:var(--fs-sm);}
@@ -655,26 +658,6 @@ const EXTRA_CSS = `
 .tipbox b{display:block;font-weight:800;font-size:var(--fs-sm);margin-bottom:2px;}
 [data-tip]{cursor:default;}
 
-/* 도넛 + 범례 */
-.donut{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);padding:14px 16px;
- display:flex;gap:18px;align-items:center;}
-.donut svg{width:132px;height:132px;flex:0 0 132px;}
-.donut path{transition:opacity .12s ease;}
-.donut.hi path{opacity:.3;}
-.donut.hi path.on{opacity:1;}
-.dg{border-radius:var(--r-md);transition:background .12s ease;}
-.donut.hi .dg{opacity:.45;}
-.donut.hi .dg.on{opacity:1;background:var(--accent-bg);}
-.donut .lgd{flex:1;min-width:0;}
-.dg{display:flex;align-items:baseline;gap:8px;font-size:var(--fs-sm);padding:3px 6px;margin-left:-6px;}
-.dg i{width:9px;height:9px;border-radius:25%;flex:0 0 9px;display:block;position:relative;top:1px;}
-.dg .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700;}
-.dg .pc{font-variant-numeric:tabular-nums;font-weight:800;}
-.dg .vl{color:var(--muted);font-size:var(--fs-xs);font-variant-numeric:tabular-nums;}
-.dg a{color:inherit;text-decoration:none;}
-.dg a:hover .nm{text-decoration:underline;}
-@media(max-width:520px){.donut{flex-direction:column;align-items:stretch}.donut svg{align-self:center}}
-
 /* 이상탐지 — 심각도 색은 화면 어디서나 같은 뜻으로 쓴다 */
 .sev{display:inline-flex;align-items:center;gap:5px;font-weight:800;font-size:var(--fs-xs);
  border-radius:var(--r-pill);padding:2px 9px;white-space:nowrap;}
@@ -724,19 +707,6 @@ const EXTRA_CSS = `
 .anb .st .dot{width:9px;height:9px;border-radius:50%;background:var(--g);flex:0 0 9px;}
 .anb .st.down .dot{background:var(--r);}
 .anb .st.stale .dot{background:var(--warn);}
-.sevd{display:flex;align-items:center;gap:12px;margin-top:11px;}
-.sevd svg{width:88px;height:88px;flex:0 0 88px;overflow:visible;}
-.sevd svg path{cursor:default;}
-.sevd .cv{text-anchor:middle;font-weight:800;fill:var(--ink);font-variant-numeric:tabular-nums;}
-.sevd .cl{text-anchor:middle;font-size:var(--fs-svg);font-weight:700;fill:var(--muted);}
-.sevd .lgs{min-width:0;flex:1 1 auto;}
-/* 이름은 왼쪽, 숫자는 오른쪽 한 줄로 세운다. 값이 커져도 자릿수가 흔들리지 않는다. */
-.sevd .lg{display:grid;grid-template-columns:9px minmax(0,1fr) auto;align-items:center;gap:6px;
- font-size:var(--fs-sm);font-weight:700;padding:2px 0;cursor:default;}
-.sevd .lg i{width:9px;height:9px;border-radius:25%;display:block;}
-.sevd .lg .nm{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.sevd .lg b{font-size:var(--fs-sm);font-weight:800;font-variant-numeric:tabular-nums;
- justify-self:end;white-space:nowrap;}
 .anb .sub{margin-top:8px;font-size:var(--fs-xs);color:var(--muted);}
 .anb .sub a{color:var(--accent);font-weight:700;text-decoration:none;}
 .anb .sub a:hover{text-decoration:underline;}
@@ -1188,8 +1158,6 @@ label.chk input{margin-top:3px;flex:0 0 auto;}
  /* 요약 화면의 이상탐지·트래픽 칸 */
  .anb{padding:11px 12px;}
  .anb .nums{grid-template-columns:repeat(3,1fr);}
- .sevd{gap:10px;}
- .sevd svg{width:76px;height:76px;flex:0 0 76px;}
  /* 판정 카드 */
  .cb{padding:11px 12px;}
  .cb .ln{flex-direction:column;gap:2px;}
@@ -1315,19 +1283,6 @@ document.addEventListener("click", function(e){
   function hide(){
     cur = null;
     if (box) box.classList.remove('on');
-    var d = document.querySelectorAll('.donut.hi');
-    for (var k = 0; k < d.length; k++) d[k].classList.remove('hi');
-    var o = document.querySelectorAll('.on[data-seg]');
-    for (var j = 0; j < o.length; j++) o[j].classList.remove('on');
-  }
-  function mark(el){
-    // 도넛 — 조각이든 범례든, 같은 번호끼리 함께 강조한다.
-    var dn = el.closest ? el.closest('.donut') : null;
-    var seg = el.getAttribute('data-seg');
-    if (!dn || seg === null) return;
-    dn.classList.add('hi');
-    var same = dn.querySelectorAll('[data-seg="' + seg + '"]');
-    for (var k = 0; k < same.length; k++) same[k].classList.add('on');
   }
   document.addEventListener('mouseover', function(e){
     var t = e.target && e.target.closest ? e.target.closest('[data-tip]') : null;
@@ -1345,7 +1300,6 @@ document.addEventListener("click", function(e){
     if (i >= 0) b.appendChild(document.createTextNode(txt.slice(i + 1)));
     b.classList.add('on');
     place(e.clientX, e.clientY);
-    mark(t);
   }, true);
   document.addEventListener('mousemove', function(e){ if (cur) place(e.clientX, e.clientY); }, true);
   document.addEventListener('mouseout', function(e){
@@ -1925,65 +1879,6 @@ export function delta(cur: number, prev: number, higherIsWorse = false): string 
 // 도넛 · 히트맵
 // ─────────────────────────────────────────────────────────────
 
-/** 도넛 차트 — 상위 5개 + 나머지는 "기타"로 묶는다. 조각을 누르면 해당 화면으로 간다. */
-/** 도넛 툴팁 문구 — 첫 줄은 이름, 다음 줄에 건수·비중·부가 정보. */
-function donutTip(it: { label: string; value: number; sub?: string }, total: number, unit: string): string {
-	const pct = ((it.value / total) * 100).toFixed(1);
-	return `${it.label}\n${it.value.toLocaleString()}${unit} · 전체의 ${pct}%${it.sub ? `\n${it.sub}` : ""}`;
-}
-
-export function svgDonut(
-	rows: { label: string; value: number; sub?: string; href?: string }[],
-	unit: string,
-): string {
-	const total = rows.reduce((a, b) => a + b.value, 0);
-	if (!total) return `<div class="empty">이 기간에 기록이 없어요.</div>`;
-
-	// 6개까지는 그대로 보여준다. 남는 게 하나뿐인데 "기타 1개"로 접으면 오히려 답답하다.
-	const top = rows.length <= 6 ? rows : rows.slice(0, 5);
-	const restV = rows.length <= 6 ? 0 : rows.slice(5).reduce((a, b) => a + b.value, 0);
-	const items = restV ? [...top, { label: `기타 ${rows.length - 5}개`, value: restV, sub: "", href: "" }] : top;
-
-	const C = 66, R = 58, r = 36;
-	const pt = (ang: number, rad: number) => `${(C + rad * Math.cos(ang)).toFixed(2)},${(C + rad * Math.sin(ang)).toFixed(2)}`;
-
-	let acc = -Math.PI / 2;
-	const arcs =
-		items.length === 1
-			? `<circle cx="${C}" cy="${C}" r="${(R + r) / 2}" fill="none" style="stroke:${SHARE_COLORS[0]}" stroke-width="${R - r}" data-seg="0" data-tip="${escapeHtml(donutTip(items[0], total, unit))}"/>`
-			: items
-					.map((it, i) => {
-						const ang = (it.value / total) * Math.PI * 2;
-						const a0 = acc;
-						const a1 = acc + ang;
-						acc = a1;
-						const large = ang > Math.PI ? 1 : 0;
-						const d = `M ${pt(a0, R)} A ${R} ${R} 0 ${large} 1 ${pt(a1, R)} L ${pt(a1, r)} A ${r} ${r} 0 ${large} 0 ${pt(a0, r)} Z`;
-						const tip = donutTip(it, total, unit);
-						return `<path d="${d}" style="fill:${SHARE_COLORS[i % SHARE_COLORS.length]}" data-seg="${i}" data-tip="${escapeHtml(tip)}"/>`;
-					})
-					.join("");
-
-	const legend = items
-		.map((it, i) => {
-			const pct = (it.value / total) * 100;
-			const inner =
-				`<i style="background:${SHARE_COLORS[i % SHARE_COLORS.length]}"></i>` +
-				`<span class="nm">${escapeHtml(it.label)}</span>` +
-				`<span class="pc">${pct.toFixed(pct < 10 ? 1 : 0)}%</span>` +
-				`<span class="vl">${it.value.toLocaleString()}${unit}${it.sub ? ` · ${escapeHtml(it.sub)}` : ""}</span>`;
-			const href = (it as { href?: string }).href;
-			return `<div class="dg" data-seg="${i}" data-tip="${escapeHtml(donutTip(it, total, unit))}">` +
-				`${href ? `<a href="${href}" style="display:contents">${inner}</a>` : inner}</div>`;
-		})
-		.join("");
-
-	return `<div class="donut">
-<svg viewBox="0 0 ${C * 2} ${C * 2}" role="img" aria-label="비중 도넛 차트">${arcs}</svg>
-<div class="lgd">${legend}</div>
-</div>`;
-}
-
 /** 요일 × 시각 히트맵 — 언제 호출이 몰리는지 본다(KST 기준). */
 export function svgHeat(cells: { w: number; h: number; n: number }[]): string {
 	const grid = new Map<string, number>();
@@ -2220,23 +2115,49 @@ ${grid}${bars}${xlab}
 }
 
 /** 가로 비중 막대 — 앱·모델처럼 항목이 적은 분포에 쓴다. */
-export function svgShare(rows: { label: string; value: number; sub: string }[], unitLabel: string): string {
-	if (!rows.length) return `<div class="empty">데이터 없어요.</div>`;
-	const total = rows.reduce((a, b) => a + b.value, 0) || 1;
-	return `<div class="shares">${rows
-		.slice(0, 6)
-		.map((r, i) => {
+export interface HBar {
+	label: string;
+	value: number;
+	/** 막대 아래 작은 설명 */
+	sub?: string;
+	/** 뜻이 정해진 색(등급·방문 종류)이 있을 때만. 없으면 강조색 하나로 그린다. */
+	color?: string;
+	href?: string;
+}
+
+/**
+ * 가로 막대 — 비중을 견주는 자리에서 도넛 대신 쓴다.
+ * 사람은 각도보다 길이를 훨씬 잘 견준다. 이름이 왼쪽에 그대로 있어 범례도 필요 없다.
+ * 상위 몇 개만 보이고 나머지는 "그 외"로 묶는다 — 꼬리가 길면 위쪽 큰 값이 눌린다.
+ */
+export function hbars(rows: HBar[], opts: { unit?: string; top?: number } = {}): string {
+	const unit = opts.unit ?? "건";
+	const top = opts.top ?? 8;
+	const list = rows.filter((r) => r.value > 0).sort((a, b) => b.value - a.value);
+	if (!list.length) return `<div class="empty">아직 기록이 없어요.</div>`;
+	const total = list.reduce((a, b) => a + b.value, 0) || 1;
+	const max = list[0].value || 1;
+	const head = list.slice(0, top);
+	const rest = list.slice(top);
+	if (rest.length) {
+		head.push({ label: `그 외 ${rest.length}개`, value: rest.reduce((a, b) => a + b.value, 0), color: "var(--int)" });
+	}
+	return `<div class="shares">${head
+		.map((r) => {
 			const pct = (r.value / total) * 100;
-			const tip = `${r.label}\n${r.value.toLocaleString()}${unitLabel} · 전체의 ${pct.toFixed(1)}%${r.sub ? `\n${r.sub}` : ""}`;
-			return `<div class="sh" data-tip="${escapeHtml(tip)}"><div class="sh-t"><span>${escapeHtml(r.label)}</span>` +
-				`<span class="sh-v">${r.value.toLocaleString()}${unitLabel} <b>${pct.toFixed(pct < 10 ? 1 : 0)}%</b></span></div>` +
-				`<div class="sh-b"><span style="width:${pct.toFixed(1)}%;background:${SHARE_COLORS[i % SHARE_COLORS.length]}"></span></div>` +
+			const tip = `${r.label}\n${r.value.toLocaleString()}${unit} · 전체의 ${pct.toFixed(1)}%${r.sub ? `\n${r.sub}` : ""}`;
+			const name = r.href
+				? `<a href="${r.href}">${escapeHtml(r.label)}</a>`
+				: escapeHtml(r.label);
+			return `<div class="sh" data-tip="${escapeHtml(tip)}"><div class="sh-t"><span class="sh-n">${name}</span>` +
+				`<span class="sh-v">${r.value.toLocaleString()}${unit} <b>${pct.toFixed(pct < 10 ? 1 : 0)}%</b></span></div>` +
+				`<div class="sh-b"><span style="width:${((r.value / max) * 100).toFixed(1)}%${r.color ? `;background:${r.color}` : ""}"></span></div>` +
 				(r.sub ? `<div class="sh-s">${escapeHtml(r.sub)}</div>` : "") +
 				`</div>`;
 		})
 		.join("")}</div>`;
 }
-const SHARE_COLORS = ["var(--accent)", "var(--accent-2)", "var(--info)", "var(--ok)", "var(--warn)", "var(--muted)"];
+
 
 /** 세계 지도 — 육지 외곽선 위에 도시별 호출량을 원으로 얹는다. */
 export function svgMap(
