@@ -24,7 +24,7 @@ OpenRouter 앞단에 서는 **AI 프록시 + 사용량 대시보드**입니다. 
 | `GET /admin/calls/geo` | 국가·도시별 호출 분포 |
 | `GET /admin/calls/logs` | 호출 로그 검색 (`/admin/logs.csv` 로 내려받기) |
 | `GET /admin/traffic` | 트래픽 — 방문(기본) · `/bots` 크롤러 · `/paths` 경로 |
-| `GET /admin/anomaly` | 이상탐지 — 받은 신호(기본) · `/mails` 보낸 메일 |
+| `GET /admin/anomaly` | 이상탐지 — 받은 신호(기본) · `/detector` 탐지기 상태 · `/mails` 보낸 메일 |
 | `GET /admin/settings/apps` | 앱 관리 화면 |
 | `GET /admin/settings/guide` | 연결 가이드 (`/admin/guide.md` 로 원문 내려받기) |
 | `/admin/api/apps` | 앱 등록·수정 API |
@@ -33,6 +33,7 @@ OpenRouter 앞단에 서는 **AI 프록시 + 사용량 대시보드**입니다. 
 
 문서는 둘입니다.
 
+- **[docs/UI-RULES.md](docs/UI-RULES.md)** — 화면 규칙. 색·글자·모서리 토큰과 소제목·지표 카드·그래프 규칙이 여기 있습니다. 화면을 고칠 때 먼저 봅니다.
 - **[docs/PROXY-API.md](docs/PROXY-API.md)** — 관리자용까지 전부 담은 원본. 앱 등록·통계 조회·앱 관리 API가 여기 있습니다.
 - **[docs/PROXY-CLIENT-GUIDE.md](docs/PROXY-CLIENT-GUIDE.md)** — 다른 프로젝트에 건네주는 연결 가이드. 관리자용 내용을 뺀 판입니다. 관리 화면의 `가이드` 탭에서 그대로 보여주고 내려받습니다.
 
@@ -48,6 +49,7 @@ src/
   stats.ts      앱 레지스트리 · 화면별 집계 쿼리 · 로그 검색
   ui.ts         관리 화면 공통 틀 · 스타일 · 차트(SVG)
   views.ts      화면 본문 (상황판 · AI 호출 · 트래픽 · 이상탐지 · 설정)
+  changes.ts    상황판의 "달라진 것" 세 줄 — 규칙으로만 만든다(LLM 없음)
   guide.ts      연결 가이드 화면 · 마크다운 렌더
   guide-md.ts   자동 생성 — 가이드 원문 (npm run gen:guide)
   worldmap.ts   지도용 육지 외곽선 (Natural Earth 110m, 퍼블릭 도메인)
