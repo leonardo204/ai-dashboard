@@ -237,6 +237,44 @@ textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:var(-
 .topbar form{flex:0 0 auto;}
 .topbar .in>form .btn{padding:7px 12px;}
 
+/* ── 상황판 ────────────────────────────────────────────────
+   상태 한 줄은 화면에서 색을 쓰는 거의 유일한 자리다.
+   빨강을 여기저기 쓰면 진짜 문제일 때 눈이 가지 않는다. */
+.stat{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--ink);
+ background:var(--ok-bg);border:1px solid var(--ok-bd);border-radius:var(--r-md);
+ padding:13px 16px;margin-bottom:var(--sp-3);font-size:var(--fs-md);}
+.stat .dot{width:9px;height:9px;border-radius:50%;background:var(--ok);flex:0 0 9px;}
+.stat b{font-weight:800;color:var(--ok-fg);flex:0 0 auto;}
+.stat .rs{min-width:0;flex:1 1 auto;}
+.stat .go{font-size:var(--fs-sm);font-weight:700;color:var(--muted);white-space:nowrap;}
+.stat:hover .go{color:var(--ink);}
+.stat.warn{background:var(--warn-bg);border-color:var(--warn-bd);}
+.stat.warn .dot{background:var(--warn);}.stat.warn b{color:var(--warn-fg);}
+.stat.bad{background:var(--bad-bg);border-color:var(--bad-bd);}
+.stat.bad .dot{background:var(--bad);}.stat.bad b{color:var(--bad-fg);}
+@media(max-width:640px){.stat{flex-wrap:wrap;gap:7px;padding:11px 13px;}.stat .go{margin-left:auto;}}
+
+/* 열린 신호 칸 — 표 모양은 쓰되 테두리를 지워 카드 안에 얹는다 */
+.sigp{padding:10px 12px;}
+table.sig{border:0;background:none;font-size:var(--fs-sm);}
+table.sig td{padding:6px 6px;border-bottom:1px solid var(--line);vertical-align:middle;}
+table.sig tr:last-child td{border-bottom:0;}
+table.sig td.w{width:100%;}
+table.sig td.mono{white-space:nowrap;color:var(--muted);}
+.sigp .more{padding:8px 6px 2px;font-size:var(--fs-sm);}
+.sigp .more a{color:var(--accent);font-weight:700;text-decoration:none;}
+.sigp .quiet{display:flex;flex-direction:column;gap:4px;padding:14px 6px;font-size:var(--fs-md);}
+
+/* 하위 화면으로 가는 한 줄 링크 */
+.golinks{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--sp-3);margin-top:var(--sp-4);}
+.golinks a{display:flex;align-items:center;gap:9px;background:var(--panel);border:1px solid var(--line);
+ border-radius:var(--r-md);padding:13px 15px;text-decoration:none;color:var(--ink);}
+.golinks a:hover{border-color:var(--accent-bd);background:var(--accent-bg);}
+.golinks b{font-size:var(--fs-md);font-weight:700;flex:0 0 auto;}
+.golinks span{font-size:var(--fs-sm);color:var(--muted);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.golinks i{margin-left:auto;font-style:normal;color:var(--muted);font-weight:800;}
+@media(max-width:860px){.golinks{grid-template-columns:1fr;gap:var(--sp-2);}}
+
 /* ── 하위 탭 — 상단 탭 아래 한 줄. 어느 화면에서나 같은 자리다. */
 .subbar{position:sticky;top:54px;z-index:19;background:var(--panel);border-bottom:1px solid var(--line);}
 .subbar .in{max-width:1120px;margin:0 auto;padding:0 18px;height:40px;display:flex;align-items:center;

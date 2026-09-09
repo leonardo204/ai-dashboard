@@ -15,7 +15,7 @@
 import {
 	PERIODS, MODEL_PRICES, DEFAULT_MODEL, countryName, LOG_PAGE, SUMMARY_RECENT, MAIL_PAGE,
 	type AppConfig, type GroupRow, type PasskeyRow,
-	type SummaryData, type UsageData, type TrendData, type GeoData, type LogsData, type LogFilter,
+	type SummaryData, type BoardData, type MonthCost, type UsageData, type TrendData, type GeoData, type LogsData, type LogFilter,
 	type MailsData, type MailRow,
 	type AnomalyBoardData, type AnomalyRowWithMail, ANOMALY_PAGE,
 	type AnomalyBrief,
@@ -247,6 +247,146 @@ ${svgTrend(s.buckets)}
   <section>${sectionHead(`호출 지역 (${s.countryCount}개국)`, { href: `/admin/calls/geo${q}`, tip: TIP_GEO })}${geoShare}</section>
 </div>
 
+</div>`,
+		{ ...opts, tab: "board" },
+	);
+}
+
+// ═════════════════════════════════════════════════════════════
+// 상황판 (/admin)
+// ═════════════════════════════════════════════════════════════
+
+const STATUS_LABEL: Record<string, string> = { ok: "정상", warn: "주의", bad: "문제" };
+
+/**
+ * 첫 화면.
+ * 답해야 할 질문은 하나다 — "지금 문제가 있나".
+ * 그래서 위에서부터 상태 한 줄 → 지표 넷 → 열린 신호와 이달 비용 → 하위 화면 링크로 끝낸다.
+ * 예전 요약 화면에 있던 표·그래프 아홉 칸은 모두 하위 화면으로 내려갔다(없어지지 않았다).
+ */
+export function renderBoard(b: BoardData, opts: AdminOpts = {}): string {
+	const q = navQuery(b.period, b.appFilter);
+	const st = b.status;
+	const failRate = b.total ? (b.error / b.total) * 100 : 0;
+	const prevFailRate = b.prev && b.prev.total ? (b.prev.error / b.prev.total) * 100 : 0;
+	const topHttp = b.byHttp[0];
+
+	const signalRows = b.anomaly.open.length
+		? b.anomaly.open
+				.map((r) => {
+					const d = anomDetail(r);
+					const amount = d.ratio ? `평소의 ${d.ratio}배` : anomValue(r.observed, d.metric);
+					return (
+						`<tr><td>${sevTag(r.severity)}</td>` +
+						`<td class="w"><b>${escapeHtml(d.label || SIGNAL_LABEL[r.signal] || r.signal)}</b>` +
+						`<span class="sm"> · ${r.app === "*" ? "전체" : escapeHtml(r.app)}</span></td>` +
+						`<td class="n">${escapeHtml(amount)}</td>` +
+						`<td>${verdictTag(r.verdict, r.verdict_reason)}</td>` +
+						`<td class="mono sm">${kst(r.bucket).slice(0, 11)}</td></tr>`
+					);
+				})
+				.join("")
+		: "";
+
+	const signalPanel = b.anomaly.open.length
+		? `<table class="mini sig">${signalRows}</table>` +
+			(b.anomaly.openTotal > b.anomaly.open.length
+				? `<div class="more"><a href="/admin/anomaly${q}">열린 신호 ${b.anomaly.openTotal.toLocaleString()}건 모두 보기 →</a></div>`
+				: "")
+		: `<div class="quiet">잡힌 신호가 없어요.<span class="sm">마지막 탐지 ${
+				b.anomaly.lastDetected ? ago(Date.now() - b.anomaly.lastDetected) : "기록 없음"
+			} · 탐지 서버 신호 ${ago(b.anomaly.heartbeatAge)}</span></div>`;
+
+	const monthCost = b.monthly.length ? b.monthly[b.monthly.length - 1] : null;
+
+	return shellAdmin(
+		"상황판",
+		pageHead("상황판", `지금 상태 · ${sinceLabel(b.since)}`, b.appFilter) +
+			`<div id="hz-body">
+${filterTabs("/admin", b.period, b.appFilter, b.apps, PERIODS)}
+
+<a class="stat ${st.level}" href="${st.href}">
+  <span class="dot"></span>
+  <b>${STATUS_LABEL[st.level]}</b>
+  <span class="rs">${escapeHtml(st.reason)}</span>
+  <span class="go">보기 →</span>
+</a>
+
+${kpiRow([
+	{
+		label: "호출 수",
+		value: b.total.toLocaleString(),
+		unit: "건",
+		delta: b.prev ? { cur: b.total, prev: b.prev.total } : undefined,
+		sub: `성공 ${b.ok.toLocaleString()}건`,
+		spark: b.buckets.slice().reverse().map((x) => x.total),
+		tip: `모델 ${b.modelCount}종 · 나라 ${b.countryCount}곳\n입력 ${shortNum(b.inTokens)} · 출력 ${shortNum(b.outTokens)} 토큰`,
+	},
+	{
+		label: "실패율",
+		value: `${failRate.toFixed(failRate < 10 ? 1 : 0)}%`,
+		delta: b.prev && b.prev.total ? { cur: failRate, prev: prevFailRate, higherIsWorse: true } : undefined,
+		tone: failRate >= 5 ? "bad" : undefined,
+		sub: b.error
+			? `실패 ${b.error.toLocaleString()}건${topHttp ? ` · ${topHttp.http || "-"} ${topHttp.count.toLocaleString()}건` : ""}`
+			: "실패 없어요",
+		meter: failRate,
+		tip: b.byHttp.length
+			? b.byHttp.slice(0, 5).map((h) => `${h.http || "코드 없음"} — ${h.count.toLocaleString()}건`).join("\n")
+			: undefined,
+	},
+	{
+		label: "p95 지연",
+		value: (b.p95Latency / 1000).toFixed(1),
+		unit: "초",
+		delta: b.prev && b.prev.p95Latency ? { cur: b.p95Latency, prev: b.prev.p95Latency, higherIsWorse: true } : undefined,
+		sub: `평균 ${b.avgLatency.toLocaleString()}ms`,
+		meter: b.p95Latency ? (b.avgLatency / b.p95Latency) * 100 : 0,
+		meterTone: "lat",
+		tip: "가장 느린 5%가 이 시간을 넘어요. 평균만 보면 느린 호출이 묻혀요.",
+	},
+	{
+		label: "비용",
+		value: usd(b.cost),
+		delta: b.prev ? { cur: b.cost, prev: b.prev.cost, higherIsWorse: true } : undefined,
+		sub: b.total ? `호출당 ${usd(b.cost / b.total)}` : "호출 없음",
+		meter: (b.inTokens / Math.max(1, b.inTokens + b.outTokens)) * 100,
+		tip: TIP_COST,
+	},
+], 4)}
+
+<div class="two">
+  <section>${sectionHead("열린 이상 신호", {
+	count: b.anomaly.openTotal ? `${b.anomaly.openTotal.toLocaleString()}건` : "",
+	href: `/admin/anomaly${q}`,
+	linkLabel: "이상탐지 →",
+	tip: "오탐으로 판정된 신호는 뺐어요.\n급한 순(심각 → 주의)으로 세 건까지 보여줘요.",
+})}
+    <div class="panel sigp">${signalPanel}</div>
+  </section>
+  <section>${sectionHead("이달 비용", {
+	note: monthCost
+		? `이번 달 ${usd(monthCost.cost)}${
+				b.monthProgress >= 0.15 ? ` · 이대로면 ${usd(monthCost.cost / b.monthProgress)}` : ""
+			}`
+		: "",
+	tip: TIP_MONTH,
+})}
+    ${monthlyCostPanel(b, 48)}
+  </section>
+</div>
+
+<div class="golinks">
+  <a href="/admin/calls${q}"><b>AI 호출</b><span>${b.total.toLocaleString()}건 · 앱 ${b.byApp.length}개 · 모델 ${b.modelCount}종</span><i>→</i></a>
+  <a href="/admin/traffic?period=${b.period}"><b>트래픽</b><span>${
+		b.traffic
+			? `오늘 ${b.traffic.today.toLocaleString()} 방문 · AI 크롤러 ${
+					b.traffic.today ? Math.round((b.traffic.ai / b.traffic.today) * 100) : 0
+				}%`
+			: "기록 없음"
+	}</span><i>→</i></a>
+  <a href="/admin/anomaly${q}"><b>이상탐지</b><span>열린 신호 ${b.anomaly.openTotal.toLocaleString()}건 · 판정 ${b.anomaly.judged.toLocaleString()}건 · 서버 ${ago(b.anomaly.heartbeatAge)}</span><i>→</i></a>
+</div>
 </div>`,
 		{ ...opts, tab: "board" },
 	);
@@ -1055,13 +1195,13 @@ const usdMonth = (v: number) => (v <= 0 ? "$0" : v >= 1 ? `$${v.toFixed(2)}` : `
  * 막대의 흐린 윗부분은 내부용 앱(이상탐지·메일 도구)이 쓴 몫이다 — 실제 청구에는
  * 포함되지만 "서비스가 쓴 돈"과는 갈라 봐야 한다.
  */
-function monthlyCostPanel(s: SummaryData): string {
+function monthlyCostPanel(s: { monthly: MonthCost[]; monthProgress: number }, barHeight = 68): string {
 	const rows = s.monthly;
 	if (!rows.length) return `<div class="empty">아직 비용 기록이 없어요.</div>`;
 
 	const nowKey = kstMonthKey(Date.now());
 	const max = Math.max(...rows.map((r) => r.cost), 0.0001);
-	const BAR = 68;
+	const BAR = barHeight;
 
 	const bars = rows
 		.map((r, i) => {

@@ -43,7 +43,7 @@ import { handlePasskey, type PasskeyEnv } from "./passkey";
 import { handleHit, exportHits, SITES, type TrafficEnv } from "./traffic";
 import { renderLogin } from "./ui";
 import {
-	renderSummary, renderUsage, renderTrend, renderGeo, renderAnomaly, renderAnomalyDetail, renderMails, renderTraffic, renderLogs, renderApps,
+	renderBoard, renderUsage, renderTrend, renderGeo, renderAnomaly, renderAnomalyDetail, renderMails, renderTraffic, renderLogs, renderApps,
 } from "./views";
 
 interface Env extends ProxyEnv, PasskeyEnv, TrafficEnv {
@@ -280,8 +280,8 @@ function statScope(url: URL): { period: string; appFilter: string } {
  * 예전에는 /admin 한 장이 12개 집계를 전부 돌려, 보지도 않는 표 때문에 느렸다.
  */
 const STAT_PAGES: Record<string, (env: Env, period: string, app: string) => Promise<string>> = {
-	"/admin": async (e, p, a) => renderSummary(await collectSummary(e, p, a), { session: true }),
-	"/admin/": async (e, p, a) => renderSummary(await collectSummary(e, p, a), { session: true }),
+	"/admin": async (e, p, a) => renderBoard(await collectBoard(e, p, a), { session: true }),
+	"/admin/": async (e, p, a) => renderBoard(await collectBoard(e, p, a), { session: true }),
 	"/admin/calls": async (e, p, a) => renderTrend(await collectTrend(e, p, a), { session: true }),
 	"/admin/calls/": async (e, p, a) => renderTrend(await collectTrend(e, p, a), { session: true }),
 	"/admin/calls/usage": async (e, p, a) => renderUsage(await collectUsage(e, p, a), { session: true }),
