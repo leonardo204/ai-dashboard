@@ -1508,6 +1508,14 @@ export interface LogFilter {
 	/** 커서 — 이 id보다 작은 것만(다음 쪽) */
 	before: number;
 	limit: number;
+	/**
+	 * 내부용 앱(검증·메일 에이전트)을 어떻게 다룰지.
+	 *   ""(기본) 빼고 본다 · "all" 함께 본다 · "only" 그것만 본다
+	 * 요약 화면이 이미 빼고 세는데 로그만 섞여 나오면 두 화면의 수가 어긋나 보인다.
+	 * 앱을 하나 고른 화면에서는 이 조건을 걸지 않는다 — 내부용 앱을 골랐는데
+	 * 빈 목록이 나오면 고른 뜻이 사라진다.
+	 */
+	own: string;
 }
 
 export interface LogRow {
@@ -1585,6 +1593,8 @@ function logWhere(f: LogFilter): { sql: string; args: unknown[] } {
 	if (to != null) { w.push("ts < ?"); a.push(to); }
 
 	if (f.app) { w.push("app = ?"); a.push(f.app); }
+	else if (f.own === "only") { w.push("app IN (SELECT id FROM apps WHERE internal = 1)"); }
+	else if (f.own !== "all") { w.push("(app IS NULL OR app NOT IN (SELECT id FROM apps WHERE internal = 1))"); }
 	if (f.model) { w.push("model = ?"); a.push(f.model); }
 	if (f.kind) { w.push("kind = ?"); a.push(f.kind); }
 	if (f.status === "ok" || f.status === "error") { w.push("status = ?"); a.push(f.status); }

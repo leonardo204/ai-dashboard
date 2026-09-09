@@ -1489,6 +1489,7 @@ export function logQuery(f: LogFilter, over: Partial<LogFilter> = {}): string {
 	put("app", m.app); put("model", m.model); put("kind", m.kind); put("status", m.status);
 	put("http", m.http); put("country", m.country); put("ip", m.ip); put("q", m.q);
 	put("from", m.from); put("to", m.to); put("slow", m.slow); put("before", m.before);
+	put("own", m.own);
 	if (m.limit && m.limit !== LOG_PAGE) put("limit", m.limit);
 	return `?${p.toString()}`;
 }
@@ -1510,6 +1511,23 @@ export function renderLogs(l: LogsData, opts: AdminOpts = {}): string {
 	]
 		.map((b) => `<a class="${b.on ? "on" : ""}" href="/admin/logs${b.href}">${b.label}</a>`)
 		.join("");
+
+	// 내부용 앱(검증·메일 에이전트) 범위. 요약 화면은 이미 빼고 세는데 로그만 섞여 나오면
+	// 두 화면의 수가 어긋나 보인다. 기본은 빼고, 필요할 때 눌러서 함께 보거나 그것만 본다.
+	// 앱을 하나 고른 화면에서는 이 조건이 걸리지 않으므로 칩도 감춘다.
+	const ownChips = f.app
+		? ""
+		: `<span class="sep"></span>` +
+			[
+				{ v: "", label: "내부용 제외" },
+				{ v: "all", label: "모두" },
+				{ v: "only", label: "내부용만" },
+			]
+				.map(
+					(b) =>
+						`<a class="${f.own === b.v ? "on" : ""}" href="/admin/logs${logQuery(f, { own: b.v, before: 0 })}">${b.label}</a>`,
+				)
+				.join("");
 
 	const rows = l.rows.length
 		? l.rows
@@ -1551,7 +1569,7 @@ export function renderLogs(l: LogsData, opts: AdminOpts = {}): string {
   <div class="row">
     <div class="fld"><label>시작 날짜 (KST)</label><input type="date" name="from" value="${escapeHtml(f.from)}"></div>
     <div class="fld"><label>끝 날짜</label><input type="date" name="to" value="${escapeHtml(f.to)}"></div>
-    <div class="fld"><label>앱</label><select name="app">${sel("", f.app, "전체")}${l.apps.map((a) => sel(a.id, f.app, a.name)).join("")}</select></div>
+    <div class="fld"><label>앱</label><select name="app">${sel("", f.app, "전체")}${l.apps.map((a) => sel(a.id, f.app, a.internal ? `${a.name} (내부용)` : a.name)).join("")}</select></div>
     <div class="fld"><label>용도</label><select name="kind">${sel("", f.kind, "전체")}${l.kinds.map((k) => sel(k, f.kind, k)).join("")}</select></div>
   </div>
   <div class="row" style="margin-top:10px">
@@ -1566,11 +1584,19 @@ export function renderLogs(l: LogsData, opts: AdminOpts = {}): string {
     <div class="fld"><label>찾을 말 (오류 · 메타 · 모델)</label><input name="q" value="${escapeHtml(f.q)}" placeholder="rate limit"></div>
     <div class="acts"><button class="btn p" type="submit">검색</button><a class="btn" href="/admin/logs?period=${escapeHtml(f.period)}">초기화</a></div>
   </div>
-  <div class="quick">${quick}</div>
+  <div class="quick">${quick}${ownChips}</div>
 </form>
 
 <div class="pg" style="margin:0 0 10px">
-  <span class="cnt">조건에 맞는 호출 <b>${l.count.toLocaleString()}</b>건 · ${l.rows.length.toLocaleString()}건 보는 중</span>
+  <span class="cnt">조건에 맞는 호출 <b>${l.count.toLocaleString()}</b>건 · ${l.rows.length.toLocaleString()}건 보는 중${
+		f.app
+			? ""
+			: f.own === "only"
+				? ` <span class="sm">· 내부용 앱만</span>`
+				: f.own === "all"
+					? ` <span class="sm">· 내부용 앱 포함</span>`
+					: ` <span class="sm">· 내부용 앱은 빼고 세요</span>`
+	}</span>
   <span class="nav"><a class="btn" href="/admin/logs.csv${logQuery(f, { before: 0 })}">CSV 내려받기</a></span>
 </div>
 
@@ -1584,7 +1610,7 @@ export function renderLogs(l: LogsData, opts: AdminOpts = {}): string {
   </span>
 </div>
 
-<p class="foot">첫 쪽을 보는 동안에는 새 호출이 들어오면 목록이 다시 그려져요. 다음 쪽으로 넘어갔거나, 줄을 펼쳐 뒀거나, 검색칸에 입력하는 중에는 건드리지 않아요.<br>CSV는 조건에 맞는 최근 5000건까지 내려받아요.<br>${FOOT_COST}</p>
+<p class="foot">검증 에이전트·메일 도구처럼 <b>내부용</b>으로 표시한 앱의 호출은 기본으로 빼고 보여줘요. 요약 화면과 같은 기준이에요. 위 <b>모두</b>·<b>내부용만</b>을 누르면 범위를 바꿀 수 있고, 앱을 하나 고르면 그 앱만 그대로 보여줘요. 어떤 앱을 내부용으로 둘지는 앱 관리에서 정해요.<br>첫 쪽을 보는 동안에는 새 호출이 들어오면 목록이 다시 그려져요. 다음 쪽으로 넘어갔거나, 줄을 펼쳐 뒀거나, 검색칸에 입력하는 중에는 건드리지 않아요.<br>CSV는 조건에 맞는 최근 5000건까지 내려받아요.<br>${FOOT_COST}</p>
 </div>`,
 		{ ...opts, tab: "logs" },
 	);

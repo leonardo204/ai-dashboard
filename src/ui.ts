@@ -732,6 +732,7 @@ tr.hl>td{background:#fff8e6 !important;}
 .quick a{font-size:12px;font-weight:700;padding:5px 11px;border-radius:999px;border:1px solid var(--line);
  background:#fafbfc;color:var(--muted);text-decoration:none;}
 .quick a.on{background:#f0eaff;border-color:#ddd0fb;color:#5E3A9E;}
+.quick .sep{width:1px;height:18px;background:var(--line);margin:0 4px;align-self:center;}
 
 /* 집계 표(사용량 · 지역) — 칸이 8~10개라 그냥 두면 옆으로 밀린다.
    너비를 못박아 화면 안에 넣고, 좁아지면 덜 중요한 칸(o1 → o2)부터 접는다.

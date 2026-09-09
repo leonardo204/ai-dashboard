@@ -309,6 +309,7 @@ function logFilterOf(url: URL): LogFilter {
 		slow: n("slow"),
 		before: n("before"),
 		limit: n("limit") || LOG_PAGE,
+		own: ["all", "only"].includes(g("own")) ? g("own") : "",
 	};
 }
 
