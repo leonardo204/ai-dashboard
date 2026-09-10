@@ -311,6 +311,25 @@ export async function handleChat(request: Request, env: ProxyEnv, ctx: Execution
 }
 
 /**
+ * 임베딩에서 제공자를 못박아야 하는 모델 — OpenRouter가 잘못 태우는 것을 되돌린다.
+ *
+ * OpenRouter는 같은 모델도 여러 제공자로 나눠 보내는데, 어느 쪽으로 보낼지는 저쪽이 정한다.
+ * 2026-09-10부터 google/gemini-embedding-001이 AI Studio로 넘어가면서 401이 났다
+ * (ACCESS_TOKEN_TYPE_UNSUPPORTED — 구글이 그 엔드포인트에서 받지 않는 인증 방식).
+ * 같은 키·같은 모델도 Vertex로 보내면 그대로 된다. 저쪽이 고치면 이 표에서 줄만 지운다.
+ *
+ * 앱이 provider를 직접 보내면 그 뜻이 먼저다. 이 표는 아무 말이 없을 때만 끼어든다.
+ */
+const EMBED_PIN: { match: RegExp; only: string[]; since: string; why: string }[] = [
+	{
+		match: /^google\//,
+		only: ["google-vertex"],
+		since: "2026-09-10",
+		why: "AI Studio 임베딩이 401(ACCESS_TOKEN_TYPE_UNSUPPORTED)로 막힘",
+	},
+];
+
+/**
  * 임베딩 프록시 — POST /v1/embeddings
  * OpenRouter는 임베딩이 chat과 다른 엔드포인트라 라우트를 나눈다.
  * 바디는 OpenAI 임베딩 형식 { model, input, ... }을 그대로 받아 그대로 넘기고,
@@ -329,7 +348,7 @@ export async function handleEmbeddings(request: Request, env: ProxyEnv, ctx: Exe
 	} catch {
 		return err(400, "요청 형식이 올바르지 않아요.");
 	}
-	const body = payload as { model?: unknown; input?: unknown; meta?: unknown; dimensions?: unknown; encoding_format?: unknown };
+	const body = payload as { model?: unknown; input?: unknown; meta?: unknown; dimensions?: unknown; encoding_format?: unknown; provider?: unknown };
 	const input = body?.input;
 	const emptyInput =
 		input === undefined || input === null || (typeof input === "string" && !input.trim()) || (Array.isArray(input) && input.length === 0);
@@ -341,6 +360,10 @@ export async function handleEmbeddings(request: Request, env: ProxyEnv, ctx: Exe
 	const req: Record<string, unknown> = { model, input };
 	if (body.dimensions !== undefined) req.dimensions = body.dimensions;
 	if (body.encoding_format !== undefined) req.encoding_format = body.encoding_format;
+	// 제공자 고르기 — 앱이 정했으면 그대로, 아니면 위 표로 못박는다(없으면 손대지 않는다).
+	const pin = EMBED_PIN.find((r) => r.match.test(model));
+	if (body.provider !== undefined) req.provider = body.provider;
+	else if (pin) req.provider = { only: pin.only };
 
 	const started = Date.now();
 	let http = 0;
