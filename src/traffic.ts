@@ -28,6 +28,7 @@ export const SITES: Record<string, { name: string; host: string }> = {
 	"live-translate": { name: "라이브 번역", host: "live-translate.zerolive.co.kr" },
 	mail: { name: "메일 검색", host: "mail-altimedia.zerolive.co.kr" },
 	"hamzzi-diet": { name: "햄찌 다이어트", host: "hamzzi-diet.zerolive.co.kr" },
+	lnhud: { name: "LnHud", host: "lnhud.zerolive.co.kr" },
 };
 
 /** 서비스 주소 — 화면에서 "바로가기"로 여는 링크. */
