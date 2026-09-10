@@ -27,6 +27,21 @@ import {
 
 const OR_CHAT = "https://openrouter.ai/api/v1/chat/completions";
 const OR_EMBED = "https://openrouter.ai/api/v1/embeddings";
+
+/**
+ * 실패 응답을 로그에 담을 꼴로 다듬는다.
+ *
+ * 160자로 자르던 때는 구글 401의 앞머리("Request had invalid authentication…")만 남고
+ * 정작 원인인 reason(ACCESS_TOKEN_TYPE_UNSUPPORTED)과 어느 서비스였는지가 잘려 나갔다.
+ * 그 둘이 없으면 로그만 보고는 무엇이 잘못됐는지 알 수 없어 같은 호출을 다시 태워 봐야 한다.
+ *
+ * 길이만 늘리면 모자란다 — 업스트림이 원문 JSON을 문자열로 감싸 보내서 이스케이프된 줄바꿈과
+ * 들여쓰기가 자리를 절반 가까이 먹는다(그 401은 728자 중 원인이 457자 지점에 있었다).
+ * 그래서 공백을 먼저 접고 자른다. 접는 것은 공백뿐이라 잃는 정보가 없고, 로그 화면에서도
+ * 한 줄로 읽힌다. 실패한 호출에만 붙는 값이라 저장량에 미치는 영향은 작다.
+ */
+const ERR_KEEP = 600;
+const errBrief = (text: string) => text.replace(/\\n/g, " ").replace(/\s+/g, " ").trim().slice(0, ERR_KEEP);
 const MAX_BODY = 8 * 1024 * 1024; // 8MB (리사이즈된 이미지 base64 여유)
 const MAX_TOKENS = 2000;          // 미지정 시 OpenRouter가 잔액 기준으로 거절한다.
 const MAX_META = 2000;            // 메타는 통계용이라 넉넉히 2KB로 제한
@@ -273,7 +288,7 @@ export async function handleChat(request: Request, env: ProxyEnv, ctx: Execution
 
 	// 상류 오류는 사유를 그대로 전달한다(모델 오타·없는 모델을 앱이 바로 알 수 있게).
 	if (http !== 200) {
-		ctx.waitUntil(logCall(env, { ts: now, app: app.id, kind, model, status: "error", http, latency_ms: latency, ip, in_tokens: 0, out_tokens: 0, cost: null, err: outText.slice(0, 160), meta, ...geo }));
+		ctx.waitUntil(logCall(env, { ts: now, app: app.id, kind, model, status: "error", http, latency_ms: latency, ip, in_tokens: 0, out_tokens: 0, cost: null, err: errBrief(outText), meta, ...geo }));
 		return new Response(outText || JSON.stringify({ error: "모델 호출에 실패했어요." }), {
 			status: http,
 			headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
@@ -385,7 +400,7 @@ export async function handleEmbeddings(request: Request, env: ProxyEnv, ctx: Exe
 
 	const latency = Date.now() - started;
 	if (http !== 200) {
-		ctx.waitUntil(logCall(env, { ts: now, app: app.id, kind, model, status: "error", http, latency_ms: latency, ip, in_tokens: 0, out_tokens: 0, cost: null, err: outText.slice(0, 160), meta, ...geo }));
+		ctx.waitUntil(logCall(env, { ts: now, app: app.id, kind, model, status: "error", http, latency_ms: latency, ip, in_tokens: 0, out_tokens: 0, cost: null, err: errBrief(outText), meta, ...geo }));
 		return new Response(outText || JSON.stringify({ error: "임베딩에 실패했어요." }), {
 			status: http,
 			headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },

@@ -287,10 +287,13 @@ details.fold .scroll{border-radius:0 0 var(--r-md) var(--r-md);}
 /* 열린 신호 칸 — 표 모양은 쓰되 테두리를 지워 카드 안에 얹는다 */
 .sigp{padding:10px 12px;}
 table.sig{border:0;background:none;font-size:var(--fs-sm);}
-table.sig td{padding:6px 6px;border-bottom:1px solid var(--line);vertical-align:middle;}
+/* 신호 이름 칸이 남는 폭을 다 가져가므로 나머지는 최소 폭으로 눌린다. 한글은 아무 데서나
+   줄바꿈돼서 "평소의 6.18배"가 글자 단위로 쪼개졌다. 이름 칸만 줄바꿈을 허용한다. */
+table.sig td{padding:6px 6px;border-bottom:1px solid var(--line);vertical-align:middle;
+ white-space:nowrap;}
 table.sig tr:last-child td{border-bottom:0;}
-table.sig td.w{width:100%;}
-table.sig td.mono{white-space:nowrap;color:var(--muted);}
+table.sig td.w{width:100%;white-space:normal;word-break:keep-all;overflow-wrap:anywhere;}
+table.sig td.mono{color:var(--muted);}
 .sigp .more{padding:8px 6px 2px;font-size:var(--fs-sm);}
 .sigp .more a{color:var(--accent);font-weight:700;text-decoration:none;}
 .sigp .quiet{display:flex;flex-direction:column;gap:4px;padding:14px 6px;font-size:var(--fs-md);}

@@ -104,7 +104,7 @@ const SOCIAL_BOTS: [string, string][] = [
 	["kakaotalk-scrap", "카카오톡"],
 	["redditbot", "Reddit"],
 ];
-const GENERIC_BOT = /(bot\b|crawler|spider|crawl|headless|phantomjs|puppeteer|playwright|curl\/|wget\/|python-requests|python-httpx|go-http-client|java\/|okhttp|axios\/|node-fetch|libwww|scrapy|monitor|uptime|pingdom|checkly|lighthouse)/;
+const GENERIC_BOT = /(bot\b|crawler|spider|crawl|headless|phantomjs|puppeteer|playwright|curl\/|wget\/|python-requests|python-httpx|python-urllib|urllib|aiohttp|go-http-client|java\/|okhttp|axios\/|node-fetch|libwww|scrapy|monitor|uptime|pingdom|checkly|lighthouse)/;
 
 export interface Classified {
 	kind: "human" | "ai" | "search" | "social" | "bot";
