@@ -34,6 +34,7 @@ OpenRouter 앞단에 서는 **AI 프록시 + 사용량 대시보드**입니다. 
 문서는 둘입니다.
 
 - **[docs/UI-RULES.md](docs/UI-RULES.md)** — 화면 규칙. 색·글자·모서리 토큰과 소제목·지표 카드·그래프 규칙이 여기 있습니다. 화면을 고칠 때 먼저 봅니다.
+- **[docs/SLO-BURN-RATE-DESIGN.md](docs/SLO-BURN-RATE-DESIGN.md)** — 오류 예산 소진율 설계. 지금은 계산·기록만 하고 메일은 보내지 않습니다(관찰 단계).
 - **[docs/PROXY-API.md](docs/PROXY-API.md)** — 관리자용까지 전부 담은 원본. 앱 등록·통계 조회·앱 관리 API가 여기 있습니다.
 - **[docs/PROXY-CLIENT-GUIDE.md](docs/PROXY-CLIENT-GUIDE.md)** — 다른 프로젝트에 건네주는 연결 가이드. 관리자용 내용을 뺀 판입니다. 관리 화면의 `가이드` 탭에서 그대로 보여주고 내려받습니다.
 

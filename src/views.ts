@@ -570,6 +570,86 @@ function anomState<T>(a: AnomalyData, key: string): T | null {
 	}
 }
 
+/**
+ * 오류 예산 소진율 — 이상탐지 서버가 5분마다 재서 넘겨준 값.
+ *
+ * 규칙 신호는 "평소와 다른가"를 보고, 이 칸은 "약속한 품질을 얼마나 빨리 까먹고 있나"를 본다.
+ * 목표값이 아직 임시라 첫 화면에는 두지 않는다 — 임시 숫자로 상태를 단정하면 잘못 읽힌다.
+ * 자세한 내용은 저장소 docs/SLO-BURN-RATE-DESIGN.md 에 있다.
+ */
+interface SloWindow { calls: number; fails: number; burn: number | null; min: number }
+interface SloState {
+	objective: number;
+	window_days: number;
+	exclude_http: string;
+	notify: boolean;
+	budget: { calls: number; fails: number; allowed: number; used_pct: number | null };
+	tiers: { tier: string; long_min: number; short_min: number; burn_at: number;
+		long: SloWindow; short: SloWindow; enough: boolean; would_fire: boolean }[];
+	observation: { days: number; samples: number; events: Record<string, number>;
+		short_sample_pct: Record<string, number> };
+	at: string;
+}
+
+/** 분 단위 창 길이를 읽는 말로 — 60분 → 1시간, 4320분 → 3일 */
+function spanLabel(min: number): string {
+	if (min < 60) return `${min}분`;
+	if (min < 1440) return `${Math.round(min / 60)}시간`;
+	return `${Math.round(min / 1440)}일`;
+}
+const burnLabel = (v: number | null) => (v === null ? "-" : `${v.toFixed(v < 10 ? 1 : 0)}배`);
+
+function sloPanel(a: AnomalyData): string {
+	const s = anomState<SloState>(a, "slo");
+	if (!s) {
+		return `<div class="empty">아직 소진율 기록이 없어요. 이상탐지 서버가 5분마다 보내요.</div>`;
+	}
+
+	const used = s.budget.used_pct;
+	const over = used !== null && used > 100;
+	const barW = used === null ? 0 : Math.min(100, Math.max(1, used));
+	const budget =
+		`<div class="sh"><div class="sh-t"><span>${s.window_days}일 오류 예산</span>` +
+		`<span class="sh-v">허용 ${s.budget.allowed.toFixed(1)}건 가운데 <b>${s.budget.fails.toLocaleString()}건</b>` +
+		`${used === null ? "" : ` · ${used.toFixed(0)}%`}</span></div>` +
+		`<div class="sh-b"><span style="width:${barW}%;background:var(--${over ? "bad" : "accent"})"></span></div>` +
+		`<div class="sh-s">호출 ${s.budget.calls.toLocaleString()}건 기준 · ` +
+		`${s.exclude_http ? `HTTP ${escapeHtml(s.exclude_http)}는 보낸 쪽 잘못이라 빼고 세요` : "모든 실패를 세요"}</div></div>`;
+
+	const rows = s.tiers
+		.map((t) => {
+			const state = t.would_fire
+				? `<span class="sev critical">울릴 상태</span>`
+				: t.enough
+					? `<span class="vd hit">조용함</span>`
+					: `<span class="vd wait">표본 부족</span>`;
+			const tip =
+				`긴 창 ${spanLabel(t.long_min)} — 호출 ${t.long.calls.toLocaleString()}건 · 실패 ${t.long.fails.toLocaleString()}건 (최소 ${t.long.min}건)\n` +
+				`짧은 창 ${spanLabel(t.short_min)} — 호출 ${t.short.calls.toLocaleString()}건 · 실패 ${t.short.fails.toLocaleString()}건 (최소 ${t.short.min}건)\n` +
+				`두 창이 함께 ${t.burn_at}배를 넘을 때만 울릴 상태로 봐요.`;
+			const ev = s.observation.events?.[t.tier] ?? 0;
+			return `<tr data-tip="${escapeHtml(tip)}"><td>${sevTag(t.tier)}</td>` +
+				`<td class="sm">${spanLabel(t.long_min)} · ${spanLabel(t.short_min)}</td>` +
+				`<td class="n">${t.burn_at}배</td>` +
+				`<td class="n">${t.enough ? burnLabel(t.long.burn) : "-"}</td>` +
+				`<td>${state}</td>` +
+				`<td class="n">${ev.toLocaleString()}번</td></tr>`;
+		})
+		.join("");
+
+	const obs = s.observation;
+	return `<div class="panel">
+  <div class="statline"><b>${(s.objective * 100).toFixed(1)}%</b> 목표 · ${s.window_days}일 기준 ·
+    <span class="chip">관찰 중 — 메일 안 보내요</span></div>
+  <div class="shares" style="border:0;padding:0">${budget}</div>
+  <div class="scroll" style="margin-top:12px"><table class="tight">
+    <tr><th>등급</th><th>창(긴·짧은)</th><th class="n">기준</th><th class="n">지금</th><th>상태</th><th class="n">울렸을 횟수</th></tr>
+    ${rows}</table></div>
+  <div class="statline" style="margin:10px 0 0">관찰 <b>${obs.days}</b>일 · 관측 ${obs.samples.toLocaleString()}회 ·
+    목표값은 2~4주 뒤 이 기록을 보고 정해요.</div>
+</div>`;
+}
+
 /** 이상탐지 에이전트 판정 — 여섯 가지 라벨을 화면에서 읽히는 말로 옮긴다. */
 const VERDICT_LABEL: Record<string, { text: string; cls: string }> = {
 	confirmed: { text: "정탐", cls: "hit" },
@@ -1431,6 +1511,14 @@ ${sectionHead(`${a.bucketLabel} 단위 이상 신호`, {
 	}`,
 })}
 ${svgLevels(a.buckets)}
+`}
+${signals || traffic ? "" : `
+${sectionHead("오류 예산 소진율", {
+	tip: "약속한 성공률을 얼마나 빨리 까먹고 있나를 재요. '평소의 몇 배'를 보는 규칙 신호와는 다른 질문이에요.\n" +
+		"긴 창과 짧은 창이 함께 기준을 넘을 때만 울릴 상태로 봐요. 실패가 멎으면 짧은 창이 먼저 내려가 저절로 꺼져요.\n" +
+		"지금은 호출이 적어 목표값을 정하지 못했어요. 계산해 기록만 하고 메일은 보내지 않아요.",
+})}
+${sloPanel(a)}
 `}
 ${signals ? "" : `
 <div class="two">
