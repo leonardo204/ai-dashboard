@@ -599,6 +599,77 @@ function spanLabel(min: number): string {
 }
 const burnLabel = (v: number | null) => (v === null ? "-" : `${v.toFixed(v < 10 ? 1 : 0)}배`);
 
+/**
+ * 에이전트가 LLM을 어느 길로 불렀나 — 이상탐지 서버가 넘겨준 값.
+ *
+ * 무료 키(Gemini API 직접)를 먼저 쓰고, 하루 한도를 다 쓴 것으로 확인된 뒤에만
+ * 프록시(유료)로 넘어간다. 두 길이 같은 모델을 부르므로 판정 품질은 갈리지 않는다.
+ * 무료 호출은 프록시를 거치지 않아 로그·비용에 잡히지 않는다. 그래서 얼마나
+ * 무료로 막았는지는 여기서만 볼 수 있다.
+ */
+interface LlmQuota {
+	free_model: string;
+	paid_model: string;
+	exhausted_until: string | null;
+	cooldown_until: string | null;
+	disabled_reason: string | null;
+	last_free_at: string | null;
+	last_error: string | null;
+	day: string;
+	free: number; paid: number; retries: number; gave_up: number;
+	total_free: number; total_paid: number;
+}
+
+/** ISO 시각 → "09-10 16:00" (KST). 값이 없거나 이상하면 빈 글자. */
+function atKst(iso: string | null): string {
+	if (!iso) return "";
+	const t = Date.parse(iso);
+	return isFinite(t) ? kst(t).slice(0, 11) : "";
+}
+
+function llmPanel(a: AnomalyData): string {
+	const q = anomState<LlmQuota>(a, "llm_quota");
+	if (!q) {
+		return `<div class="empty">아직 호출 기록이 없어요. 이상탐지 서버가 판정할 때마다 보내요.</div>`;
+	}
+
+	const now = Date.now();
+	const until = q.exhausted_until ? Date.parse(q.exhausted_until) : 0;
+	const cool = q.cooldown_until ? Date.parse(q.cooldown_until) : 0;
+	const tag = q.disabled_reason
+		? `<span class="sev critical" data-tip="${escapeHtml(q.disabled_reason)}">무료 꺼짐</span>`
+		: until > now
+			? `<span class="vd wait" data-tip="무료 하루 한도를 다 썼어요. 초기화될 때까지는 유료로 불러요.">유료로 부르는 중 · ${escapeHtml(atKst(q.exhausted_until))} 초기화</span>`
+			: cool > now
+				? `<span class="vd wait" data-tip="${escapeHtml(q.last_error ?? "")}">무료가 잠깐 막혀 쉬는 중</span>`
+				: `<span class="vd hit">무료로 부르는 중</span>`;
+
+	const today = q.free + q.paid;
+	const pct = today ? (q.free / today) * 100 : 0;
+	const bar =
+		`<div class="sh"><div class="sh-t"><span>오늘 부른 횟수</span>` +
+		`<span class="sh-v">무료 <b>${q.free.toLocaleString()}건</b> · 유료 ${q.paid.toLocaleString()}건` +
+		`${today ? ` · 무료 ${pct.toFixed(0)}%` : ""}</span></div>` +
+		`<div class="sh-b"><span style="width:${Math.max(today ? 1 : 0, pct).toFixed(1)}%"></span></div>` +
+		`<div class="sh-s">무료 호출은 프록시를 거치지 않아 로그·비용에 잡히지 않아요. 여기 숫자로만 봐요.</div></div>`;
+
+	const total = q.total_free + q.total_paid;
+	const foot = [
+		`누적 무료 <b>${q.total_free.toLocaleString()}</b> · 유료 <b>${q.total_paid.toLocaleString()}</b>` +
+			(total ? ` (무료 ${((q.total_free / total) * 100).toFixed(0)}%)` : ""),
+		q.retries ? `오늘 다시 부른 횟수 ${q.retries.toLocaleString()}` : "",
+		q.gave_up ? `무료를 못 써 넘어간 횟수 ${q.gave_up.toLocaleString()}` : "",
+		q.last_free_at ? `마지막 무료 ${escapeHtml(atKst(q.last_free_at))}` : "",
+	].filter(Boolean).join(" · ");
+
+	return `<div class="panel">
+  <div class="statline"><b>무료 먼저</b> · ${escapeHtml(q.free_model)} <span class="sm">(직접 호출)</span>
+    → 한도를 다 쓰면 ${escapeHtml(q.paid_model)} <span class="sm">(프록시 · 유료)</span> ${tag}</div>
+  <div class="shares" style="border:0;padding:0">${bar}</div>
+  <div class="statline" style="margin:10px 0 0">${foot}</div>
+</div>`;
+}
+
 function sloPanel(a: AnomalyData): string {
 	const s = anomState<SloState>(a, "slo");
 	if (!s) {
@@ -1531,6 +1602,13 @@ ${sectionHead("이상탐지 에이전트", {
 		"'검증'은 나간 알림을 다시 읽어 정탐인지 오탐인지 가리고 확인할 일을 적어 주는 단계예요. 발송 여부를 정하지는 않아요.",
 })}
 ${agentBrief(a)}
+
+${sectionHead("LLM 호출 — 무료 먼저", {
+	tip: "무료 키로 먼저 부르고, 하루 한도를 다 쓴 것이 확인되면 그때만 프록시(유료)로 넘어가요.\n" +
+		"분당 제한처럼 잠깐 막힌 것은 소진으로 보지 않고 기다렸다 다시 무료로 불러요.\n" +
+		"무료 한도는 미국 태평양시 자정에 초기화돼요. 두 길이 같은 모델이라 판정 기준은 같아요.",
+})}
+${llmPanel(a)}
 
 <div class="two">
   <section>${sectionHead("검증 결과 모음")}
