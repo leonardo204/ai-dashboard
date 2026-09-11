@@ -1080,6 +1080,13 @@ const money = (v: number) => `$${v.toFixed(v < 1 ? 4 : 2)}`;
 /** 오탐으로 판정된 신호 — 열린 것으로 세지 않는다. */
 const FP_SQL = "('rule_fp','model_fp','both_fp')";
 /**
+ * 아직 결론이 안 난 신호 — 에이전트가 아직 안 봤거나(NULL), 봤는데 표가 갈린 것(pending).
+ *
+ * anomalies.status(open/resolved)는 쓰지 않는다. 이상탐지 서버에 그 값을 바꾸는 코드가 없어
+ * 사실상 전부 open으로 남는다. '열려 있다'는 말의 근거로 삼으면 틀린 말을 하게 된다.
+ */
+const UNDECIDED_SQL = "(verdict IS NULL OR verdict = 'pending')";
+/**
  * 상황판이 쓰는 창 함수 묶음.
  * LIMIT은 맨 마지막에 걸리므로 창 함수는 걸러진 전체를 본다 — 몇 건만 받아 오면서 개수도 같이 센다.
  * n·nc·nw는 이 기간에 열린 신호, c24·w24는 최근 하루치다(상태 한 줄은 지금을 말해야 한다).
@@ -1325,7 +1332,10 @@ async function collectBoardInner(
 	// 집계가 훑어야 할 가장 이른 시각 — 기간과 창 가운데 더 멀리 가는 쪽.
 	const scanFrom = p.days ? prevSince : 0;
 	const scanBase = p.days ? Math.min(scanFrom, win.prevFrom) : 0;
-	const anomBase = Math.min(since, win.from);
+	// 브리핑이 '그전부터 남은 신호'를 셀 범위. 기간 탭을 따라가면 30일 탭에서만 숫자가 뛴다.
+	// 창 직전 이레로 못박는다 — 그보다 오래된 미결은 브리핑이 아니라 이상탐지 화면이 맡을 일이다.
+	const OLD_SPAN = 7 * 86_400_000;
+	const anomBase = win.from - OLD_SPAN;
 
 	const appWhere = appFilter ? " AND app = ?5" : "";
 	const bindMain = (sql: string) => {
@@ -1392,7 +1402,8 @@ async function collectBoardInner(
 					"SELECT label, signal, app, bucket, severity," +
 						` SUM(CASE WHEN bucket >= ?2 AND severity='critical' THEN 1 ELSE 0 END) OVER () AS wc,` +
 						` SUM(CASE WHEN bucket >= ?2 AND severity='warn' THEN 1 ELSE 0 END) OVER () AS ww,` +
-						` SUM(CASE WHEN bucket < ?2 THEN 1 ELSE 0 END) OVER () AS wold` +
+						` SUM(CASE WHEN bucket < ?2 AND ${UNDECIDED_SQL} THEN 1 ELSE 0 END) OVER () AS wold,` +
+						` MIN(CASE WHEN bucket < ?2 AND ${UNDECIDED_SQL} THEN bucket END) OVER () AS woldest` +
 						` FROM anomalies WHERE bucket >= ?1 AND scope='ai' AND app = ?3` +
 						` AND (verdict IS NULL OR verdict NOT IN ${FP_SQL})` +
 						" ORDER BY CASE WHEN bucket >= ?2 THEN 0 ELSE 1 END," +
@@ -1402,13 +1413,14 @@ async function collectBoardInner(
 					"SELECT label, signal, app, bucket, severity," +
 						` SUM(CASE WHEN bucket >= ?2 AND severity='critical' THEN 1 ELSE 0 END) OVER () AS wc,` +
 						` SUM(CASE WHEN bucket >= ?2 AND severity='warn' THEN 1 ELSE 0 END) OVER () AS ww,` +
-						` SUM(CASE WHEN bucket < ?2 THEN 1 ELSE 0 END) OVER () AS wold` +
+						` SUM(CASE WHEN bucket < ?2 AND ${UNDECIDED_SQL} THEN 1 ELSE 0 END) OVER () AS wold,` +
+						` MIN(CASE WHEN bucket < ?2 AND ${UNDECIDED_SQL} THEN bucket END) OVER () AS woldest` +
 						` FROM anomalies WHERE bucket >= ?1 AND scope='ai'` +
 						` AND (verdict IS NULL OR verdict NOT IN ${FP_SQL})` +
 						" ORDER BY CASE WHEN bucket >= ?2 THEN 0 ELSE 1 END," +
 						" CASE severity WHEN 'critical' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END, bucket DESC LIMIT 1",
 				).bind(anomBase, win.from)
-		).first<{ label: string | null; signal: string; app: string; bucket: number; severity: string; wc: number; ww: number; wold: number }>(),
+		).first<{ label: string | null; signal: string; app: string; bucket: number; severity: string; wc: number; ww: number; wold: number; woldest: number | null }>(),
 
 		// ⑤ 탐지 서버가 살아 있나
 		env.DB.prepare("SELECT key, value, updated_at FROM anomaly_state").all<{ key: string; value: string; updated_at: number }>(),
@@ -1586,7 +1598,7 @@ async function collectBoardInner(
 		prevAppCost: wPrevAppCost,
 		firstSeen,
 		anomIn: { critical: winAnomRow?.wc ?? 0, warn: winAnomRow?.ww ?? 0, top: winTop },
-		anomOld: winAnomRow?.wold ?? 0,
+		anomOld: { count: winAnomRow?.wold ?? 0, oldest: winAnomRow?.woldest ?? 0 },
 		appName: appNameMap,
 		countryName,
 	});

@@ -42,6 +42,8 @@ export interface BriefWindow {
 	sub: string;
 	/** 마지막으로 본 때를 따라 저절로 정해졌나 */
 	auto: boolean;
+	/** 창을 정한 시각. 문장에서 "며칠 전"을 셀 때 쓴다(시계를 직접 보지 않는다). */
+	now: number;
 }
 
 /** 같은 세션으로 볼 간격. 이 안에 다시 열면 창을 그대로 둔다. */
@@ -86,6 +88,7 @@ export function briefWindow(now: number, winFrom: number | null, key: BriefKey =
 			label: fixed.days === 1 ? "하루 사이" : `지난 ${fixed.label}`,
 			sub: `${fmtPoint(from, now)} 이후`,
 			auto: false,
+			now,
 		};
 	}
 
@@ -102,6 +105,7 @@ export function briefWindow(now: number, winFrom: number | null, key: BriefKey =
 		label: autoLabel(from, now),
 		sub: `${fmtPoint(from, now)} 이후`,
 		auto: true,
+		now,
 	};
 }
 
@@ -229,8 +233,11 @@ export interface BriefInput {
 	firstSeen: Record<string, number>;
 	/** 창 안에 잡힌 이상 신호 */
 	anomIn: { critical: number; warn: number; top: { label: string; app: string; bucket: number } | null };
-	/** 창 밖에서 잡혔고 아직 판정이 안 난 신호 수 */
-	anomOld: number;
+	/**
+	 * 창보다 앞서 잡혔고 아직 결론이 안 난 신호(판정 전이거나 표가 갈린 것).
+	 * count는 창 직전 이레 안에서만 센다. oldest는 그중 가장 오래된 구간 시각(없으면 0).
+	 */
+	anomOld: { count: number; oldest: number };
 	/** 앱 id → 이름 */
 	appName: Record<string, string>;
 	countryName: (k: string) => string;
@@ -366,14 +373,21 @@ export function findBrief(b: BriefInput): Brief {
 		});
 	}
 
-	// ── 이어지는 일 — 창 전에 잡혔고 아직 판정이 안 난 신호
-	if (b.anomOld > 0) {
+	// ── 이어지는 일 — 창보다 앞서 잡혔고 아직 결론이 안 난 신호.
+	//    "열려 있다"고 말하지 않는다. anomalies.status는 아무도 갱신하지 않아 늘 open이라
+	//    그 말의 근거가 되지 못한다. 우리가 실제로 아는 것은 "판정이 끝났나"뿐이다.
+	if (b.anomOld.count > 0) {
+		const old = b.anomOld.oldest ? kstOf(b.anomOld.oldest) : null;
+		const days = old ? kstOf(win.now).dayNo - old.dayNo : 0;
+		const when = old
+			? ` 가장 오래된 건 ${old.m}/${old.d}${days >= 1 ? `, ${days}일 전이에요` : "이에요"}.`
+			: "";
 		ongoing.push({
 			kind: "anomaly",
-			text: `아직 판정이 안 난 신호가 ${b.anomOld.toLocaleString()}건 남아 있어요.`,
+			text: `그전에 잡힌 신호 <b>${b.anomOld.count.toLocaleString()}건</b>은 아직 판정이 안 끝났어요.${when}`,
 			href: `/admin/anomaly${q}`,
 			at: 0,
-			score: b.anomOld,
+			score: b.anomOld.count,
 		});
 	}
 
