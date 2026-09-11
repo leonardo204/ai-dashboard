@@ -1086,6 +1086,33 @@ const FP_SQL = "('rule_fp','model_fp','both_fp')";
  * 사실상 전부 open으로 남는다. '열려 있다'는 말의 근거로 삼으면 틀린 말을 하게 된다.
  */
 const UNDECIDED_SQL = "(verdict IS NULL OR verdict = 'pending')";
+
+/**
+ * 브리핑용 이상 신호 집계 — 신호 종류·앱별 한 줄.
+ *
+ * ?1 = 셀 범위의 시작(창 직전 이레), ?2 = 창 시작.
+ * 한 행 안에 창 안 개수(nin)와 범위 전체 개수(n)가 함께 담긴다. 둘을 빼면 창 앞 개수가 나오고,
+ * 그 값이 0보다 크면서 nin도 0보다 크면 "창 앞에도 있었고 지금도 나는" 신호다.
+ * 오탐으로 판정된 것은 애초에 빼고 센다.
+ */
+const BRIEF_ANOM_SQL =
+	"SELECT signal, app, MAX(label) AS label, COUNT(*) AS n," +
+	" SUM(CASE WHEN bucket >= ?2 THEN 1 ELSE 0 END) AS nin," +
+	" SUM(CASE WHEN severity='critical' THEN 1 ELSE 0 END) AS nc," +
+	" SUM(CASE WHEN bucket >= ?2 AND severity='critical' THEN 1 ELSE 0 END) AS inc," +
+	" SUM(CASE WHEN bucket >= ?2 AND severity='warn' THEN 1 ELSE 0 END) AS inw," +
+	` SUM(CASE WHEN bucket < ?2 AND ${UNDECIDED_SQL} THEN 1 ELSE 0 END) AS oldund,` +
+	` MIN(CASE WHEN bucket < ?2 AND ${UNDECIDED_SQL} THEN bucket END) AS oldundf,` +
+	" MAX(CASE WHEN bucket >= ?2 THEN bucket END) AS lastin," +
+	" MIN(bucket) AS firstb" +
+	" FROM anomalies WHERE bucket >= ?1 AND scope='ai'";
+const BRIEF_ANOM_TAIL = ` AND (verdict IS NULL OR verdict NOT IN ${FP_SQL}) GROUP BY signal, app`;
+
+interface BriefAnomRow {
+	signal: string; app: string; label: string | null; n: number; nin: number;
+	nc: number; inc: number; inw: number;
+	oldund: number; oldundf: number | null; lastin: number | null; firstb: number;
+}
 /**
  * 상황판이 쓰는 창 함수 묶음.
  * LIMIT은 맨 마지막에 걸리므로 창 함수는 걸러진 전체를 본다 — 몇 건만 받아 오면서 개수도 같이 센다.
@@ -1345,7 +1372,7 @@ async function collectBoardInner(
 			: st.bind(scanBase, since, win.from, win.prevFrom);
 	};
 
-	const [apps, groupRs, bucketRs, anomRs, winAnomRow, stateRs, monthRs, hitRow] = await Promise.all([
+	const [apps, groupRs, bucketRs, anomRs, winAnomRs, stateRs, monthRs, hitRow] = await Promise.all([
 		appBriefs(env),
 
 		// ① 기간(이번·직전)과 브리핑 창(안·직전)을 한 번에 —
@@ -1395,32 +1422,15 @@ async function collectBoardInner(
 				).bind(since, dayAgo)
 		).all<AnomalyBriefRow & { n: number; nc: number; nw: number; nj: number; c24: number; w24: number; last: number | null }>(),
 
-		// ④ 브리핑 창 안에 새로 잡힌 신호 — 개수와 가장 급한 한 건을 한 번에.
+		// ④ 브리핑이 쓰는 이상 신호 — 신호 종류·앱별로 '창 안'과 '창 앞'을 갈라 센다.
+		//    한 덩이로 세면 새로 생긴 신호와 며칠째 되풀이되는 신호를 가릴 수 없다.
+		//    창 앞에도 있던 신호를 "새로 잡혔어요"라고 부르면 같은 말이 날마다 뜬다.
 		//    ③은 기간 탭을 따르므로 창이 기간보다 길면 창 안 신호를 놓친다. 그래서 따로 센다.
 		(appFilter
-			? env.DB.prepare(
-					"SELECT label, signal, app, bucket, severity," +
-						` SUM(CASE WHEN bucket >= ?2 AND severity='critical' THEN 1 ELSE 0 END) OVER () AS wc,` +
-						` SUM(CASE WHEN bucket >= ?2 AND severity='warn' THEN 1 ELSE 0 END) OVER () AS ww,` +
-						` SUM(CASE WHEN bucket < ?2 AND ${UNDECIDED_SQL} THEN 1 ELSE 0 END) OVER () AS wold,` +
-						` MIN(CASE WHEN bucket < ?2 AND ${UNDECIDED_SQL} THEN bucket END) OVER () AS woldest` +
-						` FROM anomalies WHERE bucket >= ?1 AND scope='ai' AND app = ?3` +
-						` AND (verdict IS NULL OR verdict NOT IN ${FP_SQL})` +
-						" ORDER BY CASE WHEN bucket >= ?2 THEN 0 ELSE 1 END," +
-						" CASE severity WHEN 'critical' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END, bucket DESC LIMIT 1",
-				).bind(anomBase, win.from, appFilter)
-			: env.DB.prepare(
-					"SELECT label, signal, app, bucket, severity," +
-						` SUM(CASE WHEN bucket >= ?2 AND severity='critical' THEN 1 ELSE 0 END) OVER () AS wc,` +
-						` SUM(CASE WHEN bucket >= ?2 AND severity='warn' THEN 1 ELSE 0 END) OVER () AS ww,` +
-						` SUM(CASE WHEN bucket < ?2 AND ${UNDECIDED_SQL} THEN 1 ELSE 0 END) OVER () AS wold,` +
-						` MIN(CASE WHEN bucket < ?2 AND ${UNDECIDED_SQL} THEN bucket END) OVER () AS woldest` +
-						` FROM anomalies WHERE bucket >= ?1 AND scope='ai'` +
-						` AND (verdict IS NULL OR verdict NOT IN ${FP_SQL})` +
-						" ORDER BY CASE WHEN bucket >= ?2 THEN 0 ELSE 1 END," +
-						" CASE severity WHEN 'critical' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END, bucket DESC LIMIT 1",
-				).bind(anomBase, win.from)
-		).first<{ label: string | null; signal: string; app: string; bucket: number; severity: string; wc: number; ww: number; wold: number; woldest: number | null }>(),
+			? env.DB.prepare(BRIEF_ANOM_SQL + " AND app = ?3" + BRIEF_ANOM_TAIL).bind(anomBase, win.from, appFilter)
+			: env.DB.prepare(BRIEF_ANOM_SQL + BRIEF_ANOM_TAIL).bind(anomBase, win.from)
+		).all<BriefAnomRow>(),
+
 
 		// ⑤ 탐지 서버가 살아 있나
 		env.DB.prepare("SELECT key, value, updated_at FROM anomaly_state").all<{ key: string; value: string; updated_at: number }>(),
@@ -1581,8 +1591,41 @@ async function collectBoardInner(
 		Array.from(m.values())
 			.map((r) => ({ ...r, name: appNameMap[r.key] ?? r.key, firstTs: r.firstTs === Number.MAX_SAFE_INTEGER ? 0 : r.firstTs }))
 			.sort((a, b) => b.total - a.total);
-	const winTop = winAnomRow && winAnomRow.bucket >= win.from
-		? { label: winAnomRow.label || SIGNAL_LABEL[winAnomRow.signal] || winAnomRow.signal, app: winAnomRow.app, bucket: winAnomRow.bucket }
+	// ── 이상 신호를 신호 종류 단위로 합친다.
+	//    앱까지 쪼개서 세면 같은 일이 갈라진다 — 탐지기는 같은 구간에 앱별 행과 전체('*') 행을
+	//    함께 남기므로, 이어지는 흐름을 보려면 종류로 묶어야 한다.
+	interface SigAgg {
+		signal: string; label: string; n: number; nin: number; nc: number; inc: number; inw: number;
+		firstb: number; lastin: number; topApp: string; topAppIn: number;
+	}
+	const sigMap = new Map<string, SigAgg>();
+	let oldUnd = 0;
+	let oldUndFirst = 0;
+	for (const r of winAnomRs.results ?? []) {
+		oldUnd += r.oldund ?? 0;
+		if (r.oldundf) oldUndFirst = oldUndFirst ? Math.min(oldUndFirst, r.oldundf) : r.oldundf;
+		const a = sigMap.get(r.signal) ?? {
+			signal: r.signal,
+			label: r.label || SIGNAL_LABEL[r.signal] || r.signal,
+			n: 0, nin: 0, nc: 0, inc: 0, inw: 0,
+			firstb: r.firstb, lastin: 0, topApp: r.app, topAppIn: -1,
+		};
+		a.n += r.n; a.nin += r.nin; a.nc += r.nc; a.inc += r.inc; a.inw += r.inw;
+		a.firstb = Math.min(a.firstb, r.firstb);
+		if (r.lastin) a.lastin = Math.max(a.lastin, r.lastin);
+		// 창 안에서 가장 많이 잡힌 앱을 대표로 둔다. 앱을 못 가리면 '*'(전체)가 남는다.
+		if (r.nin > a.topAppIn) { a.topAppIn = r.nin; a.topApp = r.app; }
+		sigMap.set(r.signal, a);
+	}
+	const sigs = Array.from(sigMap.values());
+	// 창 앞에도 있었고 창 안에도 있는 신호 = 되풀이되는 신호. 나머지 창 안 신호가 '새로'다.
+	const repeats = sigs.filter((x) => x.nin > 0 && x.n > x.nin);
+	const freshSigs = sigs.filter((x) => x.nin > 0 && x.n === x.nin);
+	const winTopSig = freshSigs
+		.slice()
+		.sort((x, y) => (y.inc > 0 ? 1 : 0) - (x.inc > 0 ? 1 : 0) || y.lastin - x.lastin)[0];
+	const winTop = winTopSig
+		? { label: winTopSig.label, app: winTopSig.topApp, bucket: winTopSig.lastin }
 		: null;
 	const brief = findBrief({
 		win,
@@ -1597,8 +1640,15 @@ async function collectBoardInner(
 		prevApp: wPrevApp,
 		prevAppCost: wPrevAppCost,
 		firstSeen,
-		anomIn: { critical: winAnomRow?.wc ?? 0, warn: winAnomRow?.ww ?? 0, top: winTop },
-		anomOld: { count: winAnomRow?.wold ?? 0, oldest: winAnomRow?.woldest ?? 0 },
+		anomIn: {
+			critical: freshSigs.reduce((a, x) => a + x.inc, 0),
+			warn: freshSigs.reduce((a, x) => a + x.inw, 0),
+			top: winTop,
+		},
+		anomRepeat: repeats.map((x) => ({
+			label: x.label, n: x.n, nin: x.nin, critical: x.nc, firstb: x.firstb, lastin: x.lastin,
+		})),
+		anomOld: { count: oldUnd, oldest: oldUndFirst },
 		appName: appNameMap,
 		countryName,
 	});

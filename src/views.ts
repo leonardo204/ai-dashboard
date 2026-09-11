@@ -120,10 +120,16 @@ function briefPanel(b: BoardData): string {
 		: `<span class="none">${escapeHtml(b.brief.quiet)}</span>`;
 
 	// 창 전에 시작됐지만 아직 끝나지 않은 일 — 새 소식은 아니라서 흐리게 한 줄로 둔다.
+	// 이어지는 일은 줄마다 따로 둔다. 한 줄에 " · "로 이어 붙이면 문장 두세 개가 붙어
+	// 어디서 끊어 읽어야 할지 알 수 없었다. 머리말은 한 번만 적는다.
 	const ongoing = b.brief.ongoing.length
-		? `<div class="ago">이어지는 일 · ${b.brief.ongoing
-				.map((c) => `<a href="${c.href}">${c.text}</a>`)
-				.join(" · ")}</div>`
+		? `<div class="ago"><span class="oh">이어지는 일</span>${b.brief.ongoing
+				.map(
+					(c) =>
+						`<a href="${c.href}"><i></i><span>${c.text}</span>` +
+						`${c.at ? `<em>${escapeHtml(briefAt(c.at))}</em>` : ""}</a>`,
+				)
+				.join("")}</div>`
 		: "";
 
 	return `<section class="brief">

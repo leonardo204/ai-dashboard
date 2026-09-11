@@ -85,7 +85,9 @@ export function briefWindow(now: number, winFrom: number | null, key: BriefKey =
 			key,
 			from,
 			prevFrom: from - fixed.days * DAY,
-			label: fixed.days === 1 ? "하루 사이" : `지난 ${fixed.label}`,
+			// 자동 라벨과 같은 말을 쓴다. 탭 글자는 짧게 두고(하루·3일·일주일·한 달)
+			// 머리말은 기간으로 읽히는 말로 바꾼다.
+			label: FIXED_LABEL[key] ?? `지난 ${fixed.label}`,
 			sub: `${fmtPoint(from, now)} 이후`,
 			auto: false,
 			now,
@@ -146,12 +148,26 @@ function autoLabel(from: number, now: number): string {
 	if (h < 1.5) return "방금 사이";
 	if (h < 12) return `지난 ${Math.round(h)}시간`;
 	if (h < 30) return "하루 사이";
-	const d = Math.round(h / 24);
-	if (d <= 4) return `지난 ${d}일`;
-	if (d <= 10) return "지난 일주일";
-	if (d <= 20) return `지난 ${d}일`;
+
+	// 여기서부터는 시간을 24로 나눠 반올림하지 않는다. 33시간이 "지난 1일"이 되어
+	// 하루도 아니고 이틀도 아닌 이름이 붙었다. 날짜가 몇 번 넘어갔는지로 센다.
+	// 이틀·사흘은 "어제부터"·"그제부터"가 더 정확하다 — 언제부터인지를 그대로 말한다.
+	if (gapDays === 1) return "어제부터";
+	if (gapDays === 2) return "그제부터";
+	if (gapDays <= 6) return `${NAT_DAYS[gapDays]} 사이`;
+	if (gapDays === 7) return "일주일 사이";
+	// "지난 15일"은 날짜(15일)로도 읽힌다. "동안"을 붙여 기간임을 못박는다.
+	if (gapDays <= 25) return `${gapDays}일 동안`;
 	return "한 달 사이";
 }
+
+/** 고정 탭을 골랐을 때 머리말. 자동 라벨과 같은 말을 쓴다. */
+const FIXED_LABEL: Record<string, string> = {
+	day: "하루 사이", d3: "사흘 사이", w1: "일주일 사이", m1: "한 달 사이",
+};
+
+/** 날수를 세는 우리말 수사. 이레·여드레는 잘 쓰지 않아 여기까지만 둔다. */
+const NAT_DAYS = ["", "하루", "이틀", "사흘", "나흘", "닷새", "엿새"];
 
 // ─────────────────────────────────────────────────────────────
 // 브리핑 문장
@@ -179,12 +195,16 @@ export const BRIEF_RULES = {
 	blameShare: 0.6,
 	/** 새 소식은 몇 줄까지 */
 	max: 4,
-	/** 이어지는 일은 몇 줄까지 */
-	maxOld: 2,
+	/** 되풀이되는 신호는 몇 줄까지 */
+	maxRepeat: 2,
+	/** 이어지는 일은 몇 줄까지(되풀이 줄 + 미결 줄을 합쳐) */
+	maxOld: 3,
+	/** 새 소식과 이어지는 일을 합쳐 몇 줄까지. 이 칸이 길어지면 첫 화면이 한 눈에 안 들어온다. */
+	maxLines: 5,
 };
 
 /** 급한 순서. 종류마다 점수의 단위가 달라(배수·건수) 한 줄로 세울 수 없어 순서를 정해 둔다. */
-const KIND_ORDER = ["anomaly", "fail", "cost", "latency", "quiet", "new", "geo"];
+const KIND_ORDER = ["anomaly", "repeat", "fail", "cost", "latency", "quiet", "new", "geo", "backlog"];
 
 export interface BriefLine {
 	kind: string;
@@ -231,8 +251,13 @@ export interface BriefInput {
 	prevAppCost: Record<string, number>;
 	/** 전체 기록 기준 처음 본 시각. "kind|key" → ts */
 	firstSeen: Record<string, number>;
-	/** 창 안에 잡힌 이상 신호 */
+	/** 창 안에 처음 잡힌 신호(창 앞에는 없던 종류) */
 	anomIn: { critical: number; warn: number; top: { label: string; app: string; bucket: number } | null };
+	/**
+	 * 창 앞에도 있었고 창 안에도 있는 신호 — 새 소식이 아니라 되풀이되는 일이다.
+	 * n은 센 범위(창 직전 이레부터) 전체 건수, nin은 그중 창 안 건수, critical은 범위 안 심각 건수.
+	 */
+	anomRepeat: { label: string; n: number; nin: number; critical: number; firstb: number; lastin: number }[];
 	/**
 	 * 창보다 앞서 잡혔고 아직 결론이 안 난 신호(판정 전이거나 표가 갈린 것).
 	 * count는 창 직전 이레 안에서만 센다. oldest는 그중 가장 오래된 구간 시각(없으면 0).
@@ -260,7 +285,9 @@ export function findBrief(b: BriefInput): Brief {
 	const pct = (v: number) => `${Math.round(v * 100)}%`;
 	const win = b.win;
 
-	// ── 이상 신호가 새로 잡혔나
+	// ── 이상 신호가 새로 잡혔나.
+	//    창 앞에도 있던 종류는 여기서 세지 않는다(아래 '또 잡힌 신호'가 맡는다).
+	//    그러지 않으면 며칠째 같은 일이 나는 동안 "새로 잡혔어요"가 날마다 떴다.
 	if (b.anomIn.critical || b.anomIn.warn) {
 		const t = b.anomIn.top;
 		const parts: string[] = [];
@@ -269,8 +296,8 @@ export function findBrief(b: BriefInput): Brief {
 		fresh.push({
 			kind: "anomaly",
 			text:
-				`이상 신호가 새로 잡혔어요 — ${parts.join(" · ")}` +
-				(t ? `. <b>${esc(t.label)}</b>${josa(t.label, "이", "가")} ${esc(appLabel(b, t.app))}에서 나왔어요.` : "."),
+				`이상 신호가 새로 잡혔어요 (${parts.join(", ")}).` +
+				(t ? ` <b>${esc(t.label)}</b>${josa(t.label, "이", "가")} ${esc(appLabel(b, t.app))}에서 나왔어요.` : ""),
 			href: `/admin/anomaly${q}`,
 			at: t?.bucket ?? 0,
 			score: b.anomIn.critical * 100 + b.anomIn.warn,
@@ -304,7 +331,7 @@ export function findBrief(b: BriefInput): Brief {
 	if (b.cur.cost >= R.costFloor && b.prev.cost <= 0 && b.prev.total > 0) {
 		fresh.push({
 			kind: "cost",
-			text: `비용 <b>${usd(b.cur.cost)}</b>가 들었어요. 직전 같은 길이에는 쓴 돈이 없었어요.`,
+			text: `바로 앞 같은 기간에는 쓴 돈이 없는데, 이번에는 <b>${usd(b.cur.cost)}</b> 썼어요.`,
 			href: `/admin/calls/usage${q}`,
 			at: 0,
 			score: 10,
@@ -312,6 +339,10 @@ export function findBrief(b: BriefInput): Brief {
 	} else if (b.cur.cost >= R.costFloor && b.prev.cost > 0) {
 		const up = (b.cur.cost - b.prev.cost) / b.prev.cost;
 		if (up >= R.costUp) {
+			const money = usd(b.cur.cost);
+			// 금액 뒤에는 조사를 붙이지 않는다. "$1.20"을 "일 점 이"로 읽으면 받침이 없고
+			// "이영"으로 읽으면 남아서, 로/으로 어느 쪽을 써도 걸리는 사람이 나온다.
+			// 숫자를 괄호로 빼면 그 판단 자체가 없어진다.
 			const gap = b.cur.cost - b.prev.cost;
 			const grew = b.byApp
 				.map((a) => ({ name: a.name, gap: a.cost - (b.prevAppCost[a.key] ?? 0) }))
@@ -327,7 +358,7 @@ export function findBrief(b: BriefInput): Brief {
 						: "";
 			fresh.push({
 				kind: "cost",
-				text: `비용 <b>${usd(b.cur.cost)}</b> — 직전 같은 길이보다 ${pct(up)} 늘었어요.${blame}`,
+				text: `비용이 바로 앞 같은 기간보다 <b>${pct(up)}</b> 늘었어요 (${money}).${blame}`,
 				href: `/admin/calls/usage${q}`,
 				at: 0,
 				score: up,
@@ -342,7 +373,7 @@ export function findBrief(b: BriefInput): Brief {
 		if (was > 0 && (now - was) / was >= R.latUp) {
 			fresh.push({
 				kind: "latency",
-				text: `평균 응답이 <b>${(now / 1000).toFixed(1)}초</b>로 직전의 ${(now / was).toFixed(1)}배가 됐어요.`,
+				text: `평균 응답이 바로 앞 같은 기간의 <b>${(now / was).toFixed(1)}배</b>가 됐어요 (${(now / 1000).toFixed(1)}초).`,
 				href: `/admin/calls/logs${q}&slow=${Math.round(was * 2)}`,
 				at: 0,
 				score: (now - was) / was,
@@ -366,14 +397,37 @@ export function findBrief(b: BriefInput): Brief {
 	if (quiet) {
 		fresh.push({
 			kind: "quiet",
-			text: `<b>${esc(b.appName[quiet[0]] ?? quiet[0])}</b> 호출이 끊겼어요 (직전 ${quiet[1].toLocaleString()}건 → 0건).`,
+			text: `<b>${esc(b.appName[quiet[0]] ?? quiet[0])}</b> 호출이 끊겼어요. 바로 앞 같은 기간에는 ${quiet[1].toLocaleString()}건이었어요.`,
 			href: `/admin/calls/logs${q}&app=${encodeURIComponent(quiet[0])}`,
 			at: 0,
 			score: quiet[1],
 		});
 	}
 
-	// ── 이어지는 일 — 창보다 앞서 잡혔고 아직 결론이 안 난 신호.
+	// ── 또 잡힌 신호 — 창 앞에도 있었고 창 안에도 있다. 새 소식이 아니라 되풀이되는 일이다.
+	//
+	//    문구에서 조심한 것 두 가지.
+	//    "사흘째"나 "이어지고 있어요"라고 쓰지 않는다 — 날마다 빠짐없이 났는지는 확인하지 않으므로
+	//    하루 건너 난 것을 연속으로 읽히게 만든다. 센 건수와 첫날만 적는다.
+	//    "N일부터"가 아니라 "N일 이후로"를 쓴다 — 센 범위가 창 직전 이레까지라, 그보다 앞선 일이
+	//    있었는지는 알 수 없다. '부터'는 그날이 처음이었다고 읽힌다.
+	//    앱 이름은 붙이지 않는다 — 탐지기가 같은 일에 앱별 행과 전체('*') 행을 함께 남겨서
+	//    한 앱을 지목하면 틀린 말이 된다. 어느 앱인지는 눌러서 이상탐지 화면에서 본다.
+	for (const r of b.anomRepeat.slice().sort((x, y) => y.critical - x.critical || y.n - x.n).slice(0, R.maxRepeat)) {
+		const f = kstOf(r.firstb);
+		ongoing.push({
+			kind: "repeat",
+			text:
+				`<b>${esc(r.label)}</b>${josa(r.label, "은", "는")} 처음이 아니에요.` +
+				` ${f.m}/${f.d} 이후로 ${r.n.toLocaleString()}번 잡혔어요.` +
+				(r.critical ? ` 그중 ${r.critical.toLocaleString()}번이 심각이에요.` : ""),
+			href: `/admin/anomaly${q}`,
+			at: r.lastin,
+			score: r.critical * 100 + r.n,
+		});
+	}
+
+	// ── 아직 판정이 안 끝난 신호 — 창보다 앞서 잡힌 것만 센다.
 	//    "열려 있다"고 말하지 않는다. anomalies.status는 아무도 갱신하지 않아 늘 open이라
 	//    그 말의 근거가 되지 못한다. 우리가 실제로 아는 것은 "판정이 끝났나"뿐이다.
 	if (b.anomOld.count > 0) {
@@ -383,7 +437,7 @@ export function findBrief(b: BriefInput): Brief {
 			? ` 가장 오래된 건 ${old.m}/${old.d}${days >= 1 ? `, ${days}일 전이에요` : "이에요"}.`
 			: "";
 		ongoing.push({
-			kind: "anomaly",
+			kind: "backlog",
 			text: `그전에 잡힌 신호 <b>${b.anomOld.count.toLocaleString()}건</b>은 아직 판정이 안 끝났어요.${when}`,
 			href: `/admin/anomaly${q}`,
 			at: 0,
@@ -398,9 +452,12 @@ export function findBrief(b: BriefInput): Brief {
 	fresh.sort(bySort);
 	ongoing.sort(bySort);
 
+	// 새 소식이 많은 날에는 이어지는 일을 줄인다. 새로 벌어진 일이 먼저 읽혀야 한다.
+	const head = fresh.slice(0, R.max);
+	const room = Math.max(1, R.maxLines - head.length);
 	return {
-		fresh: fresh.slice(0, R.max),
-		ongoing: ongoing.slice(0, R.maxOld),
+		fresh: head,
+		ongoing: ongoing.slice(0, Math.min(R.maxOld, room)),
 		quiet: quietLine(b, win),
 	};
 }
@@ -438,15 +495,21 @@ function pushFirst(
 	});
 }
 
-/** 말할 것이 없을 때 대신 적는 한 줄. 숫자를 보여 주고 끝낸다. */
+/**
+ * 새 소식이 없을 때 대신 적는 한 줄. 숫자를 보여 주고 끝낸다.
+ *
+ * 되풀이되는 신호가 있으면 "별다른 일 없었어요"라고 쓰지 않는다. 그 신호는 창 안에도 났으므로
+ * 아무 일도 없었다는 말이 되어 바로 아래 줄과 어긋난다. 그때는 "새로 생긴 일은 없어요"로
+ * 범위를 좁혀 적는다 — 없는 것은 '새 소식'이지 '일' 자체가 아니다.
+ */
 function quietLine(b: BriefInput, win: BriefWindow): string {
 	if (!b.cur.total) return `${win.label} 호출이 없었어요.`;
-	const bits = [
-		`호출 ${b.cur.total.toLocaleString()}건`,
-		b.cur.error ? `실패 ${b.cur.error.toLocaleString()}건` : "실패 없음",
-		usd(b.cur.cost),
-	];
-	return `${win.label} 별다른 일 없었어요 — ${bits.join(" · ")}.`;
+	const head = b.anomRepeat.length ? `${win.label} 새로 생긴 일은 없어요.` : `${win.label} 별다른 일 없었어요.`;
+	const calls = `호출 ${b.cur.total.toLocaleString()}건`;
+	const fail = b.cur.error
+		? `${calls} 가운데 실패 ${b.cur.error.toLocaleString()}건`
+		: `${calls}에 실패는 없고`;
+	return `${head} ${fail}, 비용은 ${usd(b.cur.cost)} 나왔어요.`;
 }
 
 const appLabel = (b: BriefInput, app: string) => (app === "*" ? "전체" : b.appName[app] ?? app);

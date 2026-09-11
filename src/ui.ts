@@ -297,9 +297,17 @@ details.fold .scroll{border-radius:0 0 var(--r-md) var(--r-md);}
  white-space:nowrap;font-variant-numeric:tabular-nums;}
 .brief b{font-weight:800;}
 .brief .none{display:block;padding:6px 16px;font-size:var(--fs-sm);color:var(--muted);}
-.brief .ago{padding:5px 16px 0;font-size:var(--fs-xs);color:var(--muted);}
-.brief .ago a{color:var(--muted);text-decoration:none;}
-.brief .ago a:hover{text-decoration:underline;}
+.brief .ago{margin-top:3px;padding-top:4px;border-top:1px solid var(--line);
+ font-size:var(--fs-xs);color:var(--muted);}
+.brief .ago .oh{display:block;padding:2px 16px 1px;font-weight:700;}
+.brief .ago a{display:flex;align-items:baseline;gap:8px;text-decoration:none;color:var(--muted);
+ padding:4px 16px;border-radius:var(--r-sm);}
+.brief .ago a:hover{background:var(--tint);color:var(--ink);}
+.brief .ago i{width:4px;height:4px;border-radius:50%;background:var(--line);flex:0 0 4px;
+ position:relative;top:-2px;}
+.brief .ago a>span{flex:1 1 auto;min-width:0;word-break:keep-all;overflow-wrap:anywhere;}
+.brief .ago em{flex:0 0 auto;font-style:normal;font-variant-numeric:tabular-nums;}
+.brief .ago b{font-weight:800;color:var(--ink);}
 
 /* 열린 신호 칸 — 표 모양은 쓰되 테두리를 지워 카드 안에 얹는다 */
 .sigp{padding:10px 12px;}
@@ -1145,7 +1153,9 @@ label.chk input{margin-top:3px;flex:0 0 auto;}
  .brief .bt::-webkit-scrollbar{display:none;}
  .brief .bl a{padding:6px 4px;}
  .brief .bl em{display:none;}
- .brief .none,.brief .ago{padding-left:4px;padding-right:4px;}
+ .brief .none{padding-left:4px;padding-right:4px;}
+ .brief .ago .oh,.brief .ago a{padding-left:4px;padding-right:4px;}
+ .brief .ago em{display:none;}
  /* 열린 신호 — 시각 칸은 접는다(펼치면 이상탐지 화면에 다 있다) */
  .sigp{padding:8px 10px;}
  table.sig td{padding:6px 4px;}
