@@ -236,13 +236,13 @@ textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:var(-
 .topbar{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--panel) 88%,transparent);backdrop-filter:blur(10px);
  border-bottom:1px solid var(--line);}
 .topbar .in{max-width:1120px;margin:0 auto;padding:0 18px;height:54px;display:flex;align-items:center;gap:14px;}
-/* 서비스 이름 = 상황판으로 가는 입구. 누를 수 있는 것으로 보여야 하고,
-   상황판을 보고 있을 때는 메뉴 항목과 같은 방식으로 표시가 남는다. */
+/* 서비스 이름 = 상황판으로 가는 입구. 누를 수 있는 것으로만 보이면 된다.
+   메뉴 항목처럼 켜진 표시는 하지 않는다 — 이름은 어느 화면에서나 같은 자리에 있는
+   간판이라, 거기에 선택 표시가 붙으면 옆 메뉴와 같은 급으로 읽힌다. */
 .topbar .bd{font-weight:800;font-size:var(--fs-lg);letter-spacing:-.3px;display:flex;align-items:center;
  gap:8px;color:var(--ink);text-decoration:none;padding:6px 10px;margin-left:-10px;
  border-radius:var(--r-md);flex:0 0 auto;white-space:nowrap;}
 .topbar .bd:hover{background:var(--bg);text-decoration:none;}
-.topbar .bd.on{background:var(--accent-bg);color:var(--accent-fg);}
 .topbar .bd i{width:9px;height:9px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent-2));display:block;}
 .topbar nav{display:flex;gap:4px;margin-left:6px;}
 .topbar nav a{font-size:var(--fs-md);font-weight:700;color:var(--muted);padding:7px 11px;border-radius:var(--r-md);text-decoration:none;}
@@ -1594,7 +1594,7 @@ document.addEventListener('click', function(e){
 // ─────────────────────────────────────────────────────────────
 
 /** 상단바 메뉴 키. */
-export type TabKey = "board" | "calls" | "traffic" | "anomaly" | "settings";
+export type TabKey = "calls" | "traffic" | "anomaly" | "settings";
 
 export interface AdminOpts {
 	/** 세션 로그인으로 들어온 화면인지(= 로그아웃 버튼 노출). */
@@ -1720,7 +1720,7 @@ export function shellAdmin(title: string, body: string, opts: AdminOpts = {}): s
 	const topbar = opts.bare
 		? ""
 		: `<header class="topbar"><div class="in">
-  <a class="bd${opts.tab === "board" ? " on" : ""}" href="/admin" data-tip="상황판 보기"><i></i><span>AI Service</span></a>
+  <a class="bd" href="/admin" data-tip="상황판 보기"><i></i><span>AI Service</span></a>
   <nav>${nav}</nav>
   <span class="sp"></span>
   ${opts.bare ? "" : statusBar(opts)}

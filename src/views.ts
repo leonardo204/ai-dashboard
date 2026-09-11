@@ -307,7 +307,8 @@ ${kpiRow([
   <a href="/admin/anomaly${q}"><b>이상탐지</b><span>열린 신호 ${b.anomaly.openTotal.toLocaleString()}건 · 판정 ${b.anomaly.judged.toLocaleString()}건 · 서버 ${ago(b.anomaly.heartbeatAge)}</span><i>→</i></a>
 </div>
 </div>`,
-		{ ...opts, tab: "board", heartbeatAge: b.anomaly.heartbeatAge, appFilter: b.appFilter },
+		// 상황판은 상단 메뉴에 짝이 없다(서비스 이름이 그 자리를 겸한다). tab을 넘기지 않는다.
+		{ ...opts, heartbeatAge: b.anomaly.heartbeatAge, appFilter: b.appFilter },
 	);
 }
 
