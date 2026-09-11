@@ -708,7 +708,11 @@ const EXTRA_CSS = `
  box-shadow:0 8px 24px color-mix(in srgb,var(--ink) 28%,transparent);max-width:280px;white-space:pre-line;}
 .tipbox.on{opacity:1;transform:translateY(0);}
 .tipbox b{display:block;font-weight:800;font-size:var(--fs-sm);margin-bottom:2px;}
+/* 툴팁이 붙은 것은 대개 그래프 조각이라 손가락 커서가 어울리지 않는다.
+   다만 링크·단추에까지 걸리면 누를 수 있는 것이 눌리지 않는 것처럼 보인다.
+   (a·button은 브라우저 기본값이 pointer지만 UA 규칙이라 아래 한 줄에 늘 진다.) */
 [data-tip]{cursor:default;}
+a[href][data-tip],button[data-tip],summary[data-tip]{cursor:pointer;}
 
 /* 이상탐지 — 심각도 색은 화면 어디서나 같은 뜻으로 쓴다 */
 .sev{display:inline-flex;align-items:center;gap:5px;font-weight:800;font-size:var(--fs-xs);
@@ -1720,7 +1724,7 @@ export function shellAdmin(title: string, body: string, opts: AdminOpts = {}): s
 	const topbar = opts.bare
 		? ""
 		: `<header class="topbar"><div class="in">
-  <a class="bd" href="/admin" data-tip="상황판 보기"><i></i><span>AI Service</span></a>
+  <a class="bd" href="/admin"><i></i><span>AI Service</span></a>
   <nav>${nav}</nav>
   <span class="sp"></span>
   ${opts.bare ? "" : statusBar(opts)}
