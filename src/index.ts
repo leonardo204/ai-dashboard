@@ -33,7 +33,7 @@
 import { handleChat, handleEmbeddings, type ProxyEnv } from "./proxy";
 import { renderGuide, GUIDE_MD, GUIDE_FILENAME } from "./guide";
 import {
-	collectStats, collectBoard, heartbeatAge, collectUsage, collectTrend, collectGeo, queryLogs, logsCsv,
+	collectStats, collectBoard, heartbeatAge, briefCtx, briefForCalls, briefForTraffic, briefForAnomaly, collectUsage, collectTrend, collectGeo, queryLogs, logsCsv,
 	listApps, getApp, upsertApp, deleteApp, newToken, pulse, exportCalls, normPeriod, LOG_PAGE,
 	collectAnomaly, collectAnomalyBoard, pushAnomaly, collectMails, getMailHtml, listPasskeys, passkeyCount, deletePasskey,
 	collectTraffic,
@@ -287,18 +287,27 @@ function statScope(url: URL): { period: string; appFilter: string } {
  * 60초마다 도는 자동 갱신인지 갈라야 한다 — 자동 갱신으로 그 시각을 밀면
  * 창이 늘 1분으로 줄어 브리핑이 영영 비게 된다. 갱신 요청은 X-Hz-Live 헤더를 붙여 온다.
  */
+function briefOpts(req: Request): { brief: BriefKey; live: boolean } {
+	const raw = new URL(req.url).searchParams.get("brief") || "";
+	return {
+		brief: (["day", "d3", "w1", "m1"].includes(raw) ? raw : "auto") as BriefKey,
+		live: req.headers.get("X-Hz-Live") === "1",
+	};
+}
+
 async function board(env: Env, period: string, app: string, _b: string, req: Request): Promise<string> {
-	const url = new URL(req.url);
-	const raw = url.searchParams.get("brief") || "";
-	const brief = (["day", "d3", "w1", "m1"].includes(raw) ? raw : "auto") as BriefKey;
-	const live = req.headers.get("X-Hz-Live") === "1";
-	return renderBoard(await collectBoard(env, period, app, { brief, live }), { session: true });
+	return renderBoard(await collectBoard(env, period, app, briefOpts(req)), { session: true });
 }
 
 /** AI 호출 흐름 — 그래프의 이상 구간 띠를 누르면 ?bucket= 이 붙어 그 구간만 갈라 본다. */
-async function callsFlow(env: Env, period: string, app: string, bucket = ""): Promise<string> {
-	const [d, beat] = await Promise.all([collectTrend(env, period, app, bucket), heartbeatAge(env)]);
-	return renderTrend(d, { session: true, heartbeatAge: beat });
+async function callsFlow(env: Env, period: string, app: string, bucket: string, req: Request): Promise<string> {
+	const ctx = await briefCtx(env, briefOpts(req));
+	const [d, beat, brief] = await Promise.all([
+		collectTrend(env, period, app, bucket),
+		heartbeatAge(env),
+		briefForCalls(env, ctx, period, app),
+	]);
+	return renderTrend(d, { session: true, heartbeatAge: beat, brief, briefWin: ctx.win });
 }
 
 const STAT_PAGES: Record<string, (env: Env, period: string, app: string, bucket: string, req: Request) => Promise<string>> = {
@@ -307,13 +316,19 @@ const STAT_PAGES: Record<string, (env: Env, period: string, app: string, bucket:
 	// 상태줄에 쓸 탐지 서버 신호는 화면 집계와 나란히 묻는다(왕복을 늘리지 않는다).
 	"/admin/calls": callsFlow,
 	"/admin/calls/": callsFlow,
-	"/admin/calls/usage": async (e, p, a) => {
-		const [d, beat] = await Promise.all([collectUsage(e, p, a), heartbeatAge(e)]);
-		return renderUsage(d, { session: true, heartbeatAge: beat });
+	"/admin/calls/usage": async (e, p, a, _b, req) => {
+		const ctx = await briefCtx(e, briefOpts(req));
+		const [d, beat, brief] = await Promise.all([
+			collectUsage(e, p, a), heartbeatAge(e), briefForCalls(e, ctx, p, a),
+		]);
+		return renderUsage(d, { session: true, heartbeatAge: beat, brief, briefWin: ctx.win });
 	},
-	"/admin/calls/geo": async (e, p, a) => {
-		const [d, beat] = await Promise.all([collectGeo(e, p, a), heartbeatAge(e)]);
-		return renderGeo(d, { session: true, heartbeatAge: beat });
+	"/admin/calls/geo": async (e, p, a, _b, req) => {
+		const ctx = await briefCtx(e, briefOpts(req));
+		const [d, beat, brief] = await Promise.all([
+			collectGeo(e, p, a), heartbeatAge(e), briefForCalls(e, ctx, p, a),
+		]);
+		return renderGeo(d, { session: true, heartbeatAge: beat, brief, briefWin: ctx.win });
 	},
 };
 
@@ -676,8 +691,13 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 				);
 			}
 			const scope = raw === "traffic" ? "traffic" : "ai";
+			const sctx = await briefCtx(env, briefOpts(request));
+			const [sdata, sbrief] = await Promise.all([
+				collectAnomaly(env, period, appFilter, scope, "signals"),
+				briefForAnomaly(env, sctx, period, appFilter, scope),
+			]);
 			return html(
-				renderSignals(await collectAnomaly(env, period, appFilter, scope, "signals"), { session: true }),
+				renderSignals(sdata, { session: true, brief: sbrief, briefWin: sctx.win }),
 				{ cache: false },
 			);
 		}
@@ -688,8 +708,13 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 			if (unauth) return unauth;
 			const { period, appFilter } = statScope(url);
 			const scope = url.searchParams.get("scope") === "traffic" ? "traffic" : "ai";
+			const dctx = await briefCtx(env, briefOpts(request));
+			const [ddata, dbrief] = await Promise.all([
+				collectAnomaly(env, period, appFilter, scope, "detector"),
+				briefForAnomaly(env, dctx, period, appFilter, scope),
+			]);
 			return html(
-				renderDetector(await collectAnomaly(env, period, appFilter, scope, "detector"), { session: true }),
+				renderDetector(ddata, { session: true, brief: dbrief, briefWin: dctx.win }),
 				{ cache: false },
 			);
 		}
@@ -701,7 +726,16 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 			const { period } = statScope(url);
 			const kindRaw = url.searchParams.get("kind") || "";
 			const kind = ["anomaly", "train", "test"].includes(kindRaw) ? kindRaw : "";
-			return html(renderMails(await collectMails(env, period, kind), { session: true }), { cache: false });
+			const mctx = await briefCtx(env, briefOpts(request));
+			const [mdata, mbrief] = await Promise.all([
+				collectMails(env, period, kind),
+				// 이 화면은 갈래를 가리지 않는다(AI 호출·트래픽 메일을 함께 보여준다). 브리핑도 같게 센다.
+				briefForAnomaly(env, mctx, period, "", ""),
+			]);
+			return html(
+				renderMails(mdata, { session: true, brief: mbrief, briefWin: mctx.win }),
+				{ cache: false },
+			);
 		}
 
 		if (path.startsWith("/admin/anomaly/mail/")) {
@@ -753,9 +787,16 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 			const { period } = statScope(url);
 			const raw = url.searchParams.get("site") || "";
 			const site = SITES[raw] ? raw : "";
-			const [tdata, tbeat] = await Promise.all([collectTraffic(env, period, site), heartbeatAge(env)]);
+			const tctx = await briefCtx(env, briefOpts(request));
+			const [tdata, tbeat, tbrief] = await Promise.all([
+				collectTraffic(env, period, site),
+				heartbeatAge(env),
+				briefForTraffic(env, tctx, period, site),
+			]);
 			return html(
-				renderTraffic(tdata, trafficView as "visits" | "bots" | "paths", { session: true, heartbeatAge: tbeat }),
+				renderTraffic(tdata, trafficView as "visits" | "bots" | "paths", {
+					session: true, heartbeatAge: tbeat, brief: tbrief, briefWin: tctx.win,
+				}),
 				{ cache: false },
 			);
 		}
@@ -775,8 +816,18 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 					},
 				});
 			}
-			const [ldata, lbeat] = await Promise.all([queryLogs(env, filter), heartbeatAge(env)]);
-			return html(renderLogs(ldata, { session: true, heartbeatAge: lbeat, appFilter: filter.app }), { cache: false });
+			const lctx = await briefCtx(env, briefOpts(request));
+			const [ldata, lbeat, lbrief] = await Promise.all([
+				queryLogs(env, filter),
+				heartbeatAge(env),
+				briefForCalls(env, lctx, filter.period, filter.app),
+			]);
+			return html(
+				renderLogs(ldata, {
+					session: true, heartbeatAge: lbeat, appFilter: filter.app, brief: lbrief, briefWin: lctx.win,
+				}),
+				{ cache: false },
+			);
 		}
 
 		// ── 통계 JSON (/admin/stats.json) — 스크립트·CI용. 예전 응답 형태를 그대로 둔다.

@@ -199,10 +199,39 @@ export const BRIEF_RULES = {
 	maxRepeat: 2,
 	/** 새 소식과 되풀이 줄을 합쳐 몇 줄까지. 이 칸이 길어지면 첫 화면이 한눈에 안 들어온다. */
 	maxLines: 5,
+
+	// ── 트래픽. 방문은 호출보다 수가 많고 크롤러가 섞여서 문턱을 따로 둔다.
+	/** 방문 증감을 말할 최소 건수(직전 창 기준) */
+	visitMin: 30,
+	visitUp: 0.6,
+	/** 이 비율 아래로 떨어지면 급감으로 본다 */
+	visitDrop: 0.5,
+	/** 사람 방문이 이만큼 있다가 0이 되면 말한다 */
+	humanQuietMin: 20,
+	/** 서버 오류(5xx)는 몇 건부터 */
+	err5xxMin: 3,
+	/** 없는 주소 요청은 이만큼 넘고 이만큼 늘었을 때만. 늘 수백 건씩 들어와서 수만으로는 뉴스가 아니다 */
+	notFoundMin: 50,
+	notFoundUp: 0.5,
+	/** AI 크롤러 급증 */
+	aiBotMin: 20,
+	aiBotUp: 0.6,
+	/** 처음 온 크롤러는 이만큼 다녀갔을 때 */
+	newBotMin: 2,
+	/** AI 답변에서 넘어온 방문은 몇 번부터 */
+	fromAIMin: 2,
+	/** 탐지 서버 신호가 이만큼 없으면 끊긴 것으로 본다 */
+	beatDead: 15 * 60_000,
 };
 
+/** 크롤러 이름이 아니라 "이름을 알 수 없는 요청"을 모아 둔 딱지들. 브리핑에서 이름처럼 쓰지 않는다. */
+const BOT_LUMPS = new Set(["기타 봇", "(UA 없음)"]);
+
 /** 급한 순서. 종류마다 점수의 단위가 달라(배수·건수) 한 줄로 세울 수 없어 순서를 정해 둔다. */
-const KIND_ORDER = ["anomaly", "fail", "cost", "latency", "quiet", "new", "geo", "repeat"];
+const KIND_ORDER = [
+	"anomaly", "detector", "fail", "tdrop", "cost", "latency", "quiet",
+	"tup", "bot", "new", "geo", "mail", "repeat",
+];
 
 export interface BriefLine {
 	kind: string;
@@ -233,8 +262,54 @@ export interface BriefKeyRow {
 	lastTs: number;
 }
 
+/**
+ * 브리핑을 어느 자리에 놓는가.
+ *
+ *   board    상황판 — 모든 갈래에서 눈여겨볼 것만 골라 모은다
+ *   calls    AI 호출 탭 — 호출·실패·비용·지연·새 앱/모델/나라
+ *   traffic  트래픽 탭 — 방문·크롤러·유입·없는 주소
+ *   anomaly  이상탐지 탭 — 잡힌 신호·나간 메일·탐지기 변화
+ *
+ * 탭마다 자기 주제만 말한다. 한 탭이 옆 탭 일까지 말하면 같은 내용이 화면마다 겹쳐서,
+ * 정작 그 탭에서만 알 수 있는 것이 묻힌다. 상황판만 예외로 셋을 모아 본다.
+ */
+export type BriefScope = "board" | "calls" | "traffic" | "anomaly";
+
+/** 창 한쪽의 방문 셈. fromAI는 AI 답변 화면에서 링크를 눌러 넘어온 방문이다. */
+export interface TrafCount {
+	total: number; human: number; ai: number; search: number; err5xx: number; nf: number; fromAI: number;
+}
+
+/** 트래픽 재료 — 방문 기록(hits)에서 뽑는다. */
+export interface TrafBrief {
+	cur: TrafCount;
+	prev: TrafCount;
+	/** 창 안 서비스별 방문 · 직전 창 서비스별 방문 */
+	bySite: BriefKeyRow[];
+	prevSite: Record<string, number>;
+	/** 창 안에 온 크롤러 이름별 방문 수 */
+	byBot: BriefKeyRow[];
+	/** 창 안 유입 출처(AI 답변·검색) */
+	byRef: { group: string; source: string; n: number }[];
+	/** 서비스 키 → 화면에 쓰는 이름 */
+	siteName: (k: string) => string;
+}
+
+/** 이상탐지 탭에서만 덧붙이는 재료 — 신호 말고 탐지기 쪽에서 일어난 일. */
+export interface AnomExtra {
+	/** 창 안에 나간 알림 메일 수 */
+	mails: number;
+	/** 창 안에 active로 올라선 모델 버전 */
+	promoted: string[];
+	/** 창 안에 끝난 재학습 횟수 */
+	trained: number;
+	/** 탐지 서버가 마지막으로 신호를 보낸 뒤 지난 시간(ms). 한 번도 없으면 null */
+	beatAge: number | null;
+}
+
 /** findBrief가 쓰는 것만 모은 좁은 입력. stats.ts를 되짚지 않으려고 따로 둔다. */
 export interface BriefInput {
+	scope: BriefScope;
 	win: BriefWindow;
 	period: string;
 	appFilter: string;
@@ -256,10 +331,10 @@ export interface BriefInput {
 	 * n은 센 범위(창 직전 이레부터) 전체 건수, nin은 그중 창 안 건수, critical은 범위 안 심각 건수.
 	 */
 	anomRepeat: { label: string; n: number; nin: number; critical: number; firstb: number; lastin: number }[];
-	/**
-	 * 창보다 앞서 잡혔고 아직 결론이 안 난 신호(판정 전이거나 표가 갈린 것).
-	 * count는 창 직전 이레 안에서만 센다. oldest는 그중 가장 오래된 구간 시각(없으면 0).
-	 */
+	/** 이상탐지 탭에서만 쓰는 덧붙임. 없으면 그 줄을 만들지 않는다. */
+	anomExtra?: AnomExtra;
+	/** 트래픽 재료. 없으면 트래픽 줄을 만들지 않는다. */
+	traf?: TrafBrief;
 	/** 앱 id → 이름 */
 	appName: Record<string, string>;
 	countryName: (k: string) => string;
@@ -282,10 +357,19 @@ export function findBrief(b: BriefInput): Brief {
 	const pct = (v: number) => `${Math.round(v * 100)}%`;
 	const win = b.win;
 
+	// 탭마다 자기 주제만 말한다. 상황판만 셋을 모아 보되, 그때는 각 갈래에서
+	// 눈여겨볼 것만 올린다(아래 board 표시가 붙은 줄).
+	const sc = b.scope;
+	const onBoard = sc === "board";
+	const wantCalls = onBoard || sc === "calls";
+	const wantAnom = onBoard || sc === "anomaly";
+	const traf = (onBoard || sc === "traffic") && b.traf ? b.traf : null;
+	const tq = `?period=${b.period}${b.appFilter ? `&site=${encodeURIComponent(b.appFilter)}` : ""}`;
+
 	// ── 이상 신호가 새로 잡혔나.
 	//    창 앞에도 있던 종류는 여기서 세지 않는다(아래 '또 잡힌 신호'가 맡는다).
 	//    그러지 않으면 며칠째 같은 일이 나는 동안 "새로 잡혔어요"가 날마다 떴다.
-	if (b.anomIn.critical || b.anomIn.warn) {
+	if (wantAnom && (b.anomIn.critical || b.anomIn.warn)) {
 		const t = b.anomIn.top;
 		const parts: string[] = [];
 		if (b.anomIn.critical) parts.push(`심각 <b>${b.anomIn.critical}건</b>`);
@@ -302,7 +386,7 @@ export function findBrief(b: BriefInput): Brief {
 	}
 
 	// ── 실패
-	if (b.cur.error >= R.failMin) {
+	if (wantCalls && b.cur.error >= R.failMin) {
 		const top = b.byHttp[0];
 		const rate = b.cur.total ? (b.cur.error / b.cur.total) * 100 : 0;
 		const worst = b.byApp.filter((a) => a.error > 0).sort((x, y) => y.error - x.error)[0];
@@ -325,7 +409,7 @@ export function findBrief(b: BriefInput): Brief {
 
 	// ── 비용
 	// 직전 구간에 호출 자체가 없으면 견줄 것이 없다. "쓴 돈이 없었다"와 "기록이 없다"는 다르다.
-	if (b.cur.cost >= R.costFloor && b.prev.cost <= 0 && b.prev.total > 0) {
+	if (wantCalls && b.cur.cost >= R.costFloor && b.prev.cost <= 0 && b.prev.total > 0) {
 		fresh.push({
 			kind: "cost",
 			text: `바로 앞 같은 기간에는 쓴 돈이 없는데, 이번에는 <b>${usd(b.cur.cost)}</b> 썼어요.`,
@@ -333,7 +417,7 @@ export function findBrief(b: BriefInput): Brief {
 			at: 0,
 			score: 10,
 		});
-	} else if (b.cur.cost >= R.costFloor && b.prev.cost > 0) {
+	} else if (wantCalls && b.cur.cost >= R.costFloor && b.prev.cost > 0) {
 		const up = (b.cur.cost - b.prev.cost) / b.prev.cost;
 		if (up >= R.costUp) {
 			const money = usd(b.cur.cost);
@@ -364,7 +448,7 @@ export function findBrief(b: BriefInput): Brief {
 	}
 
 	// ── 지연
-	if (b.cur.total >= R.latMinCalls && b.prev.total >= R.latMinCalls) {
+	if (wantCalls && b.cur.total >= R.latMinCalls && b.prev.total >= R.latMinCalls) {
 		const now = b.cur.total ? b.cur.latSum / b.cur.total : 0;
 		const was = b.prev.total ? b.prev.latSum / b.prev.total : 0;
 		if (was > 0 && (now - was) / was >= R.latUp) {
@@ -379,6 +463,7 @@ export function findBrief(b: BriefInput): Brief {
 	}
 
 	// ── 처음 본 것 — 전체 기록에서 처음이어야 '처음'이라고 말한다.
+	if (wantCalls) {
 	pushFirst(b, fresh, "model", b.byModel, R.newMin, (r) =>
 		`<b>${esc(shortModel(r.key))}</b> 모델을 처음 썼어요 (${r.total.toLocaleString()}건).`, `/admin/calls/usage${q}#model`);
 	pushFirst(b, fresh, "app", b.byApp, R.newMin, (r) =>
@@ -400,6 +485,181 @@ export function findBrief(b: BriefInput): Brief {
 			score: quiet[1],
 		});
 	}
+	}
+
+	// ── 트래픽 — 방문 기록으로 본다.
+	//
+	//    이상탐지가 남긴 traffic 갈래 신호를 가져다 쓰지 않는다. 그 신호는 5분·1시간 구간을
+	//    기준으로 잡히는데 브리핑 창은 "밤사이"처럼 길이가 제각각이라, 둘을 섞으면
+	//    "방문 급감 3건"처럼 창과 맞지 않는 수가 나온다. 여기서는 창 안 방문을 직접 센다.
+	//    상황판에는 서비스가 멎었다는 뜻이 되는 것만 올린다(급증·크롤러 변화는 트래픽 탭 몫).
+	if (traf) {
+		const c = traf.cur;
+		const pv = traf.prev;
+		// 한 사건을 두 줄로 말하지 않는다. 방문이 반 토막 났다고 적고 그 아래에
+		// "사람이 안 왔어요"를 또 적으면, 두 가지 일이 난 것처럼 읽힌다.
+		let said = false;
+
+		if (!c.total && pv.total >= R.visitMin) {
+			fresh.push({
+				kind: "tdrop",
+				text: `들어온 방문이 없어요. 바로 앞 같은 기간에는 ${pv.total.toLocaleString()}번이었어요.`,
+				href: `/admin/traffic${tq}`,
+				at: 0,
+				score: pv.total,
+			});
+			said = true;
+		} else if (pv.total >= R.visitMin && c.total < pv.total * R.visitDrop) {
+			// 방문 급감 — 서비스가 멎었거나 색인에서 빠진 것일 수 있다.
+			fresh.push({
+				kind: "tdrop",
+				text: `방문이 <b>${c.total.toLocaleString()}번</b>으로 줄었어요. 바로 앞 같은 기간에는 ${pv.total.toLocaleString()}번이었어요.`,
+				href: `/admin/traffic${tq}`,
+				at: 0,
+				score: pv.total - c.total,
+			});
+			said = true;
+		} else if (pv.human >= R.humanQuietMin && c.human === 0) {
+			// 전체는 멀쩡한데 사람만 끊긴 경우 — 크롤러만 남았다는 뜻이다.
+			fresh.push({
+				kind: "tdrop",
+				text: `사람이 다녀간 기록이 없어요. 바로 앞 같은 기간에는 ${pv.human.toLocaleString()}번이었어요.`,
+				href: `/admin/traffic${tq}`,
+				at: 0,
+				score: pv.human,
+			});
+			said = true;
+		}
+
+		// 서버 오류 — 방문한 사람이 실제로 깨진 화면을 봤다는 뜻이라 몇 건이어도 알린다.
+		if (c.err5xx >= R.err5xxMin) {
+			fresh.push({
+				kind: "tdrop",
+				text: `서버 오류(5xx)가 <b>${c.err5xx.toLocaleString()}건</b> 났어요.`,
+				href: `/admin/traffic/paths${tq}`,
+				at: 0,
+				score: c.err5xx,
+			});
+		}
+
+		// 없는 주소 요청 — 늘 수백 건씩 들어오므로 수 자체는 뉴스가 아니다. 늘어난 때만 말한다.
+		// 상황판에는 올리지 않는다. 대부분 자동 스캐너가 훑고 지나간 자국이라
+		// 서비스가 멎었다는 뜻이 아닌데, 스캐너가 한 번 돌 때마다 첫 화면을 차지하게 된다.
+		const nfUp = c.nf >= R.notFoundMin && pv.nf > 0 && (c.nf - pv.nf) / pv.nf >= R.notFoundUp;
+		if (nfUp && !onBoard) {
+			fresh.push({
+				kind: "tup",
+				text: `없는 주소 요청이 <b>${c.nf.toLocaleString()}건</b>이에요. 바로 앞 같은 기간에는 ${pv.nf.toLocaleString()}건이었어요.`,
+				href: `/admin/traffic/paths${tq}`,
+				at: 0,
+				score: c.nf,
+			});
+		}
+
+		// 서비스별로 방문이 끊긴 곳 — 전체 방문은 멀쩡한데 한 서비스만 멎는 경우가 있다.
+		// 전체가 이미 급감했다면 그 이야기를 위에서 했으므로 덧붙이지 않는다.
+		if (!said) {
+			const nowSite = new Map(traf.bySite.map((x) => [x.key, x.total]));
+			const deadSite = Object.entries(traf.prevSite)
+				.filter(([k, n]) => n >= R.humanQuietMin && !nowSite.get(k))
+				.sort((x, y) => y[1] - x[1])[0];
+			if (deadSite) {
+				fresh.push({
+					kind: "tdrop",
+					text: `<b>${esc(traf.siteName(deadSite[0]))}</b> 방문이 끊겼어요. 바로 앞 같은 기간에는 ${deadSite[1].toLocaleString()}번이었어요.`,
+					href: `/admin/traffic?period=${b.period}&site=${encodeURIComponent(deadSite[0])}`,
+					at: 0,
+					score: deadSite[1],
+				});
+				said = true;
+			}
+		}
+
+		// 아래는 트래픽 탭에서만 — 상황판에 올릴 만큼 급한 일은 아니다.
+		if (!onBoard) {
+			// 방문 급증. 없는 주소 요청이 함께 늘었으면 그쪽이 원인이라 따로 적지 않는다.
+			if (!said && !nfUp && pv.total >= R.visitMin && c.total > pv.total * (1 + R.visitUp)) {
+				fresh.push({
+					kind: "tup",
+					text: `방문이 <b>${c.total.toLocaleString()}번</b>으로 늘었어요. 바로 앞 같은 기간에는 ${pv.total.toLocaleString()}번이었어요.`,
+					href: `/admin/traffic${tq}`,
+					at: 0,
+					score: (c.total - pv.total) / pv.total,
+				});
+			}
+			if (c.ai >= R.aiBotMin && pv.ai > 0 && (c.ai - pv.ai) / pv.ai >= R.aiBotUp) {
+				fresh.push({
+					kind: "tup",
+					text: `AI 크롤러가 <b>${c.ai.toLocaleString()}번</b> 다녀갔어요. 바로 앞 같은 기간에는 ${pv.ai.toLocaleString()}번이었어요.`,
+					href: `/admin/traffic/bots${tq}`,
+					at: 0,
+					score: c.ai,
+				});
+			}
+			// 처음 온 크롤러 — 전체 기록에서 처음일 때만. 호출 쪽 '처음 본 것'과 같은 기준이다.
+			//    이름을 알 수 없는 요청을 모아 둔 딱지는 뺀다. 그것을 이름처럼 적으면
+			//    "기타 봇이 처음 다녀갔어요"가 되어 누가 온 것처럼 읽힌다.
+			pushFirst(b, fresh, "bot", traf.byBot.filter((r) => !BOT_LUMPS.has(r.key)), R.newBotMin, (r) =>
+				`<b>${esc(r.key)}</b>${josa(r.key, "이", "가")} 처음 다녀갔어요 (${r.total.toLocaleString()}번).`,
+				`/admin/traffic/bots${tq}`);
+			// AI 답변에서 넘어온 방문 — 크롤러가 읽어간 것이 실제 방문으로 이어진 자리다.
+			if (c.fromAI >= R.fromAIMin) {
+				const top = traf.byRef.filter((r) => r.group === "ai").sort((x, y) => y.n - x.n)[0];
+				fresh.push({
+					kind: "bot",
+					text:
+						`AI 답변에서 <b>${c.fromAI.toLocaleString()}번</b> 넘어왔어요.` +
+						(top ? ` ${esc(top.source)}에서 가장 많이 왔어요.` : ""),
+					href: `/admin/traffic/paths${tq}`,
+					at: 0,
+					score: c.fromAI,
+				});
+			}
+		}
+	}
+
+	// ── 탐지기 쪽에서 일어난 일 — 이상탐지 탭에서만. 신호가 아니라 탐지기 자체 이야기다.
+	if (sc === "anomaly" && b.anomExtra) {
+		const x = b.anomExtra;
+		if (x.beatAge === null || x.beatAge > R.beatDead) {
+			fresh.push({
+				kind: "detector",
+				text:
+					x.beatAge === null
+						? "탐지 서버에서 아직 아무 신호도 오지 않았어요."
+						: `탐지 서버 신호가 ${Math.round(x.beatAge / 60_000).toLocaleString()}분째 없어요.`,
+				href: `/admin/anomaly/detector?period=${b.period}`,
+				at: 0,
+				score: 1000,
+			});
+		}
+		if (x.promoted.length) {
+			fresh.push({
+				kind: "detector",
+				text: `탐지 모델 <b>${esc(x.promoted[0])}</b>${josa(x.promoted[0], "이", "가")} 새로 쓰이기 시작했어요.`,
+				href: `/admin/anomaly/detector?period=${b.period}`,
+				at: 0,
+				score: 500,
+			});
+		} else if (x.trained > 0) {
+			fresh.push({
+				kind: "detector",
+				text: `재학습이 ${x.trained.toLocaleString()}번 돌았어요. 쓰는 모델은 그대로예요.`,
+				href: `/admin/anomaly/detector?period=${b.period}`,
+				at: 0,
+				score: x.trained,
+			});
+		}
+		if (x.mails > 0) {
+			fresh.push({
+				kind: "mail",
+				text: `알림 메일이 <b>${x.mails.toLocaleString()}통</b> 나갔어요.`,
+				href: `/admin/anomaly/mails?period=${b.period}`,
+				at: 0,
+				score: x.mails,
+			});
+		}
+	}
 
 	// ── 또 잡힌 신호 — 창 앞에도 있었고 창 안에도 있다. 새 소식이 아니라 되풀이되는 일이다.
 	//
@@ -410,7 +670,7 @@ export function findBrief(b: BriefInput): Brief {
 	//    있었는지는 알 수 없다. '부터'는 그날이 처음이었다고 읽힌다.
 	//    앱 이름은 붙이지 않는다 — 탐지기가 같은 일에 앱별 행과 전체('*') 행을 함께 남겨서
 	//    한 앱을 지목하면 틀린 말이 된다. 어느 앱인지는 눌러서 이상탐지 화면에서 본다.
-	for (const r of b.anomRepeat.slice().sort((x, y) => y.critical - x.critical || y.n - x.n).slice(0, R.maxRepeat)) {
+	for (const r of (wantAnom ? b.anomRepeat : []).slice().sort((x, y) => y.critical - x.critical || y.n - x.n).slice(0, R.maxRepeat)) {
 		const f = kstOf(r.firstb);
 		repeat.push({
 			kind: "repeat",
@@ -478,10 +738,30 @@ function pushFirst(
  * 되풀이되는 신호가 있으면 "별다른 일 없었어요"라고 쓰지 않는다. 그 신호는 창 안에도 났으므로
  * 아무 일도 없었다는 말이 되어 바로 아래 줄과 어긋난다. 그때는 "새로 생긴 일은 없어요"로
  * 범위를 좁혀 적는다 — 없는 것은 '새 소식'이지 '일' 자체가 아니다.
+ *
+ * 탭마다 세는 것이 다르므로 문장도 갈라 쓴다. 트래픽 탭에서 "호출 0건"이라고 적으면
+ * 방문이 없었다는 뜻으로 읽혀서 틀린 말이 된다.
  */
 function quietLine(b: BriefInput, win: BriefWindow): string {
+	const quiet = b.anomRepeat.length && (b.scope === "board" || b.scope === "anomaly");
+	const head = quiet ? `${win.label} 새로 생긴 일은 없어요.` : `${win.label} 별다른 일 없었어요.`;
+
+	if (b.scope === "traffic") {
+		const t = b.traf;
+		if (!t || !t.cur.total) return `${win.label} 들어온 방문이 없었어요.`;
+		return (
+			`${head} 방문 ${t.cur.total.toLocaleString()}번,` +
+			` 그중 사람 ${t.cur.human.toLocaleString()}번 · AI 크롤러 ${t.cur.ai.toLocaleString()}번이에요.`
+		);
+	}
+
+	if (b.scope === "anomaly") {
+		const n = b.anomIn.critical + b.anomIn.warn;
+		if (!n && !b.anomRepeat.length) return `${win.label} 새로 잡힌 신호가 없어요.`;
+		return `${win.label} 새로 잡힌 신호는 없어요.`;
+	}
+
 	if (!b.cur.total) return `${win.label} 호출이 없었어요.`;
-	const head = b.anomRepeat.length ? `${win.label} 새로 생긴 일은 없어요.` : `${win.label} 별다른 일 없었어요.`;
 	const calls = `호출 ${b.cur.total.toLocaleString()}건`;
 	const fail = b.cur.error
 		? `${calls} 가운데 실패 ${b.cur.error.toLocaleString()}건`
@@ -499,14 +779,27 @@ const appLabel = (b: BriefInput, app: string) => (app === "*" ? "전체" : b.app
  * (영문은 l·m·n으로 끝날 때만 받침이 남는다 — '모델'은 있고 '에이전트'는 없다).
  */
 const DIGIT_FINAL = new Set(["0", "1", "3", "6", "7", "8"]);
+/** 끝소리가 늘 받침으로 남는 영문 자음 — 모델(ㄹ) · 시스템(ㅁ) · 라운드온(ㄴ) */
 const ALPHA_FINAL = new Set(["l", "m", "n"]);
+/**
+ * 끝소리가 받침이 될 수도, 안 될 수도 있는 자음.
+ * 앞이 모음이면 받침으로 붙여 읽고(Bingbot → 빙봇, web → 웹, book → 북),
+ * 앞이 자음이면 '으'를 넣어 읽어 받침이 없다(agent → 에이전트, point → 포인트).
+ */
+const ALPHA_MAYBE = new Set(["t", "k", "p", "b", "c"]);
+const VOWEL = new Set(["a", "e", "i", "o", "u"]);
 export function hasFinal(word: string): boolean {
-	const c = String(word || "").trim().replace(/[)\]"'\u2019\u300d]+$/, "").slice(-1).toLowerCase();
+	const w = String(word || "").trim().replace(/[)\]"'\u2019\u300d]+$/, "").toLowerCase();
+	const c = w.slice(-1);
 	if (!c) return false;
 	const code = c.charCodeAt(0);
 	if (code >= 0xac00 && code <= 0xd7a3) return (code - 0xac00) % 28 !== 0;
 	if (/[0-9]/.test(c)) return DIGIT_FINAL.has(c);
-	if (/[a-z]/.test(c)) return ALPHA_FINAL.has(c);
+	if (!/[a-z]/.test(c)) return false;
+	if (ALPHA_FINAL.has(c)) return true;
+	// -ng는 통째로 ㅇ받침이 된다(Bing → 빙).
+	if (c === "g") return w.slice(-2) === "ng";
+	if (ALPHA_MAYBE.has(c)) return VOWEL.has(w.slice(-2, -1));
 	return false;
 }
 const josa = (w: string, withFinal: string, without: string) => (hasFinal(w) ? withFinal : without);

@@ -5,6 +5,7 @@
  * 외부 라이브러리를 쓰지 않는다. 차트·지도 모두 서버에서 SVG 문자열로 만든다.
  */
 
+import type { Brief, BriefWindow } from "./brief";
 import { WORLD_PATH, MAP_W, MAP_H, projectLonLat } from "./worldmap";
 import { countryName, type StatsSummary } from "./stats";
 
@@ -1604,6 +1605,12 @@ export interface AdminOpts {
 	live?: boolean;
 	/** 자동 갱신이 감시할 앱 조건 */
 	appFilter?: string;
+	/**
+	 * 브리핑 — "안 보는 사이에 무슨 일이 있었나". 탭마다 자기 주제만 담는다.
+	 * 화면 집계와 나란히 조회해 넘긴다. 없으면 그 화면에는 브리핑 칸을 그리지 않는다.
+	 */
+	brief?: Brief;
+	briefWin?: BriefWindow;
 	/** 상단 탭 아래 하위 탭 줄. 화면이 자기 조건(기간·앱)을 붙인 주소를 만들어 넘긴다. */
 	sub?: { key: string; items: { key: string; href: string; label: string }[] };
 }

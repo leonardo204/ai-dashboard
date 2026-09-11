@@ -27,7 +27,7 @@ import {
 	svgTrend, svgMap, hbars, svgHeat, svgLevels, svgF1, svgTraffic, type AdminOpts,
 } from "./ui";
 import { SITES, siteName, siteUrl, THREAT_LABEL } from "./traffic";
-import { BRIEF_TABS, type BriefKey } from "./brief";
+import { BRIEF_TABS, type BriefKey, type BriefWindow, type Brief } from "./brief";
 
 /** 상단바 메뉴가 기간·앱 조건을 그대로 물고 가도록 붙이는 질의 문자열. */
 function navQuery(period: string, appFilter: string): string {
@@ -96,11 +96,23 @@ const STATUS_LABEL: Record<string, string> = { ok: "정상", warn: "주의", bad
  * 말할 것이 없으면 줄을 지어내지 않고 "별다른 일 없었어요"로 끝낸다.
  * 그게 이 자리의 값어치다. 매번 같은 세 줄이 떠 있으면 아무도 읽지 않는다.
  */
-function briefPanel(b: BoardData): string {
-	const w = b.briefWin;
+/**
+ * 브리핑 칸 — 상황판과 각 탭이 같은 모양을 쓴다.
+ *
+ * base는 지금 화면 주소, query는 그 화면이 물고 다니는 조건이다. 창 탭(자동·하루·3일…)을
+ * 눌러도 보던 화면과 조건 그대로 머물러야 해서 둘을 받아 링크를 만든다.
+ */
+interface BriefBox {
+	win: BriefWindow;
+	brief: Brief;
+	base: string;
+	query: string;
+}
+
+function briefPanel(o: BriefBox): string {
+	const w = o.win;
 	const href = (key: BriefKey) =>
-		`/admin?period=${b.period}${b.appFilter ? `&app=${encodeURIComponent(b.appFilter)}` : ""}` +
-		(key === "auto" ? "" : `&brief=${key}`);
+		`${o.base}?${o.query}${key === "auto" ? "" : `${o.query ? "&" : ""}brief=${key}`}`;
 	const tabs = [{ key: "auto" as BriefKey, label: "자동" }, ...BRIEF_TABS]
 		.map(
 			(t) =>
@@ -109,23 +121,23 @@ function briefPanel(b: BoardData): string {
 		)
 		.join("");
 
-	const body = b.brief.fresh.length
-		? b.brief.fresh
+	const body = o.brief.fresh.length
+		? o.brief.fresh
 				.map(
 					(c) =>
 						`<a href="${c.href}"><i></i><span>${c.text}</span>` +
 						`${c.at ? `<em>${escapeHtml(briefAt(c.at))}</em>` : ""}</a>`,
 				)
 				.join("")
-		: `<span class="none">${escapeHtml(b.brief.quiet)}</span>`;
+		: `<span class="none">${escapeHtml(o.brief.quiet)}</span>`;
 
 	// 그전에도 나던 신호 — 새 소식 셈에서 뺀 것들이라 그 사실을 여기서 밝힌다.
 	//
 	// 머리말은 붙이지 않는다. 줄 자체가 "…은 처음이 아니에요"로 시작해 이미 무슨 얘기인지
 	// 말하고 있어서, 위에 제목을 얹으면 그 제목이 무슨 뜻인지 되묻게 만든다.
 	// 새 소식과 섞이지 않게 흐린 글씨와 ↻ 표시, 가는 선으로만 가른다.
-	const repeat = b.brief.repeat.length
-		? `<div class="rep">${b.brief.repeat
+	const repeat = o.brief.repeat.length
+		? `<div class="rep">${o.brief.repeat
 				.map(
 					(c) =>
 						`<a href="${c.href}"><i aria-hidden="true">↻</i><span>${c.text}</span>` +
@@ -142,6 +154,13 @@ function briefPanel(b: BoardData): string {
   <div class="bl">${body}</div>
   ${repeat}
 </section>`;
+}
+
+/** 화면이 받은 브리핑을 칸으로. 브리핑이 없는 화면(설정)에서는 아무것도 그리지 않는다. */
+function briefOf(opts: AdminOpts, base: string, query: string): string {
+	return opts.brief && opts.briefWin
+		? briefPanel({ win: opts.briefWin, brief: opts.brief, base, query })
+		: "";
 }
 
 /** 브리핑 줄 오른쪽의 시각. 오늘은 시각만, 어제는 "어제", 그 전은 날짜로 적는다. */
@@ -210,7 +229,7 @@ ${filterTabs("/admin", b.period, b.appFilter, b.apps, PERIODS)}
   <span class="rs">${escapeHtml(st.reason)}</span>
   <span class="go">보기 →</span>
 </a>
-${briefPanel(b)}
+${briefPanel({ win: b.briefWin, brief: b.brief, base: "/admin", query: navQuery(b.period, b.appFilter).slice(1) })}
 
 ${kpiRow([
 	{
@@ -346,6 +365,7 @@ export function renderUsage(u: UsageData, opts: AdminOpts = {}): string {
 		pageHead("사용량", `앱 · 모델 · 용도별 집계 · ${sinceLabel(u.since)}`) +
 			`<div id="hz-body">
 ${filterTabs("/admin/calls/usage", u.period, u.appFilter, u.apps, PERIODS)}
+${briefOf(opts, "/admin/calls/usage", navQuery(u.period, u.appFilter).slice(1))}
 ${kpiRow([
 	{ label: "호출", value: u.total.toLocaleString(), size: "sm" },
 	{ label: "비용", value: usd(u.cost), size: "sm" },
@@ -432,6 +452,7 @@ export function renderTrend(t: TrendData, opts: AdminOpts = {}): string {
 		pageHead("AI 호출", `호출·비용 흐름 · ${sinceLabel(t.since)}`) +
 			`<div id="hz-body">
 ${filterTabs("/admin/calls", t.period, t.appFilter, t.apps, PERIODS)}
+${briefOf(opts, "/admin/calls", navQuery(t.period, t.appFilter).slice(1))}
 ${sectionHead(`${t.bucketLabel} 단위 호출·비용`, {
 		tip: TIP_TREND,
 		note: t.total
@@ -565,6 +586,7 @@ export function renderGeo(g: GeoData, opts: AdminOpts = {}): string {
 		pageHead("호출 지역", `국가 · 도시별 호출·방문 분포 · ${sinceLabel(g.since)}`) +
 			`<div id="hz-body">
 ${filterTabs("/admin/calls/geo", g.period, g.appFilter, g.apps, PERIODS)}
+${briefOf(opts, "/admin/calls/geo", navQuery(g.period, g.appFilter).slice(1))}
 ${svgMap(g.points, g.geoUnknown, g.hitPoints, g.hitUnknown, g.hitSite ? siteName(g.hitSite) : "")}
 
 ${sectionHead("국가별 AI 호출", { tip: TIP_GEO, count: `${g.byCountry.filter((c) => c.key !== "(미상)").length}개국` })}
@@ -1598,6 +1620,8 @@ function renderAnomalyScreen(a: AnomalyData, view: "signals" | "detector", opts:
 			`<div id="hz-body">
 ${anomalyNavRow(nav)}
 ${anomalyAppRow(nav, traffic ? SITE_TABS : a.apps, traffic)}
+${briefOf(opts, signals ? "/admin/anomaly" : "/admin/anomaly/detector",
+	`period=${a.period}&scope=${a.scope}${a.appFilter ? `&app=${encodeURIComponent(a.appFilter)}` : ""}`)}
 ${signals ? "" : serverBar(a)}
 ${warmupNotice(a)}
 ${!signals ? "" : `
@@ -1760,6 +1784,7 @@ export function renderMails(d: MailsData, opts: AdminOpts = {}): string {
 			`<div id="hz-body">
 ${anomalyNavRow(nav)}
 ${anomalyViewRow(nav, kindTab("", "전체", d.total) + kindTab("anomaly", "이상 알림", d.anomaly) + kindTab("train", "학습 결과", d.train) + kindTab("test", "점검", d.test))}
+${briefOf(opts, "/admin/anomaly/mails", `period=${d.period}${d.kind ? `&kind=${encodeURIComponent(d.kind)}` : ""}`)}
 ${serverBarOf(d.state, d.heartbeatAge)}
 
 ${kpiRow([
@@ -1947,6 +1972,7 @@ export function renderLogs(l: LogsData, opts: AdminOpts = {}): string {
 		"호출 로그",
 		pageHead("호출 로그", "조건을 걸어 호출 1건씩 살펴봐요. 줄을 누르면 상세가 펼쳐져요.") +
 			`<div id="hz-body">
+${briefOf(opts, "/admin/calls/logs", logQuery(f, { before: 0 }).slice(1))}
 <form class="flt" method="get" action="/admin/calls/logs">
   <input type="hidden" name="period" value="${escapeHtml(f.period)}">
   <div class="row">
@@ -2393,6 +2419,7 @@ ${filterTabs(base, t.period, t.siteFilter, t.sites, PERIODS, "",
 		: "",
 	{ key: "site", allLabel: "전체 서비스" },
 )}
+${briefOf(opts, base, `period=${t.period}${t.siteFilter ? `&site=${encodeURIComponent(t.siteFilter)}` : ""}`)}
 
 ${kpiRow([
 	{ label: "방문", value: t.total.toLocaleString(), delta: { cur: t.total, prev: t.prevTotal }, size: "sm" },
