@@ -39,6 +39,7 @@ import {
 	collectTraffic,
 	type AppConfig, type LogFilter,
 } from "./stats";
+import type { BriefKey } from "./brief";
 import { handlePasskey, type PasskeyEnv } from "./passkey";
 import { handleHit, exportHits, SITES, type TrafficEnv } from "./traffic";
 import { renderLogin } from "./ui";
@@ -279,15 +280,30 @@ function statScope(url: URL): { period: string; appFilter: string } {
  * 경로 → (조회 + 렌더). 화면마다 자기 집계만 돈다.
  * 예전에는 /admin 한 장이 12개 집계를 전부 돌려, 보지도 않는 표 때문에 느렸다.
  */
+/**
+ * 상황판.
+ *
+ * 브리핑은 "마지막으로 본 뒤"를 기준으로 삼는다. 그래서 사람이 연 것인지
+ * 60초마다 도는 자동 갱신인지 갈라야 한다 — 자동 갱신으로 그 시각을 밀면
+ * 창이 늘 1분으로 줄어 브리핑이 영영 비게 된다. 갱신 요청은 X-Hz-Live 헤더를 붙여 온다.
+ */
+async function board(env: Env, period: string, app: string, _b: string, req: Request): Promise<string> {
+	const url = new URL(req.url);
+	const raw = url.searchParams.get("brief") || "";
+	const brief = (["day", "d3", "w1", "m1"].includes(raw) ? raw : "auto") as BriefKey;
+	const live = req.headers.get("X-Hz-Live") === "1";
+	return renderBoard(await collectBoard(env, period, app, { brief, live }), { session: true });
+}
+
 /** AI 호출 흐름 — 그래프의 이상 구간 띠를 누르면 ?bucket= 이 붙어 그 구간만 갈라 본다. */
 async function callsFlow(env: Env, period: string, app: string, bucket = ""): Promise<string> {
 	const [d, beat] = await Promise.all([collectTrend(env, period, app, bucket), heartbeatAge(env)]);
 	return renderTrend(d, { session: true, heartbeatAge: beat });
 }
 
-const STAT_PAGES: Record<string, (env: Env, period: string, app: string, bucket: string) => Promise<string>> = {
-	"/admin": async (e, p, a) => renderBoard(await collectBoard(e, p, a), { session: true }),
-	"/admin/": async (e, p, a) => renderBoard(await collectBoard(e, p, a), { session: true }),
+const STAT_PAGES: Record<string, (env: Env, period: string, app: string, bucket: string, req: Request) => Promise<string>> = {
+	"/admin": board,
+	"/admin/": board,
 	// 상태줄에 쓸 탐지 서버 신호는 화면 집계와 나란히 묻는다(왕복을 늘리지 않는다).
 	"/admin/calls": callsFlow,
 	"/admin/calls/": callsFlow,
@@ -717,7 +733,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 			if (unauth) return unauth;
 			const { period, appFilter } = statScope(url);
 			return html(
-				await STAT_PAGES[path](env, period, appFilter, (url.searchParams.get("bucket") || "").slice(0, 10)),
+				await STAT_PAGES[path](env, period, appFilter, (url.searchParams.get("bucket") || "").slice(0, 10), request),
 				{ cache: false },
 			);
 		}
@@ -771,7 +787,8 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 			const { period, appFilter } = statScope(url);
 			// ?board=1 이면 상황판이 쓰는 값 그대로 — 화면 숫자와 대조할 때 쓴다.
 			if (url.searchParams.get("board")) {
-				return new Response(JSON.stringify(await collectBoard(env, period, appFilter), null, 2), {
+				// 스크립트가 부르는 자리라 사람이 본 것으로 치지 않는다(브리핑 창을 밀지 않는다).
+				return new Response(JSON.stringify(await collectBoard(env, period, appFilter, { live: true }), null, 2), {
 					headers: { "Content-Type": "application/json;charset=UTF-8", "Cache-Control": "no-store" },
 				});
 			}

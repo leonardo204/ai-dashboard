@@ -10,6 +10,10 @@
 
 
 import { SITES, siteName, ensureHitsTable } from "./traffic";
+import {
+	briefWindow, findBrief, SESSION_GAP,
+	type BriefKey, type BriefWindow, type Brief, type BriefAgg, type BriefKeyRow,
+} from "./brief";
 
 export interface StatsEnv {
 	DB: D1Database;
@@ -148,6 +152,20 @@ export async function ensureSchema(env: StatsEnv): Promise<void> {
 			" kind TEXT NOT NULL DEFAULT 'anomaly', scope TEXT, severity TEXT, subject TEXT NOT NULL," +
 			" lead TEXT, recipient TEXT, ok INTEGER NOT NULL DEFAULT 1, error TEXT," +
 			" signals TEXT, det_ids TEXT, body TEXT, html TEXT)",
+		// 브리핑이 쓰는 두 표.
+		//
+		// seen_key — 앱·모델·나라를 '전체 기록에서 처음' 본 시각. 이게 없으면 조회 기간 안에서만
+		//   처음인지 알 수 있어서, 직전 기간에 데이터가 없는 동안 모든 것이 '처음'으로 잡힌다.
+		//   (실제로 그래서 늘 쓰던 모델과 한국이 한 달 내내 '처음'으로 떴다.)
+		//   표를 만들 때 지금 기록으로 한 번 채우고, 이후에는 상황판이 새 키를 만날 때마다 넣는다.
+		"CREATE TABLE IF NOT EXISTS seen_key (kind TEXT NOT NULL, key TEXT NOT NULL, first_ts INTEGER NOT NULL, PRIMARY KEY (kind, key))",
+		"INSERT OR IGNORE INTO seen_key (kind,key,first_ts) SELECT 'app', COALESCE(app,'(미상)'), MIN(ts) FROM calls GROUP BY app",
+		"INSERT OR IGNORE INTO seen_key (kind,key,first_ts) SELECT 'model', COALESCE(model,'(미상)'), MIN(ts) FROM calls GROUP BY model",
+		"INSERT OR IGNORE INTO seen_key (kind,key,first_ts) SELECT 'country', COALESCE(NULLIF(country,''),'(미상)'), MIN(ts) FROM calls GROUP BY country",
+		// board_seen — 마지막으로 화면을 연 때. 브리핑이 "안 보는 사이"를 잡는 기준이다.
+		//   win_from은 지금 브리핑 창의 시작이고, 같은 세션 안에서는 그대로 둔다.
+		//   (새로고침할 때마다 창이 0으로 쪼그라들면 브리핑이 늘 비어 버린다.)
+		"CREATE TABLE IF NOT EXISTS board_seen (who TEXT PRIMARY KEY, last_open INTEGER NOT NULL, win_from INTEGER NOT NULL)",
 		// 관리자 패스키(WebAuthn). 공개키만 보관하므로 이 표가 새어도 로그인에는 쓸 수 없다.
 		"CREATE TABLE IF NOT EXISTS passkeys (cred_id TEXT PRIMARY KEY, public_key TEXT NOT NULL, alg INTEGER NOT NULL DEFAULT -7, label TEXT, created_at INTEGER NOT NULL, last_used_at INTEGER, counter INTEGER NOT NULL DEFAULT 0)",
 	]) {
@@ -1066,6 +1084,27 @@ const FP_SQL = "('rule_fp','model_fp','both_fp')";
  * LIMIT은 맨 마지막에 걸리므로 창 함수는 걸러진 전체를 본다 — 몇 건만 받아 오면서 개수도 같이 센다.
  * n·nc·nw는 이 기간에 열린 신호, c24·w24는 최근 하루치다(상태 한 줄은 지금을 말해야 한다).
  */
+/** 신호 이름 — 이력 표에 아직 안 나온 신호도 화면에서는 한국어로 보이게 한다. */
+export const SIGNAL_LABEL: Record<string, string> = {
+	call_spike: "호출량 급증",
+	error_rate: "오류율 급증",
+	cost_spike: "비용 급증",
+	latency_slow: "응답 지연",
+	ip_surge: "접속 IP 급증",
+	new_country: "새 국가에서 호출",
+	new_ip_burst: "새 IP 다수 등장",
+	rate_limited: "호출 상한 초과(429)",
+	model_anomaly: "모델 이상 판정",
+	// 트래픽(서비스 방문)
+	traffic_drop: "방문 급감",
+	traffic_spike: "방문 급증",
+	search_bot_drop: "검색 크롤러 발길 끊김",
+	ai_bot_spike: "AI 크롤러 급증",
+	http_5xx: "서버 오류(5xx) 발생",
+	http_404: "없는 주소 요청(404) 급증",
+	new_bot: "새 크롤러 등장",
+};
+
 const WIN =
 	` SUM(CASE WHEN verdict IS NULL OR verdict NOT IN ${FP_SQL} THEN 1 ELSE 0 END) OVER () AS n,` +
 	` SUM(CASE WHEN severity='critical' AND (verdict IS NULL OR verdict NOT IN ${FP_SQL}) THEN 1 ELSE 0 END) OVER () AS nc,` +
@@ -1228,40 +1267,91 @@ export interface BoardData {
 	/** 트래픽 한 줄 — 오늘 방문과 그중 AI 크롤러 몫. */
 	traffic: { today: number; ai: number; human: number } | null;
 	status: BoardStatus;
+	/**
+	 * 브리핑 — "안 보는 사이에 무슨 일이 있었나".
+	 * 위 숫자들과 달리 기간 탭을 따르지 않고 마지막으로 본 때부터를 본다.
+	 */
+	brief: Brief;
+	briefWin: BriefWindow;
 }
 
-export async function collectBoard(env: StatsEnv, period: string, appFilter: string): Promise<BoardData> {
-	return withSchema(env, () => collectBoardInner(env, period, appFilter));
+export async function collectBoard(
+	env: StatsEnv,
+	period: string,
+	appFilter: string,
+	opts: { brief?: BriefKey; live?: boolean } = {},
+): Promise<BoardData> {
+	return withSchema(env, () => collectBoardInner(env, period, appFilter, opts));
 }
 
-async function collectBoardInner(env: StatsEnv, period: string, appFilter: string): Promise<BoardData> {
+/** 브리핑 창을 기억하는 주인. 지금은 관리자 한 명이라 한 줄이면 된다. */
+const SEEN_WHO = "admin";
+
+async function collectBoardInner(
+	env: StatsEnv,
+	period: string,
+	appFilter: string,
+	opts: { brief?: BriefKey; live?: boolean },
+): Promise<BoardData> {
 	const { p, since, prevSince } = periodInfo(period);
-	const monthSince = Date.now() - 400 * 86_400_000;
+	const now = Date.now();
+	const monthSince = now - 400 * 86_400_000;
 	// 오늘(KST) 0시
 	const KST = 9 * 3600_000;
-	const k = new Date(Date.now() + KST);
+	const k = new Date(now + KST);
 	const todayStart = Date.UTC(k.getUTCFullYear(), k.getUTCMonth(), k.getUTCDate()) - KST;
-	const dayAgo = Date.now() - 86_400_000;
+	const dayAgo = now - 86_400_000;
 
+	// ── 먼저 "마지막으로 본 때"와 "처음 본 것"을 읽는다.
+	//    둘 다 몇십 행짜리 작은 표라 한 번의 batch로 끝난다. 창을 알아야 아래 집계를 걸 수 있다.
+	const [seenRs, keyRs] = await env.DB.batch<
+		{ last_open: number; win_from: number } | { kind: string; key: string; first_ts: number }
+	>([
+		env.DB.prepare("SELECT last_open, win_from FROM board_seen WHERE who = ?1").bind(SEEN_WHO),
+		env.DB.prepare("SELECT kind, key, first_ts FROM seen_key"),
+	]);
+	const seenRow = (seenRs.results ?? [])[0] as { last_open: number; win_from: number } | undefined;
+	const firstSeen: Record<string, number> = {};
+	for (const r of (keyRs.results ?? []) as { kind: string; key: string; first_ts: number }[]) {
+		firstSeen[`${r.kind}|${r.key}`] = r.first_ts;
+	}
+
+	// 같은 세션 안에서 다시 열면 창을 그대로 둔다. 새로고침할 때마다 창이 줄어들면
+	// 브리핑이 늘 비어 버려서, 정작 자리를 비운 사이의 일을 못 보게 된다.
+	const fresh = !seenRow || now - seenRow.last_open > SESSION_GAP;
+	const autoFrom = seenRow ? (fresh ? seenRow.last_open : seenRow.win_from) : null;
+	const win = briefWindow(now, autoFrom, opts.brief ?? "auto");
+
+	// 집계가 훑어야 할 가장 이른 시각 — 기간과 창 가운데 더 멀리 가는 쪽.
 	const scanFrom = p.days ? prevSince : 0;
-	const appWhere = appFilter ? " AND app = ?3" : "";
-	const bind3 = (sql: string) => {
+	const scanBase = p.days ? Math.min(scanFrom, win.prevFrom) : 0;
+	const anomBase = Math.min(since, win.from);
+
+	const appWhere = appFilter ? " AND app = ?5" : "";
+	const bindMain = (sql: string) => {
 		const st = env.DB.prepare(sql);
-		return appFilter ? st.bind(scanFrom, since, appFilter) : st.bind(scanFrom, since);
+		return appFilter
+			? st.bind(scanBase, since, win.from, win.prevFrom, appFilter)
+			: st.bind(scanBase, since, win.from, win.prevFrom);
 	};
 
-	const [apps, groupRs, bucketRs, anomRs, stateRs, monthRs, hitRow] = await Promise.all([
+	const [apps, groupRs, bucketRs, anomRs, winAnomRow, stateRs, monthRs, hitRow] = await Promise.all([
 		appBriefs(env),
 
-		// ① 이번 기간과 직전 기간을 한 번에 — 같은 표를 두 번 훑지 않는다.
-		bind3(
+		// ① 기간(이번·직전)과 브리핑 창(안·직전)을 한 번에 —
+		//    같은 표를 네 번 훑지 않으려고 두 축을 CASE로 갈라 한 쿼리에 담는다.
+		//    cur: 1=이번 기간 · 0=직전 기간   win: 2=창 안 · 1=창 직전 같은 길이 · 0=그 밖
+		//    두 축은 겹칠 수 있다(같은 행이 양쪽에 세어진다). 서로 다른 질문이라 그게 맞다.
+		bindMain(
 			"SELECT CASE WHEN ts >= ?2 THEN 1 ELSE 0 END AS cur," +
+				" CASE WHEN ts >= ?3 THEN 2 WHEN ts >= ?4 THEN 1 ELSE 0 END AS win," +
 				" COALESCE(app,'(미상)') AS app, model," +
 				" COALESCE(NULLIF(country,''),'(미상)') AS ctry," +
 				" CASE WHEN status='error' THEN COALESCE(http,0) ELSE -1 END AS ehttp," +
 				AGG +
-				` FROM calls WHERE ts >= ?1${appWhere} GROUP BY cur, app, model, ctry, ehttp`,
-		).all<AggRow & { cur: number; app: string; model: string | null; ctry: string; ehttp: number }>(),
+				", MIN(ts) AS fts, MAX(ts) AS lts" +
+				` FROM calls WHERE ts >= ?1${appWhere} GROUP BY cur, win, app, model, ctry, ehttp`,
+		).all<AggRow & { cur: number; win: number; app: string; model: string | null; ctry: string; ehttp: number; fts: number; lts: number }>(),
 
 		// ② 카드 안 추이선과 흐름 — 서비스·내부 도구를 갈라 둔다.
 		(appFilter
@@ -1295,10 +1385,35 @@ async function collectBoardInner(env: StatsEnv, period: string, appFilter: strin
 				).bind(since, dayAgo)
 		).all<AnomalyBriefRow & { n: number; nc: number; nw: number; nj: number; c24: number; w24: number; last: number | null }>(),
 
-		// ④ 탐지 서버가 살아 있나
+		// ④ 브리핑 창 안에 새로 잡힌 신호 — 개수와 가장 급한 한 건을 한 번에.
+		//    ③은 기간 탭을 따르므로 창이 기간보다 길면 창 안 신호를 놓친다. 그래서 따로 센다.
+		(appFilter
+			? env.DB.prepare(
+					"SELECT label, signal, app, bucket, severity," +
+						` SUM(CASE WHEN bucket >= ?2 AND severity='critical' THEN 1 ELSE 0 END) OVER () AS wc,` +
+						` SUM(CASE WHEN bucket >= ?2 AND severity='warn' THEN 1 ELSE 0 END) OVER () AS ww,` +
+						` SUM(CASE WHEN bucket < ?2 THEN 1 ELSE 0 END) OVER () AS wold` +
+						` FROM anomalies WHERE bucket >= ?1 AND scope='ai' AND app = ?3` +
+						` AND (verdict IS NULL OR verdict NOT IN ${FP_SQL})` +
+						" ORDER BY CASE WHEN bucket >= ?2 THEN 0 ELSE 1 END," +
+						" CASE severity WHEN 'critical' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END, bucket DESC LIMIT 1",
+				).bind(anomBase, win.from, appFilter)
+			: env.DB.prepare(
+					"SELECT label, signal, app, bucket, severity," +
+						` SUM(CASE WHEN bucket >= ?2 AND severity='critical' THEN 1 ELSE 0 END) OVER () AS wc,` +
+						` SUM(CASE WHEN bucket >= ?2 AND severity='warn' THEN 1 ELSE 0 END) OVER () AS ww,` +
+						` SUM(CASE WHEN bucket < ?2 THEN 1 ELSE 0 END) OVER () AS wold` +
+						` FROM anomalies WHERE bucket >= ?1 AND scope='ai'` +
+						` AND (verdict IS NULL OR verdict NOT IN ${FP_SQL})` +
+						" ORDER BY CASE WHEN bucket >= ?2 THEN 0 ELSE 1 END," +
+						" CASE severity WHEN 'critical' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END, bucket DESC LIMIT 1",
+				).bind(anomBase, win.from)
+		).first<{ label: string | null; signal: string; app: string; bucket: number; severity: string; wc: number; ww: number; wold: number }>(),
+
+		// ⑤ 탐지 서버가 살아 있나
 		env.DB.prepare("SELECT key, value, updated_at FROM anomaly_state").all<{ key: string; value: string; updated_at: number }>(),
 
-		// ⑤ 달별 비용 열두 달
+		// ⑥ 달별 비용 열두 달
 		(appFilter
 			? env.DB.prepare(
 					`SELECT ${bucketExpr("month")} AS m, model,` + INN + AGG +
@@ -1310,14 +1425,14 @@ async function collectBoardInner(env: StatsEnv, period: string, appFilter: strin
 				).bind(monthSince)
 		).all<AggRow & { m: string; model: string | null; inn: number }>(),
 
-		// ⑥ 트래픽 한 줄 — 오늘 하루치만. hits 표가 없는 환경도 있어 실패를 삼킨다.
+		// ⑦ 트래픽 한 줄 — 오늘 하루치만. hits 표가 없는 환경도 있어 실패를 삼킨다.
 		env.DB.prepare("SELECT COUNT(*) AS n, SUM(kind='ai') AS a, SUM(kind='human') AS h FROM hits WHERE ts >= ?1")
 			.bind(todayStart)
 			.first<{ n: number; a: number | null; h: number | null }>()
 			.catch(() => null),
 	]);
 
-	// ── 이번·직전 기간 나누기
+	// ── 이번·직전 기간 나누기 (그리고 같은 행에서 브리핑 창도 함께 모은다)
 	const byAppMap = new Map<string, GroupRow>();
 	const byModelMap = new Map<string, GroupRow>();
 	const byCountryMap = new Map<string, number>();
@@ -1328,6 +1443,29 @@ async function collectBoardInner(env: StatsEnv, period: string, appFilter: strin
 	const prevCountry: Record<string, number> = {};
 	let total = 0, ok = 0, error = 0, inTokens = 0, outTokens = 0, cost = 0, latSum = 0;
 	let pT = 0, pE = 0, pC = 0, pL = 0, pOk = 0;
+
+	// 브리핑 창
+	const wApp = new Map<string, BriefKeyRow>();
+	const wModel = new Map<string, BriefKeyRow>();
+	const wCountry = new Map<string, BriefKeyRow>();
+	const wHttp = new Map<number, number>();
+	const wPrevApp: Record<string, number> = {};
+	const wPrevAppCost: Record<string, number> = {};
+	const wCur: BriefAgg = { total: 0, ok: 0, error: 0, cost: 0, latSum: 0 };
+	const wPrev: BriefAgg = { total: 0, ok: 0, error: 0, cost: 0, latSum: 0 };
+	const keyRow = (m: Map<string, BriefKeyRow>, key: string) => {
+		let r = m.get(key);
+		if (!r) {
+			r = { key, name: key, total: 0, error: 0, cost: 0, firstTs: Number.MAX_SAFE_INTEGER, lastTs: 0 };
+			m.set(key, r);
+		}
+		return r;
+	};
+	const bump = (r: BriefKeyRow, u: { total: number; error: number; cost: number }, fts: number, lts: number) => {
+		r.total += u.total; r.error += u.error; r.cost += u.cost;
+		if (fts && fts < r.firstTs) r.firstTs = fts;
+		if (lts > r.lastTs) r.lastTs = lts;
+	};
 
 	for (const r of groupRs.results ?? []) {
 		const u = unitOf(r, r.model);
@@ -1346,12 +1484,27 @@ async function collectBoardInner(env: StatsEnv, period: string, appFilter: strin
 			prevCountry[r.ctry] = (prevCountry[r.ctry] ?? 0) + u.total;
 			pT += u.total; pE += u.error; pC += u.cost; pL += u.latency; pOk += u.ok;
 		}
+
+		if (r.win === 2) {
+			bump(keyRow(wApp, r.app), u, r.fts, r.lts);
+			bump(keyRow(wModel, r.model ?? "(미상)"), u, r.fts, r.lts);
+			bump(keyRow(wCountry, r.ctry), u, r.fts, r.lts);
+			if (r.ehttp >= 0) wHttp.set(r.ehttp, (wHttp.get(r.ehttp) ?? 0) + u.error);
+			wCur.total += u.total; wCur.ok += u.ok; wCur.error += u.error;
+			wCur.cost += u.cost; wCur.latSum += u.latency;
+		} else if (r.win === 1) {
+			wPrevApp[r.app] = (wPrevApp[r.app] ?? 0) + u.total;
+			wPrevAppCost[r.app] = (wPrevAppCost[r.app] ?? 0) + u.cost;
+			wPrev.total += u.total; wPrev.ok += u.ok; wPrev.error += u.error;
+			wPrev.cost += u.cost; wPrev.latSum += u.latency;
+		}
 	}
 
-	// ── p95는 세워 놓고 한 건만 읽는다. 이번·직전을 한 번에 묻는다.
+	// ── p95는 세워 놓고 한 건만 읽는다. 마지막으로 본 때 갱신도 같은 왕복에 얹는다.
 	const [p95Latency, prevP95] = await Promise.all([
 		p95Of(env, since, appFilter, ok),
 		p.days ? p95Between(env, prevSince, since, appFilter, pOk) : Promise.resolve(0),
+		markSeen(env, now, seenRow, fresh, opts.live === true),
 	]);
 
 	// ── 흐름 버킷
@@ -1401,13 +1554,46 @@ async function collectBoardInner(env: StatsEnv, period: string, appFilter: strin
 	const byCountry = Array.from(byCountryMap.entries())
 		.map(([key, t]) => ({ key, total: t }))
 		.sort((a, b) => b.total - a.total);
-	const nowKey = new Date(Date.now() + KST).toISOString().slice(0, 7);
+	const nowKey = new Date(now + KST).toISOString().slice(0, 7);
 	const curMonth = monthly.find((m) => m.m === nowKey);
 	const lastMonth = monthly.filter((m) => m.m !== nowKey).slice(-1)[0];
 	const q = `?period=${period}${appFilter ? `&app=${encodeURIComponent(appFilter)}` : ""}`;
 
 	// 열린 신호 가운데 가장 급한 것 — 상태 한 줄에 이름을 붙인다.
 	const top = openRows.find((r) => r.severity === "critical") ?? openRows.find((r) => r.severity === "warn") ?? null;
+
+	// ── 브리핑
+	const appNameMap: Record<string, string> = {};
+	for (const a of apps) appNameMap[a.id] = a.name;
+	const listOf = (m: Map<string, BriefKeyRow>) =>
+		Array.from(m.values())
+			.map((r) => ({ ...r, name: appNameMap[r.key] ?? r.key, firstTs: r.firstTs === Number.MAX_SAFE_INTEGER ? 0 : r.firstTs }))
+			.sort((a, b) => b.total - a.total);
+	const winTop = winAnomRow && winAnomRow.bucket >= win.from
+		? { label: winAnomRow.label || SIGNAL_LABEL[winAnomRow.signal] || winAnomRow.signal, app: winAnomRow.app, bucket: winAnomRow.bucket }
+		: null;
+	const brief = findBrief({
+		win,
+		period,
+		appFilter,
+		cur: wCur,
+		prev: wPrev,
+		byApp: listOf(wApp),
+		byModel: listOf(wModel),
+		byCountry: listOf(wCountry),
+		byHttp: Array.from(wHttp.entries()).map(([http, count]) => ({ http, count })).sort((a, b) => b.count - a.count),
+		prevApp: wPrevApp,
+		prevAppCost: wPrevAppCost,
+		firstSeen,
+		anomIn: { critical: winAnomRow?.wc ?? 0, warn: winAnomRow?.ww ?? 0, top: winTop },
+		anomOld: winAnomRow?.wold ?? 0,
+		appName: appNameMap,
+		countryName,
+	});
+
+	// 처음 보는 앱·모델·나라를 기록해 둔다. 다음부터 '처음'을 제대로 가릴 수 있다.
+	// 보통 새 키가 없어 왕복이 0회다.
+	await rememberKeys(env, firstSeen, byApp, Array.from(byModelMap.values()), byCountry, groupRs.results ?? []);
 
 	return {
 		period,
@@ -1452,7 +1638,80 @@ async function collectBoardInner(env: StatsEnv, period: string, appFilter: strin
 			monthProgress: monthProgress(),
 			q,
 		}),
+		brief,
+		briefWin: win,
 	};
+}
+
+/**
+ * 마지막으로 본 때를 남긴다.
+ *
+ * 자동 갱신(60초마다 화면을 다시 그리는 것)은 사람이 본 것으로 치지 않는다.
+ * 그걸로 시각을 밀면 창이 늘 1분으로 줄어서 브리핑이 영영 비어 버린다.
+ * 그래서 화면을 켜 둔 채 밤을 보내도 창은 어제 저녁 그대로 남고, 아침에 "밤사이"가 나온다.
+ */
+async function markSeen(
+	env: StatsEnv,
+	now: number,
+	prev: { last_open: number; win_from: number } | undefined,
+	fresh: boolean,
+	live: boolean,
+): Promise<void> {
+	if (live) return;
+	const winFrom = prev ? (fresh ? prev.last_open : prev.win_from) : now - 86_400_000;
+	try {
+		await env.DB.prepare(
+			"INSERT INTO board_seen (who, last_open, win_from) VALUES (?1,?2,?3)" +
+				" ON CONFLICT(who) DO UPDATE SET last_open=?2, win_from=?3",
+		)
+			.bind(SEEN_WHO, now, winFrom)
+			.run();
+	} catch {
+		/* 표가 아직 없으면 withSchema가 만들고 다음 조회에서 남는다 */
+	}
+}
+
+/** 이번에 처음 본 앱·모델·나라를 seen_key에 넣는다. 새 키가 없으면 아무것도 하지 않는다. */
+async function rememberKeys(
+	env: StatsEnv,
+	known: Record<string, number>,
+	byApp: { key: string }[],
+	byModel: { key: string }[],
+	byCountry: { key: string }[],
+	rows: { app: string; model: string | null; ctry: string; fts: number }[],
+): Promise<void> {
+	// 키마다 이번 조회에서 본 가장 이른 시각
+	const first = new Map<string, number>();
+	const note = (kind: string, key: string, ts: number) => {
+		const k = `${kind}|${key}`;
+		if (!ts) return;
+		const cur = first.get(k);
+		if (cur === undefined || ts < cur) first.set(k, ts);
+	};
+	for (const r of rows) {
+		note("app", r.app, r.fts);
+		note("model", r.model ?? "(미상)", r.fts);
+		note("country", r.ctry, r.fts);
+	}
+	const want = [
+		...byApp.map((r) => `app|${r.key}`),
+		...byModel.map((r) => `model|${r.key}`),
+		...byCountry.map((r) => `country|${r.key}`),
+	];
+	const add = want.filter((k) => known[k] === undefined && first.has(k));
+	if (!add.length) return;
+	try {
+		await env.DB.batch(
+			add.slice(0, 40).map((k) => {
+				const [kind, ...rest] = k.split("|");
+				return env.DB.prepare(
+					"INSERT OR IGNORE INTO seen_key (kind, key, first_ts) VALUES (?1,?2,?3)",
+				).bind(kind, rest.join("|"), first.get(k) ?? 0);
+			}),
+		);
+	} catch {
+		/* 다음 조회에서 다시 시도한다 */
+	}
 }
 
 /** 직전 기간의 p95 — 범위만 다르고 방식은 p95Of와 같다. */

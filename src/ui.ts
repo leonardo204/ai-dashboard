@@ -276,13 +276,30 @@ details.fold .scroll{border-radius:0 0 var(--r-md) var(--r-md);}
 .stat.bad .dot{background:var(--bad);}.stat.bad b{color:var(--bad-fg);}
 @media(max-width:640px){.stat{flex-wrap:wrap;gap:7px;padding:11px 13px;}.stat .go{margin-left:auto;}}
 
-/* "달라진 것" — 상태 한 줄 바로 아래. 말할 게 없으면 칸 자체가 없다. */
-.chg{display:flex;flex-direction:column;gap:1px;margin:-6px 0 var(--sp-3);}
-.chg a{display:flex;align-items:baseline;gap:8px;text-decoration:none;color:var(--ink);
+/* 브리핑 — 상태 한 줄 바로 아래. 창 이름과 그사이에 일어난 일.
+   기간 탭과 따로 놀아서 머리줄에 "밤사이 · 어제 19:30 이후"를 적어 둔다. */
+.brief{margin:-2px 0 var(--sp-3);}
+.brief .bh{display:flex;align-items:baseline;gap:8px;padding:0 16px 5px;flex-wrap:wrap;}
+.brief .bh b{font-size:var(--fs-md);font-weight:800;}
+.brief .bt{margin-left:auto;display:flex;gap:2px;flex:0 0 auto;}
+.brief .bt a{font-size:var(--fs-xs);font-weight:700;color:var(--muted);text-decoration:none;
+ padding:3px 9px;border-radius:var(--r-pill);white-space:nowrap;}
+.brief .bt a:hover{background:var(--tint);color:var(--ink);}
+.brief .bt a.on{background:var(--accent-bg);color:var(--accent-fg);}
+.brief .bl{display:flex;flex-direction:column;gap:1px;}
+.brief .bl a{display:flex;align-items:baseline;gap:8px;text-decoration:none;color:var(--ink);
  font-size:var(--fs-sm);padding:6px 16px;border-radius:var(--r-sm);}
-.chg a:hover{background:var(--accent-bg);}
-.chg i{width:5px;height:5px;border-radius:50%;background:var(--muted);flex:0 0 5px;position:relative;top:-2px;}
-.chg b{font-weight:800;}
+.brief .bl a:hover{background:var(--accent-bg);}
+.brief .bl i{width:5px;height:5px;border-radius:50%;background:var(--muted);flex:0 0 5px;position:relative;top:-2px;}
+/* 한글은 그냥 두면 아무 글자 사이에서나 끊긴다 — 낱말은 붙여 두고 정 안 들어갈 때만 자른다 */
+.brief .bl span{flex:1 1 auto;min-width:0;word-break:keep-all;overflow-wrap:anywhere;}
+.brief .bl em{flex:0 0 auto;font-style:normal;color:var(--muted);font-size:var(--fs-xs);
+ white-space:nowrap;font-variant-numeric:tabular-nums;}
+.brief b{font-weight:800;}
+.brief .none{display:block;padding:6px 16px;font-size:var(--fs-sm);color:var(--muted);}
+.brief .ago{padding:5px 16px 0;font-size:var(--fs-xs);color:var(--muted);}
+.brief .ago a{color:var(--muted);text-decoration:none;}
+.brief .ago a:hover{text-decoration:underline;}
 
 /* 열린 신호 칸 — 표 모양은 쓰되 테두리를 지워 카드 안에 얹는다 */
 .sigp{padding:10px 12px;}
@@ -554,7 +571,9 @@ const ADMIN_JS = `
 
     function refresh(){
       busy = true; paintLive('busy');
-      fetch(location.href, { credentials: 'same-origin' })
+      // 자동 갱신임을 알린다 — 서버가 이걸 사람이 본 것으로 치면
+      // 브리핑 창이 1분으로 줄어 "안 보는 사이"가 늘 비게 된다.
+      fetch(location.href, { credentials: 'same-origin', headers: { 'X-Hz-Live': '1' } })
         .then(function(r){ if (!r.ok) throw new Error('http'); return r.text(); })
         .then(function(html){
           var doc = new DOMParser().parseFromString(html, 'text/html');
@@ -1120,6 +1139,13 @@ label.chk input{margin-top:3px;flex:0 0 auto;}
  .stat .rs{flex:1 1 100%;order:3;}
  .golinks a{padding:11px 13px;}
  .golinks span{white-space:normal;}
+ /* 브리핑 — 창 탭은 아랫줄로 내리고 시각은 접는다 */
+ .brief .bh{padding:0 4px 5px;}
+ .brief .bt{margin-left:0;width:100%;overflow-x:auto;scrollbar-width:none;}
+ .brief .bt::-webkit-scrollbar{display:none;}
+ .brief .bl a{padding:6px 4px;}
+ .brief .bl em{display:none;}
+ .brief .none,.brief .ago{padding-left:4px;padding-right:4px;}
  /* 열린 신호 — 시각 칸은 접는다(펼치면 이상탐지 화면에 다 있다) */
  .sigp{padding:8px 10px;}
  table.sig td{padding:6px 4px;}

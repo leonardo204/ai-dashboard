@@ -13,7 +13,7 @@
  */
 
 import {
-	PERIODS, MODEL_PRICES, DEFAULT_MODEL, countryName, LOG_PAGE, MAIL_PAGE,
+	PERIODS, MODEL_PRICES, DEFAULT_MODEL, countryName, LOG_PAGE, MAIL_PAGE, SIGNAL_LABEL,
 	type AppConfig, type GroupRow, type PasskeyRow,
 	type BoardData, type MonthCost, type UsageData, type TrendData, type GeoData, type LogsData, type LogFilter,
 	type MailsData, type MailRow,
@@ -27,7 +27,7 @@ import {
 	svgTrend, svgMap, hbars, svgHeat, svgLevels, svgF1, svgTraffic, type AdminOpts,
 } from "./ui";
 import { SITES, siteName, siteUrl, THREAT_LABEL } from "./traffic";
-import { findChanges } from "./changes";
+import { BRIEF_TABS, type BriefKey } from "./brief";
 
 /** 상단바 메뉴가 기간·앱 조건을 그대로 물고 가도록 붙이는 질의 문자열. */
 function navQuery(period: string, appFilter: string): string {
@@ -87,6 +87,69 @@ const TIP_INTERNAL =
 const STATUS_LABEL: Record<string, string> = { ok: "정상", warn: "주의", bad: "문제" };
 
 /**
+ * 브리핑 — "내가 안 보는 사이에 무슨 일이 있었나".
+ *
+ * 위 상태 한 줄이 "지금"을 말한다면 여기는 "그사이"를 말한다. 그래서 기간 탭을 따르지 않는다.
+ * 30일 지표를 보고 있어도 브리핑은 마지막으로 본 뒤의 일만 적는다 —
+ * 아침에 열면 밤사이, 월요일에 열면 주말 사이다.
+ *
+ * 말할 것이 없으면 줄을 지어내지 않고 "별다른 일 없었어요"로 끝낸다.
+ * 그게 이 자리의 값어치다. 매번 같은 세 줄이 떠 있으면 아무도 읽지 않는다.
+ */
+function briefPanel(b: BoardData): string {
+	const w = b.briefWin;
+	const href = (key: BriefKey) =>
+		`/admin?period=${b.period}${b.appFilter ? `&app=${encodeURIComponent(b.appFilter)}` : ""}` +
+		(key === "auto" ? "" : `&brief=${key}`);
+	const tabs = [{ key: "auto" as BriefKey, label: "자동" }, ...BRIEF_TABS]
+		.map(
+			(t) =>
+				`<a${t.key === w.key ? ' class="on"' : ""} href="${href(t.key)}"` +
+				`${t.key === "auto" ? ' data-tip="마지막으로 본 뒤부터 보여줘요"' : ""}>${escapeHtml(t.label)}</a>`,
+		)
+		.join("");
+
+	const body = b.brief.fresh.length
+		? b.brief.fresh
+				.map(
+					(c) =>
+						`<a href="${c.href}"><i></i><span>${c.text}</span>` +
+						`${c.at ? `<em>${escapeHtml(briefAt(c.at))}</em>` : ""}</a>`,
+				)
+				.join("")
+		: `<span class="none">${escapeHtml(b.brief.quiet)}</span>`;
+
+	// 창 전에 시작됐지만 아직 끝나지 않은 일 — 새 소식은 아니라서 흐리게 한 줄로 둔다.
+	const ongoing = b.brief.ongoing.length
+		? `<div class="ago">이어지는 일 · ${b.brief.ongoing
+				.map((c) => `<a href="${c.href}">${c.text}</a>`)
+				.join(" · ")}</div>`
+		: "";
+
+	return `<section class="brief">
+  <div class="bh">
+    <b>${escapeHtml(w.label)}</b><span class="sm">${escapeHtml(w.sub)}</span>
+    <span class="bt">${tabs}</span>
+  </div>
+  <div class="bl">${body}</div>
+  ${ongoing}
+</section>`;
+}
+
+/** 브리핑 줄 오른쪽의 시각. 오늘은 시각만, 어제는 "어제", 그 전은 날짜로 적는다. */
+function briefAt(ts: number): string {
+	if (!ts) return "";
+	const KST = 9 * 3600_000;
+	const d = new Date(ts + KST);
+	const dayNo = Math.floor((ts + KST) / 86_400_000);
+	const today = Math.floor((Date.now() + KST) / 86_400_000);
+	const hm = `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
+	if (dayNo === today) return hm;
+	if (dayNo === today - 1) return `어제 ${hm}`;
+	return `${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
+}
+
+/**
  * 첫 화면.
  * 답해야 할 질문은 하나다 — "지금 문제가 있나".
  * 그래서 위에서부터 상태 한 줄 → 지표 넷 → 열린 신호와 이달 비용 → 하위 화면 링크로 끝낸다.
@@ -98,7 +161,6 @@ export function renderBoard(b: BoardData, opts: AdminOpts = {}): string {
 	const failRate = b.total ? (b.error / b.total) * 100 : 0;
 	const prevFailRate = b.prev && b.prev.total ? (b.prev.error / b.prev.total) * 100 : 0;
 	const topHttp = b.byHttp[0];
-	const changes = findChanges(b);
 
 	const signalRows = b.anomaly.open.length
 		? b.anomaly.open
@@ -140,11 +202,7 @@ ${filterTabs("/admin", b.period, b.appFilter, b.apps, PERIODS)}
   <span class="rs">${escapeHtml(st.reason)}</span>
   <span class="go">보기 →</span>
 </a>
-${changes.length
-	? `<div class="chg">${changes
-			.map((c) => `<a href="${c.href}"><i></i><span>${c.text}</span></a>`)
-			.join("")}</div>`
-	: ""}
+${briefPanel(b)}
 
 ${kpiRow([
 	{
@@ -739,26 +797,6 @@ function verdictTag(v: string | null, reason: string | null): string {
 	return `<span class="vd ${m.cls}" data-tip="${escapeHtml(tip)}">${escapeHtml(m.text)}</span>`;
 }
 
-/** 신호 이름 — 이력 표에 아직 안 나온 신호도 화면에서는 한국어로 보이게 한다. */
-const SIGNAL_LABEL: Record<string, string> = {
-	call_spike: "호출량 급증",
-	error_rate: "오류율 급증",
-	cost_spike: "비용 급증",
-	latency_slow: "응답 지연",
-	ip_surge: "접속 IP 급증",
-	new_country: "새 국가에서 호출",
-	new_ip_burst: "새 IP 다수 등장",
-	rate_limited: "호출 상한 초과(429)",
-	model_anomaly: "모델 이상 판정",
-	// 트래픽(서비스 방문)
-	traffic_drop: "방문 급감",
-	traffic_spike: "방문 급증",
-	search_bot_drop: "검색 크롤러 발길 끊김",
-	ai_bot_spike: "AI 크롤러 급증",
-	http_5xx: "서버 오류(5xx) 발생",
-	http_404: "없는 주소 요청(404) 급증",
-	new_bot: "새 크롤러 등장",
-};
 
 /** 학습을 다시 돌린 계기 — 화면에 읽히는 말로. */
 const TRIGGER_LABEL: Record<string, string> = {
