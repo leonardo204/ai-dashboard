@@ -51,7 +51,13 @@ const ADMIN_CSS = `
 h1{font-size:var(--fs-lg);margin:0 0 4px;}h2{font-size:var(--fs-md);margin:26px 0 9px;color:var(--muted);}
 .sub{color:var(--muted);font-size:var(--fs-md);margin:0 0 16px;}
 .tabs{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px;}
-.tab{font-size:var(--fs-md);font-weight:700;padding:7px 13px;border-radius:var(--r-pill);border:1px solid var(--line);
+/* 기간·앱 한 줄 — 왼쪽 묶음은 남는 폭을 쓰며 접히고, 기간은 오른쪽 끝에 붙어 있는다.
+   앱이 많아 왼쪽이 여러 줄이 되어도 기간은 첫 줄 오른쪽에 그대로 남는다. */
+.tabs.flt{align-items:flex-start;gap:10px var(--sp-3);}
+.tabs.flt>span{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+.tabs.flt .lf{flex:1 1 auto;min-width:0;}
+.tabs.flt .rt{flex:0 0 auto;margin-left:auto;}
+.tab{font-size:var(--fs-md);font-weight:700;padding:7px var(--sp-3);border-radius:var(--r-pill);border:1px solid var(--line);
  background:var(--panel);color:var(--ink);text-decoration:none;}
 .tab.on{background:var(--accent);border-color:var(--accent);color:var(--panel);}
 .tab.alt{background:var(--accent-bg);border-color:var(--accent-bd);color:var(--accent-fg);}
@@ -1131,6 +1137,8 @@ label.chk input{margin-top:3px;flex:0 0 auto;}
  h1{font-size:var(--fs-lg);}
  .head{gap:10px;}
  .tabs{gap:6px;margin-bottom:10px;}
+ .tabs.flt{gap:6px 10px;}
+ .tabs.flt .rt{order:-1;width:100%;margin-left:0;}
  .tabs>span[style]{display:none;}
  .tab{font-size:var(--fs-sm);padding:6px 11px;}
  .sect{gap:var(--sp-1);margin:20px 0 var(--sp-2);}
@@ -1803,11 +1811,15 @@ export function filterTabs(
 					`<a class="tab${appFilter === a.id ? " on" : ""}${a.internal ? " dim" : ""}" href="${q(period, a.id)}"${a.internal ? ' data-tip="내부용 앱"' : ""}>${escapeHtml(a.name)}${a.active ? "" : " (중지)"}</a>`,
 			)
 			.join("");
-	// 기간은 어느 화면에서나 오른쪽 위 같은 자리에 둔다. 이상탐지 화면이 이미 그랬는데
-	// 나머지가 왼쪽이라, 탭을 옮겨 다닐 때마다 눈이 좌우로 튀었다.
+	// 한 줄에 둘 다 담는다 — 왼쪽이 앱, 오른쪽 끝이 기간이다.
+	// 예전에는 기간이 자기 줄을 통째로 쓰고 그 줄 왼쪽이 내내 비어 있었다.
+	// 기간을 오른쪽 끝에 고정하는 이유는 그대로다. 어느 화면으로 옮겨도 같은 자리에 있어야
+	// 탭을 옮겨 다닐 때 눈이 튀지 않는다.
 	return (
-		`<div class="tabs"><span style="flex:1"></span>${periodTabs}${rightLink}</div>` +
-		`<div class="tabs">${appTabs}${rightBelow ? `<span style="flex:1"></span>${rightBelow}` : ""}</div>`
+		`<div class="tabs flt">` +
+		`<span class="lf">${appTabs}${rightBelow}</span>` +
+		`<span class="rt">${periodTabs}${rightLink}</span>` +
+		`</div>`
 	);
 }
 
