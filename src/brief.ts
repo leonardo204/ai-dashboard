@@ -10,7 +10,7 @@
  *   - 브리핑은 '마지막으로 본 뒤'를 따른다. 아침에 열면 밤사이, 월요일에 열면 주말 사이다.
  *
  * '처음'은 전체 기록에서 처음일 때만 말한다(seen_key 표). 창 안에서 처음 나타난 것이
- * 새 소식이고, 그전에 이미 있던 것은 아래 '이어지는 일'로 물러난다.
+ * 새 소식이고, 그전에도 있던 신호는 새 소식 셈에서 빼고 아래 흐린 줄에 따로 적는다.
  * 말할 것이 없으면 아무 말도 지어내지 않고 "별다른 일 없었어요"로 끝낸다.
  *
  * LLM은 쓰지 않는다. 첫 화면 맨 위에 틀린 문장이 뜨면 화면 전체를 못 믿게 된다.
@@ -197,14 +197,12 @@ export const BRIEF_RULES = {
 	max: 4,
 	/** 되풀이되는 신호는 몇 줄까지 */
 	maxRepeat: 2,
-	/** 이어지는 일은 몇 줄까지(되풀이 줄 + 미결 줄을 합쳐) */
-	maxOld: 3,
-	/** 새 소식과 이어지는 일을 합쳐 몇 줄까지. 이 칸이 길어지면 첫 화면이 한 눈에 안 들어온다. */
+	/** 새 소식과 되풀이 줄을 합쳐 몇 줄까지. 이 칸이 길어지면 첫 화면이 한눈에 안 들어온다. */
 	maxLines: 5,
 };
 
 /** 급한 순서. 종류마다 점수의 단위가 달라(배수·건수) 한 줄로 세울 수 없어 순서를 정해 둔다. */
-const KIND_ORDER = ["anomaly", "repeat", "fail", "cost", "latency", "quiet", "new", "geo", "backlog"];
+const KIND_ORDER = ["anomaly", "fail", "cost", "latency", "quiet", "new", "geo", "repeat"];
 
 export interface BriefLine {
 	kind: string;
@@ -262,7 +260,6 @@ export interface BriefInput {
 	 * 창보다 앞서 잡혔고 아직 결론이 안 난 신호(판정 전이거나 표가 갈린 것).
 	 * count는 창 직전 이레 안에서만 센다. oldest는 그중 가장 오래된 구간 시각(없으면 0).
 	 */
-	anomOld: { count: number; oldest: number };
 	/** 앱 id → 이름 */
 	appName: Record<string, string>;
 	countryName: (k: string) => string;
@@ -271,8 +268,8 @@ export interface BriefInput {
 export interface Brief {
 	/** 창 안에 새로 일어난 일 */
 	fresh: BriefLine[];
-	/** 창 전에 시작됐지만 아직 이어지는 일 */
-	ongoing: BriefLine[];
+	/** 창 앞에도 있던 신호 — 새 소식 셈에서 뺐다는 것을 밝히는 자리다 */
+	repeat: BriefLine[];
 	/** 새 소식이 없을 때 대신 적는 한 줄 */
 	quiet: string;
 }
@@ -280,7 +277,7 @@ export interface Brief {
 export function findBrief(b: BriefInput): Brief {
 	const R = BRIEF_RULES;
 	const fresh: BriefLine[] = [];
-	const ongoing: BriefLine[] = [];
+	const repeat: BriefLine[] = [];
 	const q = `?period=${b.period}${b.appFilter ? `&app=${encodeURIComponent(b.appFilter)}` : ""}`;
 	const pct = (v: number) => `${Math.round(v * 100)}%`;
 	const win = b.win;
@@ -382,11 +379,11 @@ export function findBrief(b: BriefInput): Brief {
 	}
 
 	// ── 처음 본 것 — 전체 기록에서 처음이어야 '처음'이라고 말한다.
-	pushFirst(b, fresh, ongoing, "model", b.byModel, R.newMin, (r) =>
+	pushFirst(b, fresh, "model", b.byModel, R.newMin, (r) =>
 		`<b>${esc(shortModel(r.key))}</b> 모델을 처음 썼어요 (${r.total.toLocaleString()}건).`, `/admin/calls/usage${q}#model`);
-	pushFirst(b, fresh, ongoing, "app", b.byApp, R.newMin, (r) =>
+	pushFirst(b, fresh, "app", b.byApp, R.newMin, (r) =>
 		`새 앱 <b>${esc(r.name)}</b>에서 ${r.total.toLocaleString()}건 들어왔어요.`, `/admin/calls/usage${q}`);
-	pushFirst(b, fresh, ongoing, "country", b.byCountry, R.newCountryMin, (r) =>
+	pushFirst(b, fresh, "country", b.byCountry, R.newCountryMin, (r) =>
 		`<b>${esc(b.countryName(r.key))}</b>에서 처음으로 ${r.total.toLocaleString()}건 들어왔어요.`, `/admin/calls/geo${q}`);
 
 	// ── 조용해짐
@@ -415,7 +412,7 @@ export function findBrief(b: BriefInput): Brief {
 	//    한 앱을 지목하면 틀린 말이 된다. 어느 앱인지는 눌러서 이상탐지 화면에서 본다.
 	for (const r of b.anomRepeat.slice().sort((x, y) => y.critical - x.critical || y.n - x.n).slice(0, R.maxRepeat)) {
 		const f = kstOf(r.firstb);
-		ongoing.push({
+		repeat.push({
 			kind: "repeat",
 			text:
 				`<b>${esc(r.label)}</b>${josa(r.label, "은", "는")} 처음이 아니에요.` +
@@ -427,50 +424,30 @@ export function findBrief(b: BriefInput): Brief {
 		});
 	}
 
-	// ── 아직 판정이 안 끝난 신호 — 창보다 앞서 잡힌 것만 센다.
-	//    "열려 있다"고 말하지 않는다. anomalies.status는 아무도 갱신하지 않아 늘 open이라
-	//    그 말의 근거가 되지 못한다. 우리가 실제로 아는 것은 "판정이 끝났나"뿐이다.
-	if (b.anomOld.count > 0) {
-		const old = b.anomOld.oldest ? kstOf(b.anomOld.oldest) : null;
-		const days = old ? kstOf(win.now).dayNo - old.dayNo : 0;
-		const when = old
-			? ` 가장 오래된 건 ${old.m}/${old.d}${days >= 1 ? `, ${days}일 전이에요` : "이에요"}.`
-			: "";
-		ongoing.push({
-			kind: "backlog",
-			text: `그전에 잡힌 신호 <b>${b.anomOld.count.toLocaleString()}건</b>은 아직 판정이 안 끝났어요.${when}`,
-			href: `/admin/anomaly${q}`,
-			at: 0,
-			score: b.anomOld.count,
-		});
-	}
-
 	const bySort = (x: BriefLine, y: BriefLine) => {
 		const d = KIND_ORDER.indexOf(x.kind) - KIND_ORDER.indexOf(y.kind);
 		return d !== 0 ? d : y.score - x.score;
 	};
 	fresh.sort(bySort);
-	ongoing.sort(bySort);
+	repeat.sort(bySort);
 
-	// 새 소식이 많은 날에는 이어지는 일을 줄인다. 새로 벌어진 일이 먼저 읽혀야 한다.
+	// 새 소식이 많은 날에는 되풀이 줄을 줄인다. 새로 벌어진 일이 먼저 읽혀야 한다.
 	const head = fresh.slice(0, R.max);
 	const room = Math.max(1, R.maxLines - head.length);
 	return {
 		fresh: head,
-		ongoing: ongoing.slice(0, Math.min(R.maxOld, room)),
+		repeat: repeat.slice(0, Math.min(R.maxRepeat, room)),
 		quiet: quietLine(b, win),
 	};
 }
 
 /**
  * "처음 썼어요"는 전체 기록에서 처음일 때만 말한다.
- * 창 안에서 처음 보였더라도 그전에 쓴 적이 있으면 새 소식이 아니다 — 그때는
- * 아래 '이어지는 일'로 물러나거나 아무 말도 하지 않는다.
+ * 창 안에서 처음 보였더라도 그전에 쓴 적이 있으면 새 소식이 아니다. 그때는 아무 말도 하지 않는다.
  */
 function pushFirst(
 	b: BriefInput,
 	fresh: BriefLine[],
-	ongoing: BriefLine[],
 	kind: string,
 	rows: BriefKeyRow[],
 	min: number,

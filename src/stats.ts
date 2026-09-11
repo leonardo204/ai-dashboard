@@ -1085,8 +1085,6 @@ const FP_SQL = "('rule_fp','model_fp','both_fp')";
  * anomalies.status(open/resolved)는 쓰지 않는다. 이상탐지 서버에 그 값을 바꾸는 코드가 없어
  * 사실상 전부 open으로 남는다. '열려 있다'는 말의 근거로 삼으면 틀린 말을 하게 된다.
  */
-const UNDECIDED_SQL = "(verdict IS NULL OR verdict = 'pending')";
-
 /**
  * 브리핑용 이상 신호 집계 — 신호 종류·앱별 한 줄.
  *
@@ -1101,8 +1099,6 @@ const BRIEF_ANOM_SQL =
 	" SUM(CASE WHEN severity='critical' THEN 1 ELSE 0 END) AS nc," +
 	" SUM(CASE WHEN bucket >= ?2 AND severity='critical' THEN 1 ELSE 0 END) AS inc," +
 	" SUM(CASE WHEN bucket >= ?2 AND severity='warn' THEN 1 ELSE 0 END) AS inw," +
-	` SUM(CASE WHEN bucket < ?2 AND ${UNDECIDED_SQL} THEN 1 ELSE 0 END) AS oldund,` +
-	` MIN(CASE WHEN bucket < ?2 AND ${UNDECIDED_SQL} THEN bucket END) AS oldundf,` +
 	" MAX(CASE WHEN bucket >= ?2 THEN bucket END) AS lastin," +
 	" MIN(bucket) AS firstb" +
 	" FROM anomalies WHERE bucket >= ?1 AND scope='ai'";
@@ -1111,7 +1107,7 @@ const BRIEF_ANOM_TAIL = ` AND (verdict IS NULL OR verdict NOT IN ${FP_SQL}) GROU
 interface BriefAnomRow {
 	signal: string; app: string; label: string | null; n: number; nin: number;
 	nc: number; inc: number; inw: number;
-	oldund: number; oldundf: number | null; lastin: number | null; firstb: number;
+	lastin: number | null; firstb: number;
 }
 /**
  * 상황판이 쓰는 창 함수 묶음.
@@ -1599,11 +1595,7 @@ async function collectBoardInner(
 		firstb: number; lastin: number; topApp: string; topAppIn: number;
 	}
 	const sigMap = new Map<string, SigAgg>();
-	let oldUnd = 0;
-	let oldUndFirst = 0;
 	for (const r of winAnomRs.results ?? []) {
-		oldUnd += r.oldund ?? 0;
-		if (r.oldundf) oldUndFirst = oldUndFirst ? Math.min(oldUndFirst, r.oldundf) : r.oldundf;
 		const a = sigMap.get(r.signal) ?? {
 			signal: r.signal,
 			label: r.label || SIGNAL_LABEL[r.signal] || r.signal,
@@ -1648,7 +1640,6 @@ async function collectBoardInner(
 		anomRepeat: repeats.map((x) => ({
 			label: x.label, n: x.n, nin: x.nin, critical: x.nc, firstb: x.firstb, lastin: x.lastin,
 		})),
-		anomOld: { count: oldUnd, oldest: oldUndFirst },
 		appName: appNameMap,
 		countryName,
 	});

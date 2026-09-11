@@ -119,14 +119,16 @@ function briefPanel(b: BoardData): string {
 				.join("")
 		: `<span class="none">${escapeHtml(b.brief.quiet)}</span>`;
 
-	// 창 전에 시작됐지만 아직 끝나지 않은 일 — 새 소식은 아니라서 흐리게 한 줄로 둔다.
-	// 이어지는 일은 줄마다 따로 둔다. 한 줄에 " · "로 이어 붙이면 문장 두세 개가 붙어
-	// 어디서 끊어 읽어야 할지 알 수 없었다. 머리말은 한 번만 적는다.
-	const ongoing = b.brief.ongoing.length
-		? `<div class="ago"><span class="oh">이어지는 일</span>${b.brief.ongoing
+	// 그전에도 나던 신호 — 새 소식 셈에서 뺀 것들이라 그 사실을 여기서 밝힌다.
+	//
+	// 머리말은 붙이지 않는다. 줄 자체가 "…은 처음이 아니에요"로 시작해 이미 무슨 얘기인지
+	// 말하고 있어서, 위에 제목을 얹으면 그 제목이 무슨 뜻인지 되묻게 만든다.
+	// 새 소식과 섞이지 않게 흐린 글씨와 ↻ 표시, 가는 선으로만 가른다.
+	const repeat = b.brief.repeat.length
+		? `<div class="rep">${b.brief.repeat
 				.map(
 					(c) =>
-						`<a href="${c.href}"><i></i><span>${c.text}</span>` +
+						`<a href="${c.href}"><i aria-hidden="true">↻</i><span>${c.text}</span>` +
 						`${c.at ? `<em>${escapeHtml(briefAt(c.at))}</em>` : ""}</a>`,
 				)
 				.join("")}</div>`
@@ -138,7 +140,7 @@ function briefPanel(b: BoardData): string {
     <span class="bt">${tabs}</span>
   </div>
   <div class="bl">${body}</div>
-  ${ongoing}
+  ${repeat}
 </section>`;
 }
 
