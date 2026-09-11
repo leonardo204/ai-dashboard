@@ -236,7 +236,13 @@ textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:var(-
 .topbar{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--panel) 88%,transparent);backdrop-filter:blur(10px);
  border-bottom:1px solid var(--line);}
 .topbar .in{max-width:1120px;margin:0 auto;padding:0 18px;height:54px;display:flex;align-items:center;gap:14px;}
-.topbar .bd{font-weight:800;font-size:var(--fs-lg);letter-spacing:-.3px;display:flex;align-items:center;gap:8px;}
+/* 서비스 이름 = 상황판으로 가는 입구. 누를 수 있는 것으로 보여야 하고,
+   상황판을 보고 있을 때는 메뉴 항목과 같은 방식으로 표시가 남는다. */
+.topbar .bd{font-weight:800;font-size:var(--fs-lg);letter-spacing:-.3px;display:flex;align-items:center;
+ gap:8px;color:var(--ink);text-decoration:none;padding:6px 10px;margin-left:-10px;
+ border-radius:var(--r-md);flex:0 0 auto;white-space:nowrap;}
+.topbar .bd:hover{background:var(--bg);text-decoration:none;}
+.topbar .bd.on{background:var(--accent-bg);color:var(--accent-fg);}
 .topbar .bd i{width:9px;height:9px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent-2));display:block;}
 .topbar nav{display:flex;gap:4px;margin-left:6px;}
 .topbar nav a{font-size:var(--fs-md);font-weight:700;color:var(--muted);padding:7px 11px;border-radius:var(--r-md);text-decoration:none;}
@@ -658,7 +664,9 @@ const EXTRA_CSS = `
 .topbar nav a{white-space:nowrap;}
 @media(max-width:900px){.hzs .t,.hzs .kst,.hzs .sep{display:none}.hzs .live .tx,.hzs #hz-live-t{display:none}
  .hzs .live{padding:5px 7px}.hzs .beat .tx{display:none}}
-@media(max-width:640px){.topbar .in{gap:8px;padding:0 12px}.topbar .bd span{display:none}
+@media(max-width:640px){.topbar .in{gap:8px;padding:0 12px}
+ /* 이름을 감추면 남는 게 9px 점뿐이라 상황판으로 갈 길이 사라진다. 작게 줄여 두되 지우지 않는다. */
+ .topbar .bd{font-size:var(--fs-md);padding:6px 8px;margin-left:-8px;gap:6px;}
  .topbar nav{margin-left:0;}.topbar nav a{font-size:var(--fs-sm);padding:6px 9px;}
  .topbar .in>form .btn{font-size:var(--fs-sm);padding:6px 10px;}}
 
@@ -1624,8 +1632,11 @@ export interface AdminOpts {
  * 전에는 아홉 개가 같은 급으로 늘어서 있어 무엇이 무엇의 상세인지 알 수 없었다.
  * 사용량·추이·지역·로그는 모두 "AI 호출"을 다른 각도로 본 것이라 그 아래로 넣었다.
  */
+/**
+ * 상단 메뉴. 상황판은 여기 없다 — 왼쪽 위 "AI Service"를 누르면 그리로 간다.
+ * 서비스 이름과 첫 화면이 같은 곳을 가리키는데 메뉴에까지 두면 같은 자리로 가는 입구가 둘이 된다.
+ */
 const NAV: { key: TabKey; href: string; label: string }[] = [
-	{ key: "board", href: "/admin", label: "상황판" },
 	{ key: "calls", href: "/admin/calls", label: "AI 호출" },
 	{ key: "traffic", href: "/admin/traffic", label: "트래픽" },
 	{ key: "anomaly", href: "/admin/anomaly", label: "이상탐지" },
@@ -1709,7 +1720,7 @@ export function shellAdmin(title: string, body: string, opts: AdminOpts = {}): s
 	const topbar = opts.bare
 		? ""
 		: `<header class="topbar"><div class="in">
-  <span class="bd"><i></i><span>AI Service</span></span>
+  <a class="bd${opts.tab === "board" ? " on" : ""}" href="/admin" data-tip="상황판 보기"><i></i><span>AI Service</span></a>
   <nav>${nav}</nav>
   <span class="sp"></span>
   ${opts.bare ? "" : statusBar(opts)}

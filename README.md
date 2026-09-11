@@ -18,7 +18,7 @@ OpenRouter 앞단에 서는 **AI 프록시 + 사용량 대시보드**입니다. 
 | --- | --- |
 | `POST /v1/ai` | 채팅·비전·웹검색 |
 | `POST /v1/embeddings` | 임베딩 |
-| `GET /admin` | 상황판 (세션 로그인) |
+| `GET /admin` | 상황판 (세션 로그인). 상단 메뉴에는 없고 왼쪽 위 **AI Service**를 누르면 열립니다 |
 | `GET /admin/calls` | AI 호출 — 흐름(기본). 기간별 추이 · 요일×시각 히트맵 |
 | `GET /admin/calls/usage` | 앱·모델·용도별 사용량 |
 | `GET /admin/calls/geo` | 국가·도시별 호출 분포 |
