@@ -273,7 +273,7 @@ async function withHits<T>(env: TrafficEnv, fn: () => Promise<T>): Promise<T> {
 //   admin      관리 도구 로그인 화면 찾기     (phpmyadmin · /manager/html · cpanel)
 //   probe      서버 정보·설정 엿보기         (server-status · phpinfo · /actuator/env)
 //   exploit    알려진 침투 시도              (eval-stdin.php · ProxyShell · /@vite/env)
-//   broken     우리 쪽 깨진 링크             (우리 사이트에서 넘어온 요청)
+//   broken     우리 쪽 깨진 링크             (우리 사이트에서 넘어왔고, 스캔을 낸 적 없는 방문자)
 //   other      그 밖
 // ─────────────────────────────────────────────────────────────
 const THREAT_RULES: [string, RegExp][] = [
@@ -290,18 +290,41 @@ const THREAT_RULES: [string, RegExp][] = [
 	["wordpress", /(^|\/)license\.txt$/i],
 	// PHP도 GraphQL도 쓰지 않는다. 그런 주소를 찾는 요청은 사람이 아니라 훑어보는 쪽이다.
 	["probe", /\.php($|\?|\/)|(^|\/)(graphql|gql)(\/|$)/i],
+	// 블로그·CMS 경로 — zerolive 서비스 어디에도 블로그가 없다. 워드프레스가 깔려 있는지
+	// 떠보는 첫 수순이라, 같은 IP 가 이어서 /blog/wp-json/... 을 두드린다(실제로 그랬다).
+	// 나중에 블로그를 열면 이 줄을 빼야 한다.
+	["wordpress", /(^|\/)(blog|blogs|cms|wordpress|wp)(\/|$)/i],
+	// Yoast SEO 플러그인이 만드는 사이트맵 주소. 우리 사이트맵은 /sitemap.xml 하나뿐이다.
+	["wordpress", /(^|\/)(sitemap_index\.xml|sitemap-index\.xml|wp-sitemap\.xml)$|(^|\/)sitemap\/sitemap\.xml$/i],
+	["probe", /(^|\/)open\/visitors(\/|$)/i],
 ];
 
 /** 없는 주소 요청 한 건의 종류. 404가 아니면 아무것도 붙이지 않는다. */
-export function classifyThreat(path: string, status: number | null, refGroup: string): string | null {
+/**
+ * 이 404 가 무엇인가 — 스캔인가, 우리 쪽 깨진 링크인가, 그 밖인가.
+ *
+ * ipScanned 는 "같은 방문자가 이미 확실한 스캔을 낸 적이 있나"다. 이 값이 필요한 이유:
+ * referer 만으로는 깨진 링크를 가릴 수 없다. 스캐너는 대상 도메인을 그대로 referer 에
+ * 넣고 오므로 우리 사이트에서 넘어온 것처럼 보인다. 실제로 그 규칙만 쓰던 동안 '깨진 링크'
+ * 로 잡힌 154건이 전부 워드프레스 스캔이었고, 진짜 깨진 링크는 한 건도 없었다.
+ * 한 IP 가 4분에 500건을 낸 기록도 그 안에 있었다.
+ *
+ * 그래서 깨진 링크는 두 조건을 함께 본다 — 우리 사이트에서 넘어왔고, 그 방문자가 스캔을
+ * 낸 적이 없을 때. 판단할 근거가 없으면(ipScanned 를 안 넘기면) 깨진 링크라고 말하지 않는다.
+ */
+export function classifyThreat(
+	path: string,
+	status: number | null,
+	refGroup: string,
+	ipScanned = true,
+): string | null {
 	if (status !== 404) return null;
 	for (const [kind, re] of THREAT_RULES) {
 		if (re.test(path)) return kind;
 	}
-	// 우리 사이트 안에서 넘어온 요청이면 스캔이 아니라 우리 쪽 깨진 링크다.
-	// 다만 첫 화면(/)은 빼 둔다 — 스캐너가 대상 주소를 그대로 referer에 넣는 일이 흔해서,
+	// 첫 화면(/)은 빼 둔다 — 스캐너가 대상 주소를 그대로 referer 에 넣는 일이 흔해서,
 	// 그걸 깨진 링크로 세면 고칠 것이 없는데 있다고 나온다.
-	if (refGroup === "internal" && path !== "/") return "broken";
+	if (!ipScanned && refGroup === "internal" && path !== "/") return "broken";
 	return "other";
 }
 
@@ -317,6 +340,8 @@ export function classifyThreat(path: string, status: number | null, refGroup: st
  * 사람이 눌렀을 수 있어서, 봇으로 세면 반대로 사람 수를 깎는다.
  */
 const SCAN_THREATS = new Set(["wordpress", "secret", "admin", "probe", "exploit"]);
+/** 스캔 이력을 얼마나 거슬러 볼지. 스캐너는 몇 분 안에 몰아치지만 하루 뒤 또 오기도 한다. */
+const SCAN_MEMORY_MS = 24 * 60 * 60 * 1000;
 export function looksScanner(threat: string | null): boolean {
 	return !!threat && SCAN_THREATS.has(threat);
 }
@@ -327,7 +352,7 @@ export const THREAT_LABEL: Record<string, { text: string; desc: string }> = {
 	admin: { text: "관리 도구 찾기", desc: "phpMyAdmin·cPanel 같은 관리 화면을 찾는 요청이에요. 그런 도구를 쓰지 않아요." },
 	probe: { text: "서버 정보 엿보기", desc: "서버 설정·상태를 그대로 내주는 주소를 찾는 요청이에요. 그런 주소를 열어 두지 않았어요." },
 	exploit: { text: "침투 시도", desc: "알려진 취약점을 그대로 찔러 보는 요청이에요. 해당하는 소프트웨어를 쓰지 않아요." },
-	broken: { text: "우리 쪽 깨진 링크", desc: "우리 사이트 안에서 넘어온 요청이에요. 링크를 고치거나 옮긴 주소를 이어 주면 좋아요." },
+	broken: { text: "우리 쪽 깨진 링크", desc: "우리 사이트에서 넘어왔고, 스캔을 낸 적 없는 방문자예요. 링크를 고치거나 옮긴 주소를 이어 주면 좋아요." },
 	other: { text: "그 밖", desc: "패턴에 맞지 않는 요청이에요. 주소 오타이거나 예전 주소일 수 있어요." },
 };
 
@@ -384,7 +409,16 @@ export async function handleHit(request: Request, env: TrafficEnv, ctx: Executio
 
 	const now = Date.now();
 	const salt = env.ADMIN_PASS || "hit";
-	const rows: unknown[][] = [];
+	// ── 1차. 경로와 UA 만으로 가른다.
+	interface Prepped {
+		ts: number; site: string; path: string; status: number | null; ms: number | null;
+		kind: string; bot: string | null; refGroup: string; refSource: string; refHost: string | null;
+		country: string | null; region: string | null; city: string | null;
+		ua: string; ipHash: string | null; method: string; threat: string | null;
+		/** 사람처럼 보이는 404 — 이 방문자가 스캔을 낸 적이 있는지 더 봐야 한다. */
+		ask: boolean;
+	}
+	const prepped: Prepped[] = [];
 	for (const h of list) {
 		const site = trim(h?.site, 40);
 		if (!site) continue;
@@ -399,16 +433,59 @@ export async function handleHit(request: Request, env: TrafficEnv, ctx: Executio
 		// 이미 크롤러로 가려진 것(Googlebot 등)은 그대로 둔다 — 그쪽 이름이 더 쓸모 있다.
 		const scan = c.kind === "human" && looksScanner(threat);
 		const ts = num(h?.ts);
-		rows.push([
-			ts && ts > 1_600_000_000_000 && ts < now + 300_000 ? ts : now,
-			site, path, status, num(h?.ms) ?? num(h?.latency_ms),
-			scan ? "bot" : c.kind, scan ? "스캐너" : c.bot, r.group, r.source, r.host,
-			trim(h?.country, 8), trim(h?.region, 60), trim(h?.city, 60),
-			ua.slice(0, 300), await hashIP(trim(h?.ip, 60) || "", salt), trim(h?.method, 10) || "GET",
-			threat,
-		]);
+		prepped.push({
+			ts: ts && ts > 1_600_000_000_000 && ts < now + 300_000 ? ts : now,
+			site, path, status, ms: num(h?.ms) ?? num(h?.latency_ms),
+			kind: scan ? "bot" : c.kind, bot: scan ? "스캐너" : c.bot,
+			refGroup: r.group, refSource: r.source, refHost: r.host,
+			country: trim(h?.country, 8), region: trim(h?.region, 60), city: trim(h?.city, 60),
+			ua: ua.slice(0, 300), ipHash: await hashIP(trim(h?.ip, 60) || "", salt),
+			method: trim(h?.method, 10) || "GET", threat,
+			ask: !scan && c.kind === "human" && status === 404,
+		});
 	}
-	if (!rows.length) return ok({ ok: true, saved: 0 });
+	if (!prepped.length) return ok({ ok: true, saved: 0 });
+
+	// ── 2차. 사람처럼 보이는 404 만 한 번 더 본다.
+	//
+	// 스캐너는 UA 를 브라우저로 위장하고 referer 에 우리 도메인을 넣는다. 경로 패턴을 아무리
+	// 늘려도 새 이름이 계속 나오므로 뒤쫓기만 해서는 끝이 없다. 대신 방문자를 본다 —
+	// 같은 IP 가 이미 /.env 나 /wp-login.php 를 두드린 적이 있으면, 그 사람의 나머지 404 도
+	// 사람이 낸 것이 아니다.
+	//
+	// 조회는 여기 해당하는 것이 있을 때만 돈다. 대부분의 방문은 404 가 아니라서 그냥 지나간다.
+	const askIps = Array.from(new Set(prepped.filter((x) => x.ask && x.ipHash).map((x) => x.ipHash as string)));
+	if (askIps.length) {
+		try {
+			const ph = askIps.map((_, i) => `?${i + 2}`).join(",");
+			const rs = await env.DB.prepare(
+				`SELECT DISTINCT ip_hash FROM hits WHERE ts >= ?1 AND ip_hash IN (${ph})` +
+					` AND threat IS NOT NULL AND threat NOT IN ('broken','other')`,
+			)
+				.bind(now - SCAN_MEMORY_MS, ...askIps)
+				.all<{ ip_hash: string }>();
+			const scanned = new Set((rs.results ?? []).map((r) => r.ip_hash));
+			for (const x of prepped) {
+				if (!x.ask) continue;
+				if (scanned.has(x.ipHash as string)) {
+					x.kind = "bot";
+					x.bot = "스캐너";
+					// 종류를 모르는 스캔이라 이름을 붙이지 않는다. 화면에서는 '그 밖'으로 묶인다.
+				} else {
+					// 스캔 이력이 없는 방문자다. 이제야 깨진 링크라고 말할 근거가 생긴다.
+					x.threat = classifyThreat(x.path, x.status, x.refGroup, false);
+				}
+			}
+		} catch {
+			/* 조회가 안 되면 1차 판정 그대로 둔다. 기록이 화면을 막으면 안 된다 */
+		}
+	}
+
+	const rows: unknown[][] = prepped.map((x) => [
+		x.ts, x.site, x.path, x.status, x.ms,
+		x.kind, x.bot, x.refGroup, x.refSource, x.refHost,
+		x.country, x.region, x.city, x.ua, x.ipHash, x.method, x.threat,
+	]);
 
 	const stmts = rows.map((v) =>
 		env.DB.prepare(
@@ -440,6 +517,9 @@ export async function ensureHitsTable(env: TrafficEnv): Promise<void> {
 		"CREATE INDEX IF NOT EXISTS idx_hits_site_ts ON hits(site, ts)",
 		"CREATE INDEX IF NOT EXISTS idx_hits_kind_ts ON hits(kind, ts)",
 		"CREATE INDEX IF NOT EXISTS idx_hits_threat ON hits(threat, ts)",
+		// 사람처럼 보이는 404 를 만났을 때 "이 방문자가 전에 스캔을 냈나"를 묻는다.
+		// 그 조회가 표를 통째로 훑지 않도록 둔다.
+		"CREATE INDEX IF NOT EXISTS idx_hits_ip_ts ON hits(ip_hash, ts)",
 	]) {
 		try {
 			await env.DB.prepare(sql).run();
