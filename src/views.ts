@@ -22,7 +22,7 @@ import {
 	type TrafficData,
 } from "./stats";
 import {
-	escapeHtml, usd, kst, shortNum, shellAdmin, pageHead, filterTabs, sectionHead, delta, kpiRow,
+	escapeHtml, usd, kst, shortNum, shellAdmin, pageHead, filterTabs, periodTabs, sectionHead, delta, kpiRow,
 	callsSub, trafficSub, anomalySub, settingsSub,
 	svgTrend, svgMap, hbars, svgHeat, svgLevels, svgF1, svgTraffic, type AdminOpts,
 } from "./ui";
@@ -266,9 +266,10 @@ export function renderBoard(b: BoardData, opts: AdminOpts = {}): string {
 
 	return shellAdmin(
 		"상황판",
-		pageHead("상황판", `지금 상태 · ${sinceLabel(b.since)}`) +
+		pageHead("상황판", `지금 상태 · ${sinceLabel(b.since)}`,
+			periodTabs(b.period, PERIODS, (k) => `/admin?period=${k}${b.appFilter ? `&app=${encodeURIComponent(b.appFilter)}` : ""}`)) +
 			`<div id="hz-body">
-${filterTabs("/admin", b.period, b.appFilter, b.apps, PERIODS)}
+${filterTabs("/admin", b.period, b.appFilter, b.apps)}
 
 <a class="stat ${st.level}" href="${st.href}">
   <span class="dot"></span>
@@ -411,9 +412,10 @@ export function renderUsage(u: UsageData, opts: AdminOpts = {}): string {
 
 	return shellAdmin(
 		"사용량",
-		pageHead("사용량", `앱 · 모델 · 용도별 집계 · ${sinceLabel(u.since)}`) +
+		pageHead("사용량", `앱 · 모델 · 용도별 집계 · ${sinceLabel(u.since)}`,
+			periodTabs(u.period, PERIODS, (k) => `/admin/calls/usage?period=${k}${u.appFilter ? `&app=${encodeURIComponent(u.appFilter)}` : ""}`)) +
 			`<div id="hz-body">
-${filterTabs("/admin/calls/usage", u.period, u.appFilter, u.apps, PERIODS)}
+${filterTabs("/admin/calls/usage", u.period, u.appFilter, u.apps)}
 ${briefOf(opts, "/admin/calls/usage", navQuery(u.period, u.appFilter).slice(1))}
 ${kpiRow([
 	{ label: "호출", value: u.total.toLocaleString(), size: "sm" },
@@ -498,9 +500,10 @@ export function renderTrend(t: TrendData, opts: AdminOpts = {}): string {
 
 	return shellAdmin(
 		"AI 호출",
-		pageHead("AI 호출", `호출·비용 흐름 · ${sinceLabel(t.since)}`) +
+		pageHead("AI 호출", `호출·비용 흐름 · ${sinceLabel(t.since)}`,
+			periodTabs(t.period, PERIODS, (k) => `/admin/calls?period=${k}${t.appFilter ? `&app=${encodeURIComponent(t.appFilter)}` : ""}`)) +
 			`<div id="hz-body">
-${filterTabs("/admin/calls", t.period, t.appFilter, t.apps, PERIODS)}
+${filterTabs("/admin/calls", t.period, t.appFilter, t.apps)}
 ${briefOf(opts, "/admin/calls", navQuery(t.period, t.appFilter).slice(1))}
 ${sectionHead(`${t.bucketLabel} 단위 호출·비용`, {
 		tip: TIP_TREND,
@@ -632,9 +635,10 @@ export function renderGeo(g: GeoData, opts: AdminOpts = {}): string {
 
 	return shellAdmin(
 		"지역",
-		pageHead("호출 지역", `국가 · 도시별 호출·방문 분포 · ${sinceLabel(g.since)}`) +
+		pageHead("호출 지역", `국가 · 도시별 호출·방문 분포 · ${sinceLabel(g.since)}`,
+			periodTabs(g.period, PERIODS, (k) => `/admin/calls/geo?period=${k}${g.appFilter ? `&app=${encodeURIComponent(g.appFilter)}` : ""}`)) +
 			`<div id="hz-body">
-${filterTabs("/admin/calls/geo", g.period, g.appFilter, g.apps, PERIODS)}
+${filterTabs("/admin/calls/geo", g.period, g.appFilter, g.apps)}
 ${briefOf(opts, "/admin/calls/geo", navQuery(g.period, g.appFilter).slice(1))}
 ${svgMap(g.points, g.geoUnknown, g.hitPoints, g.hitUnknown, g.hitSite ? siteName(g.hitSite) : "")}
 
@@ -1432,11 +1436,12 @@ function anomalyNavRow(cur: AnomalyNav): string {
 	const left =
 		navTab("AI 호출", cur.view !== "mail" && cur.scope === "ai", anomalyHref({ ...cur, view, scope: "ai", app: "" })) +
 		navTab("트래픽", cur.view !== "mail" && cur.scope === "traffic", anomalyHref({ ...cur, view, scope: "traffic", app: "" }));
-	const periods = Object.entries(PERIODS)
-		.map(([k, v]) => navTab(v.label, k === cur.period, anomalyHref({ ...cur, period: k })))
-		.join("");
-	return `<div class="tabs">${left}<span style="flex:1"></span>${periods}</div>`;
+	return `<div class="tabs">${left}</div>`;
 }
+
+/** 기간 탭 — 다른 화면과 같이 제목 줄 오른쪽에 둔다. 조건은 anomalyHref 가 물고 간다. */
+const anomalyPeriods = (cur: AnomalyNav) =>
+	periodTabs(cur.period, PERIODS, (k) => anomalyHref({ ...cur, period: k }));
 
 /** 줄2 — 보기 방식 + 오른쪽 곁가지 */
 function anomalyViewRow(cur: AnomalyNav, right = ""): string {
@@ -1451,7 +1456,7 @@ function anomalyViewRow(cur: AnomalyNav, right = ""): string {
 function anomalyAppRow(cur: AnomalyNav, apps: { id: string; name: string }[], traffic: boolean): string {
 	const t = (id: string, label: string) =>
 		navTab(escapeHtml(label), (cur.app ?? "") === id, anomalyHref({ ...cur, app: id }));
-	return `<div class="tabs">${t("", traffic ? "전체 서비스" : "전체 앱")}${apps.map((a) => t(a.id, a.name)).join("")}</div>`;
+	return `<div class="tabs slide">${t("", traffic ? "전체 서비스" : "전체 앱")}${apps.map((a) => t(a.id, a.name)).join("")}</div>`;
 }
 
 const SITE_TABS = Object.entries(SITES).map(([id, v]) => ({ id, name: v.name, active: true }));
@@ -1665,6 +1670,7 @@ function renderAnomalyScreen(a: AnomalyData, view: "signals" | "detector", opts:
 			signals
 				? `${traffic ? "평소와 다른 방문 흐름" : "평소와 다른 호출 흐름"} · ${sinceLabel(a.since)}`
 				: `이상탐지 에이전트가 어떻게 배우고 있나 · ${sinceLabel(a.since)}`,
+			anomalyPeriods(nav),
 		) +
 			`<div id="hz-body">
 ${anomalyNavRow(nav)}
@@ -1829,7 +1835,7 @@ export function renderMails(d: MailsData, opts: AdminOpts = {}): string {
 
 	return shellAdmin(
 		"보낸 메일",
-		pageHead("이상탐지", `보낸 알림 메일 · ${sinceLabel(d.since)}`) +
+		pageHead("이상탐지", `보낸 알림 메일 · ${sinceLabel(d.since)}`, anomalyPeriods(nav)) +
 			`<div id="hz-body">
 ${anomalyNavRow(nav)}
 ${anomalyViewRow(nav, kindTab("", "전체", d.total) + kindTab("anomaly", "이상 알림", d.anomaly) + kindTab("train", "학습 결과", d.train) + kindTab("test", "점검", d.test))}
@@ -1915,6 +1921,7 @@ export function renderAnomalyDetail(d: AnomalyBoardData, opts: AdminOpts = {}): 
 		pageHead(
 			"이상탐지",
 			`${traffic ? "서비스 방문" : "AI 호출"} 판정 상세 · ${sinceLabel(d.since)}`,
+			anomalyPeriods(nav),
 		) +
 			`<div id="hz-body">
 ${anomalyNavRow(nav)}
@@ -2460,14 +2467,21 @@ export function renderTraffic(t: TrafficData, view: "visits" | "bots" | "paths" 
 
 	return shellAdmin(
 		"트래픽",
-		pageHead("트래픽", `서비스 방문 · ${sinceLabel(t.since)}`) +
+		pageHead(
+			"트래픽",
+			`서비스 방문 · ${sinceLabel(t.since)}`,
+			periodTabs(t.period, PERIODS, (k) => `${base}?period=${k}${t.siteFilter ? `&site=${encodeURIComponent(t.siteFilter)}` : ""}`),
+		) +
 			`<div id="hz-body">
-${filterTabs(base, t.period, t.siteFilter, t.sites, PERIODS, "",
-	t.siteFilter && siteUrl(t.siteFilter)
-		? `<a class="tab alt" href="${siteUrl(t.siteFilter)}" target="_blank" rel="noopener">${escapeHtml(siteName(t.siteFilter))} 열기 ↗</a>`
-		: "",
-	{ key: "site", allLabel: "전체 서비스" },
-)}
+${filterTabs(base, t.period, t.siteFilter, t.sites, {
+	key: "site",
+	allLabel: "전체 서비스",
+	// 고른 서비스를 새 창으로 여는 링크. 칩 줄 끝에 붙여 함께 밀린다.
+	tail:
+		t.siteFilter && siteUrl(t.siteFilter)
+			? `<a class="tab alt" href="${siteUrl(t.siteFilter)}" target="_blank" rel="noopener">${escapeHtml(siteName(t.siteFilter))} 열기 ↗</a>`
+			: "",
+})}
 ${briefOf(opts, base, `period=${t.period}${t.siteFilter ? `&site=${encodeURIComponent(t.siteFilter)}` : ""}`)}
 
 ${kpiRow([

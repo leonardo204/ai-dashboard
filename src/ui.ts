@@ -52,12 +52,22 @@ const ADMIN_CSS = `
 h1{font-size:var(--fs-lg);margin:0 0 4px;}h2{font-size:var(--fs-md);margin:26px 0 9px;color:var(--muted);}
 .sub{color:var(--muted);font-size:var(--fs-md);margin:0 0 16px;}
 .tabs{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px;}
-/* 기간·앱 한 줄 — 왼쪽 묶음은 남는 폭을 쓰며 접히고, 기간은 오른쪽 끝에 붙어 있는다.
-   앱이 많아 왼쪽이 여러 줄이 되어도 기간은 첫 줄 오른쪽에 그대로 남는다. */
-.tabs.flt{align-items:flex-start;gap:10px var(--sp-3);}
-.tabs.flt>span{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
-.tabs.flt .lf{flex:1 1 auto;min-width:0;}
-.tabs.flt .rt{flex:0 0 auto;margin-left:auto;}
+/* 옆으로 미는 줄 — 칩이 늘어도 줄을 바꾸지 않는다.
+   서비스가 아홉 개인 트래픽 화면에서 줄이 넘쳐 두 줄이 됐고, 그 둘째 줄은 왼쪽이 통째로
+   비어 상자만 커 보였다. 대신 한 줄을 지키고 넘치는 만큼 옆으로 민다.
+   가려진 것이 있으면 그쪽 끝을 흐리게 해서 "더 있다"를 알린다(아래 .slide.l/.r).
+   상단 메뉴도 같은 규칙을 쓴다 — 미는 줄이 화면마다 다르게 보이면 안 된다. */
+.slide{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;-ms-overflow-style:none;}
+.slide::-webkit-scrollbar{display:none}
+.slide>*{flex:0 0 auto;}
+.slide.l{-webkit-mask-image:linear-gradient(90deg,transparent,var(--ink) 28px);
+ mask-image:linear-gradient(90deg,transparent,var(--ink) 28px);}
+.slide.r{-webkit-mask-image:linear-gradient(90deg,var(--ink) calc(100% - 28px),transparent);
+ mask-image:linear-gradient(90deg,var(--ink) calc(100% - 28px),transparent);}
+.slide.l.r{-webkit-mask-image:linear-gradient(90deg,transparent,var(--ink) 28px,var(--ink) calc(100% - 28px),transparent);
+ mask-image:linear-gradient(90deg,transparent,var(--ink) 28px,var(--ink) calc(100% - 28px),transparent);}
+/* 제목 줄 오른쪽의 기간 탭. 시계가 상단바로 옮겨 가 비어 있던 자리다. */
+.head .pds{display:flex;gap:8px;align-items:center;flex:0 0 auto;}
 .tab{font-size:var(--fs-md);font-weight:700;padding:7px var(--sp-3);border-radius:var(--r-pill);border:1px solid var(--line);
  background:var(--panel);color:var(--ink);text-decoration:none;}
 .tab.on{background:var(--accent);border-color:var(--accent);color:var(--panel);}
@@ -201,7 +211,7 @@ textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:var(-
 /* ── 제목 + 실시간 시계
    시계는 제목보다 작게(제목이 주인공), 하나의 카드로 묶어 오른쪽에 고정한다.
    전에는 27px 숫자가 배경 없이 세로 3단으로 떠 있어 무게가 오른쪽으로 쏠렸다. */
-.head{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:13px;}
+.head{display:flex;align-items:center;justify-content:space-between;gap:10px 16px;margin-bottom:13px;flex-wrap:wrap;}
 .head .ht{min-width:0;flex:1 1 auto;}
 .head h1{margin:0 0 3px;}
 .head .sub{margin:0;}
@@ -251,9 +261,6 @@ textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:var(-
 .topbar .sp{flex:1}
 .topbar .who{font-size:var(--fs-sm);color:var(--muted);}
 .topbar .lo .ic{display:none;}
-/* 메뉴가 옆으로 밀릴 때 오른쪽 끝을 흐리게 — 끝까지 밀면(.end) 걷는다 */
-.topbar nav.more{-webkit-mask-image:linear-gradient(90deg,var(--ink) calc(100% - 36px),transparent);mask-image:linear-gradient(90deg,var(--ink) calc(100% - 36px),transparent);}
-.topbar nav.more.end{-webkit-mask-image:none;mask-image:none;}
 /* 자리가 모자라면 메뉴가 먼저 줄어들며 옆으로 밀린다. 로그아웃 단추는 줄지 않는다 —
    줄어들면 글자가 한 자씩 세로로 쌓여 상단바 밖으로 삐져나온다. */
 .topbar nav{flex:1 1 auto;min-width:0;}
@@ -610,7 +617,8 @@ const ADMIN_JS = `
           if (neu && cur) cur.innerHTML = neu.innerHTML;
         })
         .catch(function(){ /* 잠깐 실패해도 다음 주기에 다시 시도한다 */ })
-        .then(function(){ busy = false; tickClock(); paintLive(); if (window.hzMobileTables) window.hzMobileTables(); });
+        .then(function(){ busy = false; tickClock(); paintLive(); if (window.hzMobileTables) window.hzMobileTables();
+          if (window.hzSlideTabs) window.hzSlideTabs(); });
     }
 
     var MIN_REDRAW = 60000;   // 다시 그리는 사이 최소 간격
@@ -664,8 +672,6 @@ const ADMIN_JS = `
 /* ── 탭 분리(요약·사용량·추이·지역·로그)에서 새로 쓰는 스타일 ── */
 const EXTRA_CSS = `
 /* 상단바 메뉴가 6개라 좁은 화면에선 가로로 밀어서 본다 */
-.topbar nav{overflow-x:auto;scrollbar-width:none;}
-.topbar nav::-webkit-scrollbar{display:none}
 .topbar nav a{white-space:nowrap;}
 @media(max-width:900px){.hzs .t,.hzs .kst,.hzs .sep{display:none}.hzs .live .tx,.hzs #hz-live-t{display:none}
  .hzs .live{padding:5px 7px}.hzs .beat .tx{display:none}}
@@ -1155,8 +1161,8 @@ label.chk input{margin-top:3px;flex:0 0 auto;}
  h1{font-size:var(--fs-lg);}
  .head{gap:10px;}
  .tabs{gap:6px;margin-bottom:10px;}
- .tabs.flt{gap:6px 10px;}
- .tabs.flt .rt{order:-1;width:100%;margin-left:0;}
+ /* 기간은 제목 아래로 내려가 왼쪽에 붙는다. 제목과 나란히 두기엔 폭이 모자란다. */
+ .head .pds{width:100%;}
  .tabs>span[style]{display:none;}
  .tab{font-size:var(--fs-sm);padding:6px 11px;}
  .sect{gap:var(--sp-1);margin:20px 0 var(--sp-2);}
@@ -1453,22 +1459,50 @@ window.hzMobileTables = function(){
 };
 window.hzMobileTables();
 
-// 상단 메뉴가 옆으로 밀릴 만큼 길면 오른쪽 끝을 흐리게 해 "더 있음"을 보인다. 끝까지 밀면 걷는다.
-(function(){
-  var nav = document.querySelector('.topbar nav');
-  if (!nav) return;
-  function upd(){
-    var more = nav.scrollWidth - nav.clientWidth > 4;
-    nav.classList.toggle('more', more);
-    nav.classList.toggle('end', !more || nav.scrollLeft + nav.clientWidth >= nav.scrollWidth - 4);
+// 옆으로 미는 줄 — 가려진 칩이 있는 쪽 끝을 흐리게 해서 "더 있다"를 알린다.
+//
+// 스크롤 막대를 숨겨 두었으므로(디자인상), 가려진 것이 있다는 것을 알릴 다른 방법이 필요하다.
+// 트랙패드로 밀 수 있다는 것은 흐린 끝을 보면 알게 되고, 마우스만 쓰는 사람을 위해
+// 휠을 가로 스크롤로 받는다. 지금 고른 칩이 가려져 있으면 열자마자 보이는 자리로 밀어 둔다.
+//
+// 자동 갱신으로 본문을 갈아끼우면 줄이 새로 만들어지므로 그때마다 다시 부른다(아래 refresh).
+window.hzSlideTabs = function(){
+  var bars = document.querySelectorAll('.slide');
+  for (var i = 0; i < bars.length; i++) setup(bars[i]);
+
+  function edge(bar){
+    var hidden = bar.scrollWidth - bar.clientWidth;
+    bar.classList.toggle('l', bar.scrollLeft > 4);
+    bar.classList.toggle('r', hidden - bar.scrollLeft > 4);
   }
-  nav.addEventListener('scroll', upd, { passive: true });
-  window.addEventListener('resize', upd);
-  upd();
-  // 지금 보는 메뉴가 가려져 있으면 보이는 자리로 밀어 둔다.
-  var on = nav.querySelector('a.on');
-  if (on && on.offsetLeft + on.offsetWidth > nav.clientWidth) nav.scrollLeft = on.offsetLeft - 12;
-})();
+  function setup(bar){
+    if (!bar.getAttribute('data-slide')) {
+      bar.setAttribute('data-slide', '1');
+      bar.addEventListener('scroll', function(){ edge(bar); }, { passive: true });
+      // 세로로 굴린 휠을 가로로 받는다. 세로로 밀 것이 없는 줄이라 뺏는 것이 없다.
+      bar.addEventListener('wheel', function(e){
+        if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+        if (bar.scrollWidth <= bar.clientWidth) return;
+        bar.scrollLeft += e.deltaY;
+        e.preventDefault();
+      }, { passive: false });
+      // 지금 고른 것이 가려져 있으면 보이는 자리로 밀어 둔다.
+      var on = bar.querySelector('a.on');
+      if (on && on.offsetLeft + on.offsetWidth > bar.clientWidth) {
+        bar.scrollLeft = on.offsetLeft - Math.max(12, (bar.clientWidth - on.offsetWidth) / 2);
+      }
+    }
+    edge(bar);
+  }
+  if (!window.hzSlideResize) {
+    window.hzSlideResize = true;
+    window.addEventListener('resize', function(){
+      var b = document.querySelectorAll('.slide');
+      for (var k = 0; k < b.length; k++) edge(b[k]);
+    });
+  }
+};
+window.hzSlideTabs();
 
 // 토큰 보기/가리기 — 평소엔 가운데를 가려 둔다.
 document.addEventListener('click', function(e){
@@ -1730,7 +1764,7 @@ export function shellAdmin(title: string, body: string, opts: AdminOpts = {}): s
 		? ""
 		: `<header class="topbar"><div class="in">
   <a class="bd" href="/admin"><i></i><span>AI Service</span></a>
-  <nav>${nav}</nav>
+  <nav class="slide">${nav}</nav>
   <span class="sp"></span>
   ${opts.bare ? "" : statusBar(opts)}
   ${opts.session ? `<form method="post" action="/admin/logout"><button class="btn lo" type="submit" aria-label="로그아웃" data-tip="로그아웃"><svg class="ic" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg><span class="tx">로그아웃</span></button></form>` : ""}
@@ -1797,13 +1831,35 @@ export function renderLogin(
  * live가 false면 시계만 돌고 자동 갱신은 하지 않는다(로그 화면에서 쓴다 —
  * 보던 목록이 몇 초마다 다시 그려지면 읽을 수가 없다).
  */
-export function pageHead(title: string, sub: string): string {
+export function pageHead(title: string, sub: string, right = ""): string {
 	return `<div class="head">
   <div class="ht">
     <h1>${escapeHtml(title)}</h1>
     <p class="sub">${sub}</p>
   </div>
+  ${right}
 </div>`;
+}
+
+/**
+ * 기간 탭 — 제목 줄 오른쪽에 둔다.
+ *
+ * 전에는 앱·서비스 칩과 같은 줄에 두고 오른쪽 끝에 붙였는데, 트래픽처럼 서비스가 아홉 개인
+ * 화면에서는 폭이 모자라 기간이 통째로 다음 줄로 내려갔다. 그러면 그 줄 왼쪽이 통째로 비어
+ * 상자만 커진다. 제목 줄 오른쪽은 지금 비어 있는 자리라(시계가 상단바로 옮겨 갔다),
+ * 여기로 올리면 칩이 몇 개든 기간은 늘 같은 자리에 있고 세로도 한 줄 줄어든다.
+ *
+ * href는 기간 키를 받아 주소를 만든다 — 화면마다 물고 다녀야 할 조건이 달라서
+ * 주소 만들기는 부르는 쪽에 맡긴다.
+ */
+export function periodTabs(
+	cur: string,
+	periods: Record<string, { label: string }>,
+	href: (k: string) => string,
+): string {
+	return `<span class="pds">${Object.entries(periods)
+		.map(([k, v]) => `<a class="tab${k === cur ? " on" : ""}" href="${href(k)}">${escapeHtml(v.label)}</a>`)
+		.join("")}</span>`;
 }
 
 /**
@@ -1816,38 +1872,25 @@ export function filterTabs(
 	period: string,
 	appFilter: string,
 	apps: { id: string; name: string; active: boolean; internal?: boolean }[],
-	periods: Record<string, { label: string }>,
-	rightLink = "",
-	rightBelow = "",
-	opts: { key?: string; allLabel?: string; extra?: string } = {},
+	opts: { key?: string; allLabel?: string; extra?: string; tail?: string } = {},
 ): string {
 	// 내부용 앱(이상탐지 에이전트 등)은 맨 뒤로 보내고 흐리게 둔다. 실제 앱을 먼저 찾게.
 	apps = [...apps.filter((a) => !a.internal), ...apps.filter((a) => a.internal)];
 	const key = opts.key ?? "app";
 	// extra는 이 화면이 기간·앱 말고도 물고 다녀야 하는 조건이다(예: 이상탐지 갈래).
-	const q = (p: string, a: string) =>
-		`${path}?period=${p}${a ? `&${key}=${encodeURIComponent(a)}` : ""}${opts.extra ?? ""}`;
-	const periodTabs = Object.entries(periods)
-		.map(([k, v]) => `<a class="tab${k === period ? " on" : ""}" href="${q(k, appFilter)}">${v.label}</a>`)
-		.join("");
-	const appTabs =
-		`<a class="tab${!appFilter ? " on" : ""}" href="${q(period, "")}">${escapeHtml(opts.allLabel ?? "전체 앱")}</a>` +
+	const q = (a: string) =>
+		`${path}?period=${period}${a ? `&${key}=${encodeURIComponent(a)}` : ""}${opts.extra ?? ""}`;
+	const tabs =
+		`<a class="tab${!appFilter ? " on" : ""}" href="${q("")}">${escapeHtml(opts.allLabel ?? "전체 앱")}</a>` +
 		apps
 			.map(
 				(a) =>
-					`<a class="tab${appFilter === a.id ? " on" : ""}${a.internal ? " dim" : ""}" href="${q(period, a.id)}"${a.internal ? ' data-tip="내부용 앱"' : ""}>${escapeHtml(a.name)}${a.active ? "" : " (중지)"}</a>`,
+					`<a class="tab${appFilter === a.id ? " on" : ""}${a.internal ? " dim" : ""}" href="${q(a.id)}"${a.internal ? ' data-tip="내부용 앱"' : ""}>${escapeHtml(a.name)}${a.active ? "" : " (중지)"}</a>`,
 			)
 			.join("");
-	// 한 줄에 둘 다 담는다 — 왼쪽이 앱, 오른쪽 끝이 기간이다.
-	// 예전에는 기간이 자기 줄을 통째로 쓰고 그 줄 왼쪽이 내내 비어 있었다.
-	// 기간을 오른쪽 끝에 고정하는 이유는 그대로다. 어느 화면으로 옮겨도 같은 자리에 있어야
-	// 탭을 옮겨 다닐 때 눈이 튀지 않는다.
-	return (
-		`<div class="tabs flt">` +
-		`<span class="lf">${appTabs}${rightBelow}</span>` +
-		`<span class="rt">${periodTabs}${rightLink}</span>` +
-		`</div>`
-	);
+	// 줄을 바꾸지 않고 옆으로 민다(slide). 서비스가 늘어도 두 줄이 되지 않게 하려는 것이다.
+	// 기간 탭은 여기 없다 — 제목 줄 오른쪽으로 올라갔다(periodTabs).
+	return `<div class="tabs slide">${tabs}${opts.tail ?? ""}</div>`;
 }
 
 /** 소제목 + 오른쪽 "자세히" 링크. */
