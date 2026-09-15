@@ -71,7 +71,6 @@ const AI_BOTS: [string, string][] = [
 const SEARCH_BOTS: [string, string][] = [
 	["googlebot", "Googlebot"],
 	["google-inspectiontool", "Google-InspectionTool"],
-	["adsbot-google", "AdsBot-Google"],
 	["bingbot", "Bingbot"],
 	["bingpreview", "BingPreview"],
 	["yeti", "네이버 Yeti"],
@@ -104,6 +103,21 @@ const SOCIAL_BOTS: [string, string][] = [
 	["kakaotalk-scrap", "카카오톡"],
 	["redditbot", "Reddit"],
 ];
+/**
+ * 이름에 bot·crawler 가 없어 사람으로 새던 자동 요청들.
+ *
+ * Google-adstxt 는 AdMob 이 app-ads.txt 를 확인하러 오는 것이고, BuiltWith 는
+ * 어떤 기술로 만든 사이트인지 훑는 조사 도구다. 둘 다 사람이 아닌데 UA 에
+ * 걸릴 낱말이 없어서 '사람 방문'으로 세어지고 있었다(golf 한 곳에서만 93회).
+ *
+ * '기타 봇'으로 뭉뚱그리지 않고 이름을 남긴다. 광고 검증이 제때 오고 있는지는
+ * 수익과 직결되므로 따로 세어 볼 값이 있다.
+ */
+const TOOL_BOTS: [string, string][] = [
+	["google-adstxt", "Google-adstxt(광고 검증)"],
+	["adsbot-google", "AdsBot-Google(광고 검사)"],
+	["builtwith", "BuiltWith(기술 조사)"],
+];
 const GENERIC_BOT = /(bot\b|crawler|spider|crawl|headless|phantomjs|puppeteer|playwright|curl\/|wget\/|python-requests|python-httpx|python-urllib|urllib|aiohttp|go-http-client|java\/|okhttp|axios\/|node-fetch|libwww|scrapy|monitor|uptime|pingdom|checkly|lighthouse)/;
 
 export interface Classified {
@@ -118,6 +132,8 @@ export function classifyUA(uaRaw: string): Classified {
 	for (const [k, name] of AI_BOTS) if (ua.includes(k)) return { kind: "ai", bot: name };
 	for (const [k, name] of SEARCH_BOTS) if (ua.includes(k)) return { kind: "search", bot: name };
 	for (const [k, name] of SOCIAL_BOTS) if (ua.includes(k)) return { kind: "social", bot: name };
+	// 도구 크롤러는 검색도 AI 도 아니라 kind 는 bot 이지만, 이름은 남겨 둔다.
+	for (const [k, name] of TOOL_BOTS) if (ua.includes(k)) return { kind: "bot", bot: name };
 	if (GENERIC_BOT.test(ua)) return { kind: "bot", bot: "기타 봇" };
 	return { kind: "human", bot: null };
 }
