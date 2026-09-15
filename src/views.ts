@@ -15,7 +15,7 @@
 import {
 	PERIODS, MODEL_PRICES, DEFAULT_MODEL, countryName, LOG_PAGE, MAIL_PAGE, SIGNAL_LABEL,
 	type AppConfig, type GroupRow, type PasskeyRow,
-	type BoardData, type MonthCost, type UsageData, type TrendData, type GeoData, type LogsData, type LogFilter,
+	type BoardData, type BoardBackup, type MonthCost, type UsageData, type TrendData, type GeoData, type LogsData, type LogFilter,
 	type MailsData, type MailRow,
 	type AnomalyBoardData, type AnomalyRowWithMail, ANOMALY_PAGE,
 	type AnomalyData, type AnomalyRow,
@@ -85,6 +85,53 @@ const TIP_INTERNAL =
 // ═════════════════════════════════════════════════════════════
 
 const STATUS_LABEL: Record<string, string> = { ok: "정상", warn: "주의", bad: "문제" };
+
+/** 바이트를 사람이 읽는 크기로. 백업은 MB 단위라 소수 한 자리까지면 넉넉하다. */
+function sizeOf(n: number): string {
+	if (!n) return "-";
+	if (n >= 1024 * 1024 * 1024) return `${(n / 1024 / 1024 / 1024).toFixed(1)}GB`;
+	if (n >= 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)}MB`;
+	if (n >= 1024) return `${Math.round(n / 1024)}KB`;
+	return `${n}B`;
+}
+
+/**
+ * 집 서버 백업 한 줄 — 하위 화면 링크 줄과 같은 모양으로 그 아래에 둔다.
+ *
+ * 누를 곳이 없어 링크가 아니다(백업 전용 화면이 없다). 그래서 화살표도 붙이지 않는다 —
+ * 누를 수 없는데 화살표가 있으면 눌러 보게 만든다. 자세한 내역은 마우스를 올리면 나온다.
+ * 기록이 아직 없을 때도 칸을 지우지 않는다. "백업이 없다"는 것도 알아야 할 사실이다.
+ */
+function backupRow(bk: BoardBackup): string {
+	if (!bk.last) {
+		return `<div class="golinks one"><div class="row" id="backup">` +
+			`<b>백업</b><span>아직 기록이 없어요. 집 서버가 백업을 끝내면 여기에 남아요.</span></div></div>`;
+	}
+	const L = bk.last;
+	const days = bk.ageMs === null ? 0 : Math.floor(bk.ageMs / 86_400_000);
+	// 하루 한 번 도니 이틀이 넘으면 한 번은 빠진 것이다. 그때만 색을 쓴다.
+	const late = days >= 2;
+	const bits = [
+		late ? `<b class="r">${ago(bk.ageMs)}</b>` : ago(bk.ageMs),
+		sizeOf(L.bytes),
+		L.offsite ? "집 밖 사본 있음" : `<b class="r">집 서버에만</b>`,
+		L.failed ? `<b class="r">항목 ${L.failed}개 빠짐</b>` : "빠진 항목 없음",
+	];
+	const tip = [
+		`${L.name}`,
+		`끝난 때 ${kst(L.at)} KST`,
+		`크기 ${sizeOf(L.bytes)}`,
+		L.offsite ? "집 밖(Cloudflare R2)에 사본 있어요" : "집 밖으로 올리지 못했어요",
+		L.localKeep !== null ? `집 서버에 ${L.localKeep}벌` : "",
+		L.offsiteKeep !== null ? `집 밖에 ${L.offsiteKeep}벌` : "",
+		bk.recent > 1 ? `최근 ${bk.recent}벌 가운데 빠진 항목이 있던 벌 ${bk.recentFailed}개` : "",
+		L.host ? `보낸 곳 ${L.host}` : "",
+	]
+		.filter(Boolean)
+		.join("\n");
+	return `<div class="golinks one"><div class="row" id="backup" data-tip="${escapeHtml(tip)}">` +
+		`<b>백업</b><span>${bits.join(" · ")}</span></div></div>`;
+}
 
 /**
  * 브리핑 — "내가 안 보는 사이에 무슨 일이 있었나".
@@ -306,6 +353,7 @@ ${kpiRow([
 	}</span><i>→</i></a>
   <a href="/admin/anomaly${q}"><b>이상탐지</b><span>열린 신호 ${b.anomaly.openTotal.toLocaleString()}건 · 판정 ${b.anomaly.judged.toLocaleString()}건 · 서버 ${ago(b.anomaly.heartbeatAge)}</span><i>→</i></a>
 </div>
+${backupRow(b.backup)}
 </div>`,
 		// 상황판은 상단 메뉴에 짝이 없다(서비스 이름이 그 자리를 겸한다). tab을 넘기지 않는다.
 		{ ...opts, heartbeatAge: b.anomaly.heartbeatAge, appFilter: b.appFilter },

@@ -28,6 +28,7 @@ OpenRouter 앞단에 서는 **AI 프록시 + 사용량 대시보드**입니다. 
 | `GET /admin/settings/apps` | 앱 관리 화면 |
 | `GET /admin/settings/guide` | 연결 가이드 (`/admin/guide.md` 로 원문 내려받기) |
 | `/admin/api/apps` | 앱 등록·수정 API |
+| `/admin/api/backup` | 집 서버가 백업을 끝낸 뒤 결과를 밀어 넣는 곳(POST). 상황판 맨 아래에 한 줄로 보여줍니다 |
 | `/admin/api/models` | OpenRouter 모델 카탈로그 |
 | `/admin/stats.json` | 통계 JSON |
 

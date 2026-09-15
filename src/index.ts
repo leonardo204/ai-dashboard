@@ -35,7 +35,7 @@ import { renderGuide, GUIDE_MD, GUIDE_FILENAME } from "./guide";
 import {
 	collectStats, collectBoard, heartbeatAge, briefCtx, briefForCalls, briefForTraffic, briefForAnomaly, collectUsage, collectTrend, collectGeo, queryLogs, logsCsv,
 	listApps, getApp, upsertApp, deleteApp, newToken, pulse, exportCalls, normPeriod, LOG_PAGE,
-	collectAnomaly, collectAnomalyBoard, pushAnomaly, collectMails, getMailHtml, listPasskeys, passkeyCount, deletePasskey,
+	collectAnomaly, collectAnomalyBoard, pushAnomaly, pushBackup, collectMails, getMailHtml, listPasskeys, passkeyCount, deletePasskey,
 	collectTraffic,
 	type AppConfig, type LogFilter,
 } from "./stats";
@@ -622,6 +622,26 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 				return apiErr(400, "JSON 형식이 아니에요.");
 			}
 			return apiJson(await pushAnomaly(env, body as Parameters<typeof pushAnomaly>[1]));
+		}
+
+		// ── 집 서버 백업 결과 (/admin/api/backup) — 백업이 끝난 뒤 결과만 받는다.
+		//    파일은 받지 않는다. 언제·얼마나·빠진 것이 있었나만 남겨 상황판에 보여준다.
+		if (path === "/admin/api/backup") {
+			if (!(await apiAuthorized(request, env, url))) {
+				return apiErr(401, "인증이 필요해요. Authorization: Bearer <ADMIN_API_KEY> 헤더를 넣어 주세요.");
+			}
+			if (request.method !== "POST") return apiErr(405, "POST로 보내주세요.");
+			let body: Record<string, unknown>;
+			try {
+				body = (await request.json()) as Record<string, unknown>;
+			} catch {
+				return apiErr(400, "JSON 형식이 아니에요.");
+			}
+			try {
+				return apiJson(await pushBackup(env, body));
+			} catch (e) {
+				return apiErr(400, String(e instanceof Error ? e.message : e).slice(0, 200));
+			}
 		}
 
 		// ── 패스키 (/admin/api/passkey/*) — 등록은 로그인 상태에서만, 로그인 확인은 누구나 부를 수 있다.

@@ -193,6 +193,8 @@ export const BRIEF_RULES = {
 	latUp: 0.6,
 	/** 늘어난 몫의 이 비율 이상을 한 앱이 차지하면 이름을 붙인다 */
 	blameShare: 0.6,
+	/** 백업이 이만큼 안 돌면 브리핑에 적는다. 하루 한 번 도니 이틀은 한 번 빠진 것이다. */
+	backupLate: 2 * 86_400_000,
 	/** 새 소식은 몇 줄까지 */
 	max: 4,
 	/** 되풀이되는 신호는 몇 줄까지 */
@@ -229,7 +231,7 @@ const BOT_LUMPS = new Set(["기타 봇", "(UA 없음)"]);
 
 /** 급한 순서. 종류마다 점수의 단위가 달라(배수·건수) 한 줄로 세울 수 없어 순서를 정해 둔다. */
 const KIND_ORDER = [
-	"anomaly", "detector", "fail", "tdrop", "cost", "latency", "quiet",
+	"anomaly", "detector", "fail", "tdrop", "backup", "cost", "latency", "quiet",
 	"tup", "bot", "new", "geo", "mail", "repeat",
 ];
 
@@ -307,6 +309,31 @@ export interface AnomExtra {
 	beatAge: number | null;
 }
 
+/**
+ * 백업 상태 — 집 서버가 끝낸 뒤 밀어 넣은 기록에서 뽑는다.
+ *
+ * 기록이 아직 없는 것과 백업이 실패한 것은 다르다. last 가 null 이면 '모른다'로 다루고
+ * 상태 한 줄·브리핑에서는 아무 말도 하지 않는다. 화면 칸에만 "아직 기록이 없어요"를 적는다.
+ */
+export interface BoardBackup {
+	last: {
+		name: string; at: number; bytes: number; failed: number;
+		offsite: boolean; localKeep: number | null; offsiteKeep: number | null; host: string | null;
+	} | null;
+	/** 마지막 백업이 몇 ms 전인가. 기록이 없으면 null. */
+	ageMs: number | null;
+	/** 최근에 받은 벌 수(최대 BOARD_BACKUPS) */
+	recent: number;
+	/** 그중 빠진 항목이 있던 벌 */
+	recentFailed: number;
+	/** 그중 집 밖(R2)에 못 올린 벌 */
+	recentOffsiteMissing: number;
+	/** 브리핑 창 안에 끝난 백업 수, 그중 빠진 항목이 있던 벌·집 밖으로 못 올린 벌 */
+	winRuns: number;
+	winFailed: number;
+	winOffsiteMissing: number;
+}
+
 /** findBrief가 쓰는 것만 모은 좁은 입력. stats.ts를 되짚지 않으려고 따로 둔다. */
 export interface BriefInput {
 	scope: BriefScope;
@@ -335,6 +362,8 @@ export interface BriefInput {
 	anomExtra?: AnomExtra;
 	/** 트래픽 재료. 없으면 트래픽 줄을 만들지 않는다. */
 	traf?: TrafBrief;
+	/** 백업 재료. 없으면 백업 줄을 만들지 않는다. */
+	backup?: BoardBackup;
 	/** 앱 id → 이름 */
 	appName: Record<string, string>;
 	countryName: (k: string) => string;
@@ -364,6 +393,8 @@ export function findBrief(b: BriefInput): Brief {
 	const wantCalls = onBoard || sc === "calls";
 	const wantAnom = onBoard || sc === "anomaly";
 	const traf = (onBoard || sc === "traffic") && b.traf ? b.traf : null;
+	// 백업은 상황판에서만 말한다. 다른 탭은 자기 주제가 아니다.
+	const bk = onBoard && b.backup ? b.backup : null;
 	const tq = `?period=${b.period}${b.appFilter ? `&site=${encodeURIComponent(b.appFilter)}` : ""}`;
 
 	// ── 이상 신호가 새로 잡혔나.
@@ -458,6 +489,42 @@ export function findBrief(b: BriefInput): Brief {
 				href: `/admin/calls/logs${q}&slow=${Math.round(was * 2)}`,
 				at: 0,
 				score: (now - was) / was,
+			});
+		}
+	}
+
+	// ── 백업 (상황판에서만)
+	//
+	//    정상일 때는 아무 말도 하지 않는다. 날마다 "백업 됐어요"가 뜨면 그게 잡음이 되어
+	//    정작 밀린 날의 한 줄이 묻힌다. 상태는 아래 화면 칸이 늘 보여준다.
+	//    기록이 아예 없으면(집 서버가 아직 한 번도 안 보냈으면) 여기서도 침묵한다 —
+	//    '모른다'를 '실패했다'로 바꿔 말하면 안 된다.
+	if (bk && bk.ageMs !== null) {
+		const days = Math.floor(bk.ageMs / DAY);
+		if (bk.ageMs > R.backupLate) {
+			fresh.push({
+				kind: "backup",
+				text: `백업이 <b>${days}일째</b> 돌지 않았어요.`,
+				href: `/admin${q}#backup`,
+				at: 0,
+				score: days,
+			});
+		} else if (bk.winFailed > 0) {
+			// 창 안에 끝난 백업에서 빠진 것 — 백업은 돌았으니 '밀림'과는 다른 일이다.
+			fresh.push({
+				kind: "backup",
+				text: `백업은 돌았는데 <b>${bk.winFailed}벌</b>에서 담지 못한 항목이 있어요.`,
+				href: `/admin${q}#backup`,
+				at: 0,
+				score: bk.winFailed,
+			});
+		} else if (bk.winOffsiteMissing > 0) {
+			fresh.push({
+				kind: "backup",
+				text: `백업 <b>${bk.winOffsiteMissing}벌</b>이 집 밖으로 올라가지 못했어요. 집 서버에만 있어요.`,
+				href: `/admin${q}#backup`,
+				at: 0,
+				score: bk.winOffsiteMissing,
 			});
 		}
 	}

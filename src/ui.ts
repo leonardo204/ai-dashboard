@@ -344,6 +344,11 @@ table.sig td.mono{color:var(--muted);}
 .golinks b{font-size:var(--fs-md);font-weight:700;flex:0 0 auto;}
 .golinks span{font-size:var(--fs-sm);color:var(--muted);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .golinks i{margin-left:auto;font-style:normal;color:var(--muted);font-weight:800;}
+/* 누를 곳이 없는 칸(백업) — 링크와 같은 모양이지만 마우스를 올려도 반응하지 않는다.
+   한 줄을 통째로 쓰므로 위 세 칸의 배치는 그대로 남는다. */
+.golinks.one{grid-template-columns:1fr;margin-top:var(--sp-2);}
+.golinks .row{display:flex;align-items:center;gap:9px;background:var(--panel);
+ border:1px solid var(--line);border-radius:var(--r-md);padding:13px 15px;color:var(--ink);}
 @media(max-width:860px){.golinks{grid-template-columns:1fr;gap:var(--sp-2);}}
 
 /* ── 하위 탭 — 상단 탭 아래 한 줄. 어느 화면에서나 같은 자리다. */

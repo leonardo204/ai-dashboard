@@ -16,6 +16,7 @@ import {
 	type BriefInput,
 	type BriefScope,
 	type TrafBrief,
+	type BoardBackup,
 	type TrafCount,
 	type AnomExtra,
 } from "./brief";
@@ -174,6 +175,14 @@ export async function ensureSchema(env: StatsEnv): Promise<void> {
 		//   win_from은 지금 브리핑 창의 시작이고, 같은 세션 안에서는 그대로 둔다.
 		//   (새로고침할 때마다 창이 0으로 쪼그라들면 브리핑이 늘 비어 버린다.)
 		"CREATE TABLE IF NOT EXISTS board_seen (who TEXT PRIMARY KEY, last_open INTEGER NOT NULL, win_from INTEGER NOT NULL)",
+		// backup_runs — 집 서버가 백업을 끝낸 뒤 결과만 밀어 넣는다(POST /admin/api/backup).
+		//   일부러 anomaly_state 에 얹지 않는다. 상단 상태줄의 '탐지 서버 정상'이 그 표의
+		//   MAX(updated_at) 하나로 판단하므로, 백업이 하루 한 번 그 값을 갱신하면
+		//   탐지 서버가 죽어도 살아 있는 것처럼 보인다.
+		"CREATE TABLE IF NOT EXISTS backup_runs (name TEXT PRIMARY KEY, at INTEGER NOT NULL," +
+			" bytes INTEGER NOT NULL DEFAULT 0, failed INTEGER NOT NULL DEFAULT 0," +
+			" offsite INTEGER NOT NULL DEFAULT 0, local_keep INTEGER, offsite_keep INTEGER," +
+			" host TEXT, note TEXT)",
 		// 관리자 패스키(WebAuthn). 공개키만 보관하므로 이 표가 새어도 로그인에는 쓸 수 없다.
 		"CREATE TABLE IF NOT EXISTS passkeys (cred_id TEXT PRIMARY KEY, public_key TEXT NOT NULL, alg INTEGER NOT NULL DEFAULT -7, label TEXT, created_at INTEGER NOT NULL, last_used_at INTEGER, counter INTEGER NOT NULL DEFAULT 0)",
 	]) {
@@ -196,6 +205,7 @@ export async function ensureSchema(env: StatsEnv): Promise<void> {
 		"CREATE INDEX IF NOT EXISTS idx_anom_evals ON anomaly_evals(scope, detector, ran_at)",
 		"CREATE INDEX IF NOT EXISTS idx_anom_trains ON anomaly_trains(scope, started_at)",
 		"CREATE INDEX IF NOT EXISTS idx_anom_mails ON anomaly_mails(sent_at)",
+		"CREATE INDEX IF NOT EXISTS idx_backup_at ON backup_runs(at DESC)",
 	]) {
 		try {
 			await env.DB.prepare(sql).run();
@@ -1061,6 +1071,38 @@ export interface AnomalyBriefRow {
 	detail: string | null; verdict: string | null; verdict_reason: string | null;
 }
 
+/** 상황판이 훑어보는 최근 백업 벌 수. 이레치면 "며칠째 밀렸나"가 보인다. */
+export type { BoardBackup };
+
+export const BOARD_BACKUPS = 7;
+
+interface BackupRow {
+	name: string; at: number; bytes: number; failed: number; offsite: number;
+	local_keep: number | null; offsite_keep: number | null; host: string | null;
+}
+
+/** 받아 온 백업 기록 몇 벌 → 화면·상태 한 줄이 읽는 모양. */
+function backupOf(rows: BackupRow[], now: number, winFrom: number): BoardBackup {
+	const top = rows[0];
+	const inWin = rows.filter((r) => r.at >= winFrom);
+	return {
+		last: top
+			? {
+					name: top.name, at: top.at, bytes: top.bytes, failed: top.failed,
+					offsite: top.offsite === 1, localKeep: top.local_keep, offsiteKeep: top.offsite_keep,
+					host: top.host,
+				}
+			: null,
+		ageMs: top ? Math.max(0, now - top.at) : null,
+		recent: rows.length,
+		recentFailed: rows.filter((r) => r.failed > 0).length,
+		recentOffsiteMissing: rows.filter((r) => r.offsite !== 1).length,
+		winRuns: inWin.length,
+		winFailed: inWin.filter((r) => r.failed > 0).length,
+		winOffsiteMissing: inWin.filter((r) => r.offsite !== 1).length,
+	};
+}
+
 /** 상태 한 줄을 가르는 문턱값. 나중에 관리 화면에서 고칠 수 있게 한곳에 모아 둔다. */
 export const BOARD_RULES = {
 	/** 이 아래로는 표본이 적어 비율을 믿지 않는다. */
@@ -1080,6 +1122,9 @@ export const BOARD_RULES = {
 	monthMin: 0.15,
 	/** p95 지연이 직전 기간의 몇 배면 '주의' */
 	latSpike: 2,
+	/** 백업이 이만큼 안 돌면 '주의' · '문제'. 하루 한 번 도니 이틀은 한 번 빠진 것이다. */
+	backupWarn: 2 * 86_400_000,
+	backupBad: 4 * 86_400_000,
 };
 
 /** 상태 문장에 쓰는 금액 표기. ui.ts의 usd()와 같은 규칙이지만 여기서 ui를 부르지는 않는다. */
@@ -1177,6 +1222,10 @@ export interface BoardStatusInput {
 	monthCost: number;
 	prevMonthCost: number;
 	monthProgress: number;
+	/** 마지막 백업이 몇 ms 전인가. 기록이 없으면 null — 그때는 백업을 말하지 않는다. */
+	backupAgeMs: number | null;
+	/** 마지막 백업에서 빠진 항목 수 */
+	backupFailed: number;
 	/** 화면 링크에 붙일 질의 문자열(?period=…&app=…) */
 	q: string;
 }
@@ -1214,6 +1263,15 @@ export function boardStatus(i: BoardStatusInput): BoardStatus {
 			href: `/admin/calls/logs${i.q}&status=error`,
 		};
 	}
+	// 백업은 서비스가 멎은 것이 아니라 잃을 위험이라 장애 신호보다 뒤에 둔다.
+	// 기록이 아예 없으면(아직 한 번도 안 받았으면) 아무 말도 하지 않는다 — '모른다'와 '실패'는 다르다.
+	if (i.backupAgeMs !== null && i.backupAgeMs > R.backupBad) {
+		return {
+			level: "bad",
+			reason: `백업이 ${Math.floor(i.backupAgeMs / 86_400_000)}일째 돌지 않았어요`,
+			href: `/admin${i.q}#backup`,
+		};
+	}
 
 	// ── 주의
 	if (i.openWarn > 0) {
@@ -1248,6 +1306,20 @@ export function boardStatus(i: BoardStatusInput): BoardStatus {
 			level: "warn",
 			reason: `p95 지연 ${(i.p95 / 1000).toFixed(1)}초 — 직전 같은 기간의 ${(i.p95 / i.prevP95).toFixed(1)}배예요`,
 			href: `/admin/calls/logs${i.q}&slow=${Math.round(i.prevP95 * R.latSpike)}`,
+		};
+	}
+	if (i.backupAgeMs !== null && i.backupAgeMs > R.backupWarn) {
+		return {
+			level: "warn",
+			reason: `백업이 ${Math.floor(i.backupAgeMs / 86_400_000)}일째 돌지 않았어요`,
+			href: `/admin${i.q}#backup`,
+		};
+	}
+	if (i.backupFailed > 0) {
+		return {
+			level: "warn",
+			reason: `마지막 백업에서 ${i.backupFailed}개 항목이 빠졌어요`,
+			href: `/admin${i.q}#backup`,
 		};
 	}
 
@@ -1306,6 +1378,8 @@ export interface BoardData {
 	anomaly: BoardAnomaly;
 	/** 트래픽 한 줄 — 오늘 방문과 그중 AI 크롤러 몫. */
 	traffic: { today: number; ai: number; human: number } | null;
+	/** 집 서버 백업이 잘 돌고 있나. */
+	backup: BoardBackup;
 	status: BoardStatus;
 	/**
 	 * 브리핑 — "안 보는 사이에 무슨 일이 있었나".
@@ -1824,7 +1898,7 @@ async function collectBoardInner(
 			: st.bind(scanBase, since, win.from, win.prevFrom);
 	};
 
-	const [apps, groupRs, bucketRs, anomRs, winAnomRs, stateRs, monthRs, hitRow, trafRs] = await Promise.all([
+	const [apps, groupRs, bucketRs, anomRs, winAnomRs, stateRs, monthRs, hitRow, trafRs, bkRs] = await Promise.all([
 		appBriefs(env),
 
 		// ① 기간(이번·직전)과 브리핑 창(안·직전)을 한 번에 —
@@ -1912,6 +1986,15 @@ async function collectBoardInner(
 			.bind(win.from, win.prevFrom)
 			.all<TrafBriefRow>()
 			.catch(() => ({ results: [] as TrafBriefRow[] })),
+
+		// ⑨ 집 서버 백업 — 최근 이레치. 한 벌만 보면 "며칠째 밀렸나"를 알 수 없다.
+		//    표가 아직 없는 환경도 있어 실패를 삼킨다(백업을 한 번도 안 보낸 상태와 같게 다룬다).
+		env.DB.prepare(
+			"SELECT name, at, bytes, failed, offsite, local_keep, offsite_keep, host" +
+				` FROM backup_runs ORDER BY at DESC LIMIT ${BOARD_BACKUPS}`,
+		)
+			.all<BackupRow>()
+			.catch(() => ({ results: [] as BackupRow[] })),
 	]);
 
 	// ── 이번·직전 기간 나누기 (그리고 같은 행에서 브리핑 창도 함께 모은다)
@@ -2052,6 +2135,7 @@ async function collectBoardInner(
 			.map((r) => ({ ...r, name: appNameMap[r.key] ?? r.key, firstTs: r.firstTs === Number.MAX_SAFE_INTEGER ? 0 : r.firstTs }))
 			.sort((a, b) => b.total - a.total);
 	const { anomIn, anomRepeat } = sigAgg(winAnomRs.results ?? []);
+	const backup = backupOf(bkRs.results ?? [], now, win.from);
 
 	const brief = findBrief({
 		scope: "board",
@@ -2070,6 +2154,7 @@ async function collectBoardInner(
 		anomIn,
 		anomRepeat,
 		traf: trafBriefOf(trafRs.results ?? []),
+		backup,
 		appName: appNameMap,
 		countryName,
 	});
@@ -2108,6 +2193,7 @@ async function collectBoardInner(
 		monthProgress: monthProgress(),
 		anomaly,
 		traffic: hitRow ? { today: hitRow.n ?? 0, ai: hitRow.a ?? 0, human: hitRow.h ?? 0 } : null,
+		backup,
 		status: boardStatus({
 			total, error,
 			prevTotal: pT, prevError: pE,
@@ -2119,6 +2205,8 @@ async function collectBoardInner(
 			monthCost: curMonth?.cost ?? 0,
 			prevMonthCost: lastMonth?.cost ?? 0,
 			monthProgress: monthProgress(),
+			backupAgeMs: backup.ageMs,
+			backupFailed: backup.last?.failed ?? 0,
 			q,
 		}),
 		brief,
@@ -2857,6 +2945,73 @@ export interface MailIn {
 }
 
 const SEVERITIES = new Set(["info", "warn", "critical"]);
+
+/**
+ * 집 서버가 백업을 끝낸 뒤 결과만 밀어 넣는다 — POST /admin/api/backup.
+ *
+ * 파일을 올려받지 않는다. 백업 자체는 집 서버와 R2 에 있고, 여기 남는 것은
+ * "언제 · 몇 바이트 · 빠진 항목 몇 개 · 집 밖으로 올렸나" 뿐이다.
+ * 이력으로 쌓아 두는 이유는 한 벌만 보면 "며칠째 밀렸나"를 알 수 없기 때문이다.
+ */
+export async function pushBackup(
+	env: StatsEnv,
+	body: {
+		name?: unknown;
+		at?: unknown;
+		bytes?: unknown;
+		failed?: unknown;
+		offsite?: unknown;
+		local_keep?: unknown;
+		offsite_keep?: unknown;
+		host?: unknown;
+		note?: unknown;
+	},
+): Promise<{ ok: boolean; name: string; kept: number }> {
+	const name = String(body.name ?? "").trim().slice(0, 60);
+	if (!name) throw new Error("name 이 필요해요.");
+	const num = (v: unknown, def = 0) => {
+		const n = typeof v === "number" ? v : Number(v);
+		return Number.isFinite(n) ? Math.max(0, Math.trunc(n)) : def;
+	};
+	const now = Date.now();
+	// 보내 준 시각이 말이 안 되면(미래거나 아주 옛날) 받은 시각을 쓴다.
+	let at = num(body.at, 0);
+	if (!at || at > now + 3_600_000 || at < now - 400 * 86_400_000) at = now;
+
+	await withSchema(env, () =>
+		env.DB.prepare(
+			"INSERT INTO backup_runs (name, at, bytes, failed, offsite, local_keep, offsite_keep, host, note)" +
+				" VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)" +
+				" ON CONFLICT(name) DO UPDATE SET at=?2, bytes=?3, failed=?4, offsite=?5," +
+				" local_keep=?6, offsite_keep=?7, host=?8, note=?9",
+		)
+			.bind(
+				name, at, num(body.bytes), num(body.failed),
+				body.offsite === true || body.offsite === 1 || body.offsite === "1" ? 1 : 0,
+				body.local_keep === undefined ? null : num(body.local_keep),
+				body.offsite_keep === undefined ? null : num(body.offsite_keep),
+				(String(body.host ?? "").trim() || null) && String(body.host).trim().slice(0, 60),
+				(String(body.note ?? "").trim() || null) && String(body.note).trim().slice(0, 300),
+			)
+			.run(),
+	);
+
+	// 이력은 90벌까지만 둔다. 하루 한 번이라 석 달치다.
+	let kept = 0;
+	try {
+		const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM backup_runs").first<{ n: number }>();
+		kept = row?.n ?? 0;
+		if (kept > 90) {
+			await env.DB.prepare(
+				"DELETE FROM backup_runs WHERE name NOT IN (SELECT name FROM backup_runs ORDER BY at DESC LIMIT 90)",
+			).run();
+			kept = 90;
+		}
+	} catch {
+		/* 정리에 실패해도 기록은 남았다 */
+	}
+	return { ok: true, name, kept };
+}
 
 /** 이상탐지 서버가 밀어 넣는 결과를 받는다. 같은 (구간·앱·신호)는 덮어쓴다. */
 export async function pushAnomaly(
