@@ -282,6 +282,12 @@ const THREAT_RULES: [string, RegExp][] = [
 	["admin", /(^|\/)(phpmyadmin|pma|myadmin|adminer|manager\/html|cpanel|whm|webmail|solr|jenkins|kibana|grafana|rundeck|zabbix)|login\.action|(^|\/)admin(\.php|\/login|\/config)?$/i],
 	["probe", /(^|\/)(server-status|server-info|phpinfo|info\.php|trace\.axd|elmah\.axd|metrics|healthz|debug)|(^|\/)actuator|telescope\/requests|_catalog|_profiler|\/console\/?$|\/server\/?$/i],
 	["exploit", /eval-stdin|vendor\/phpunit|@vite\/env|cgi-bin|shell|cmd\.exe|\/bin\/|ediscovery|autodiscover|owa\/auth|struts|hudson|\.\.[\/\\]|%2e%2e|___proxy_subdomain/i],
+	// 클라우드 열쇠 파일 — 이름만 조금씩 바꿔 가며 찾는다. 위 secret 규칙은 파일 이름이
+	// 그대로 credentials·key 로 시작할 때만 잡아서, google-key.json 처럼 앞에 말이 붙으면
+	// 빠져나갔다. 실제로 한 IP 가 열다섯 가지 이름을 2초 안에 차례로 두드린 기록이 있다.
+	["secret", /(^|\/)([a-z0-9]+[-_])?(sa|key|keyfile|credential|credentials|service-?account|adminsdk|application_default_credentials)\.json$|\.config\/gcloud|(^|\/)appsettings(\.\w+)?\.json$|(^|\/)\.(pypirc|travis\.ya?ml|dockercfg)$|(^|\/)docker-compose\.ya?ml$|(^|\/)_?environment$|(^|\/)env$/i],
+	// license.txt 는 워드프레스가 설치돼 있는지 확인하는 흔한 수법이다.
+	["wordpress", /(^|\/)license\.txt$/i],
 	// PHP도 GraphQL도 쓰지 않는다. 그런 주소를 찾는 요청은 사람이 아니라 훑어보는 쪽이다.
 	["probe", /\.php($|\?|\/)|(^|\/)(graphql|gql)(\/|$)/i],
 ];
@@ -300,6 +306,21 @@ export function classifyThreat(path: string, status: number | null, refGroup: st
 }
 
 /** 화면에 쓰는 이름과 한 줄 설명. */
+/**
+ * 사람이 낼 수 없는 요청인가.
+ *
+ * 스캐너는 UA 를 평범한 브라우저로 위장하고 온다. 그래서 UA 만 보는 classifyUA 로는
+ * 가릴 수 없고, 무엇을 요청했는지로 가린다 — /wp-login.php · /.env · /phpinfo.php 를
+ * 초당 수십 개씩 두드리는 것은 사람이 할 수 있는 일이 아니다.
+ *
+ * broken(우리 쪽 깨진 링크)과 other(주소 오타·옛 주소)는 넣지 않는다. 그쪽은 실제로
+ * 사람이 눌렀을 수 있어서, 봇으로 세면 반대로 사람 수를 깎는다.
+ */
+const SCAN_THREATS = new Set(["wordpress", "secret", "admin", "probe", "exploit"]);
+export function looksScanner(threat: string | null): boolean {
+	return !!threat && SCAN_THREATS.has(threat);
+}
+
 export const THREAT_LABEL: Record<string, { text: string; desc: string }> = {
 	wordpress: { text: "워드프레스 훑기", desc: "워드프레스 취약점을 차례로 두드려 보는 자동 스캔이에요. 우리 서비스에는 워드프레스가 없어요." },
 	secret: { text: "비밀 파일 노림", desc: ".env·.git처럼 열쇠가 들어 있을 만한 파일을 찾는 요청이에요. 그런 파일을 두지 않아 열리지 않아요." },
@@ -372,14 +393,19 @@ export async function handleHit(request: Request, env: TrafficEnv, ctx: Executio
 		const ua = trim(h?.ua, 400) || "";
 		const c = classifyUA(ua);
 		const r = classifyRef(trim(h?.ref, 400) || "", SITES[site]?.host ?? "");
+		const status = num(h?.status);
+		const threat = classifyThreat(path, status, r.group);
+		// UA 가 브라우저여도 요청한 주소가 스캔 패턴이면 사람으로 세지 않는다.
+		// 이미 크롤러로 가려진 것(Googlebot 등)은 그대로 둔다 — 그쪽 이름이 더 쓸모 있다.
+		const scan = c.kind === "human" && looksScanner(threat);
 		const ts = num(h?.ts);
 		rows.push([
 			ts && ts > 1_600_000_000_000 && ts < now + 300_000 ? ts : now,
-			site, path, num(h?.status), num(h?.ms) ?? num(h?.latency_ms),
-			c.kind, c.bot, r.group, r.source, r.host,
+			site, path, status, num(h?.ms) ?? num(h?.latency_ms),
+			scan ? "bot" : c.kind, scan ? "스캐너" : c.bot, r.group, r.source, r.host,
 			trim(h?.country, 8), trim(h?.region, 60), trim(h?.city, 60),
 			ua.slice(0, 300), await hashIP(trim(h?.ip, 60) || "", salt), trim(h?.method, 10) || "GET",
-			classifyThreat(path, num(h?.status), r.group),
+			threat,
 		]);
 	}
 	if (!rows.length) return ok({ ok: true, saved: 0 });
