@@ -118,6 +118,25 @@ const TOOL_BOTS: [string, string][] = [
 	["adsbot-google", "AdsBot-Google(광고 검사)"],
 	["builtwith", "BuiltWith(기술 조사)"],
 ];
+/**
+ * 사람 브라우저를 흉내 내지만 사람이 아닌 UA.
+ *
+ * 무엇을 근거로 이렇게 보는가. UA 문자열 자체가 나쁜 것이 아니라, 같은 문자열 하나가
+ * 서로 다른 IP 수백 개에서 오는 것이 사람일 수 없다는 뜻이다. 아래 iOS 13.2.3 은
+ * 실제로 이렇게 관측됐다.
+ *
+ *   - 302개 IP · 12개국(US 109 · CN 27 · SG 28 · DE 23 · BR 19 · HK 19 …)
+ *   - 전부 한 글자도 다르지 않은 같은 UA. iOS 13.2.3 은 2019년 11월 판이다.
+ *   - IP 당 1~4건씩, 같은 IP 가 며칠 간격으로 똑같이 / → /en 만 열고 나간다
+ *     (9/9 · 9/11 · 9/13 · 9/15 …). 사람의 재방문 모양이 아니다.
+ *   - 진짜 사람 방문은 KR 이 62개 IP 로 1,211건인데, 이쪽은 KR 이 14개 IP 로 33건뿐이다.
+ *
+ * 낡은 iOS 를 쓰는 사람을 봇으로 몰지 않으려고 버전대가 아니라 마이너 버전까지 박아 둔다.
+ * 저쪽이 UA 를 바꾸면 이 줄은 무용지물이 된다 — 그때는 같은 방식으로 새 지문을 찾아 넣는다.
+ */
+const FAKE_HUMAN: [string, string][] = [
+	["iphone os 13_2_3", "낡은 UA 봇"],
+];
 const GENERIC_BOT = /(bot\b|crawler|spider|crawl|headless|phantomjs|puppeteer|playwright|curl\/|wget\/|python-requests|python-httpx|python-urllib|urllib|aiohttp|go-http-client|java\/|okhttp|axios\/|node-fetch|libwww|scrapy|monitor|uptime|pingdom|checkly|lighthouse)/;
 
 export interface Classified {
@@ -134,6 +153,7 @@ export function classifyUA(uaRaw: string): Classified {
 	for (const [k, name] of SOCIAL_BOTS) if (ua.includes(k)) return { kind: "social", bot: name };
 	// 도구 크롤러는 검색도 AI 도 아니라 kind 는 bot 이지만, 이름은 남겨 둔다.
 	for (const [k, name] of TOOL_BOTS) if (ua.includes(k)) return { kind: "bot", bot: name };
+	for (const [k, name] of FAKE_HUMAN) if (ua.includes(k)) return { kind: "bot", bot: name };
 	if (GENERIC_BOT.test(ua)) return { kind: "bot", bot: "기타 봇" };
 	return { kind: "human", bot: null };
 }
