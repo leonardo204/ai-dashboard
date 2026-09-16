@@ -449,14 +449,27 @@ export async function handleHit(request: Request, env: TrafficEnv, ctx: Executio
 		const r = classifyRef(trim(h?.ref, 400) || "", SITES[site]?.host ?? "");
 		const status = num(h?.status);
 		const threat = classifyThreat(path, status, r.group);
-		// UA 가 브라우저여도 요청한 주소가 스캔 패턴이면 사람으로 세지 않는다.
-		// 이미 크롤러로 가려진 것(Googlebot 등)은 그대로 둔다 — 그쪽 이름이 더 쓸모 있다.
-		const scan = c.kind === "human" && looksScanner(threat);
+		// 요청한 주소가 스캔 패턴이면 UA 가 무엇이라고 하든 믿지 않는다.
+		//
+		// 브라우저로 위장한 것뿐 아니라 크롤러 이름을 단 것도 함께 본다. 진짜 Googlebot 은
+		// /.ssh/id_ed25519 나 /wp-login.php 를 요청하지 않는다. UA 는 누구나 적어 넣을 수 있는
+		// 문자열이라, 이름과 행동이 어긋나면 행동 쪽이 사실이다.
+		//
+		// 실제로 한 IP 가 17분 동안 GPTBot · Bingbot · Applebot · YandexBot 등 열네 가지
+		// 이름을 번갈아 쓰며 훑고 간 기록이 있다. 그대로 두면 '이 사이트에 AI 크롤러가
+		// 오고 있다'는 숫자가 통째로 흐려진다.
+		//
+		// 사칭한 이름은 남기지 않는다. '위장(Googlebot)' 처럼 적으면 진짜 Googlebot 숫자
+		// 옆에 나란히 서서 오히려 헷갈린다. UA 원문은 그대로 저장되므로 로그에서 볼 수 있다.
+		const scanning = looksScanner(threat);
+		const fake = scanning && (c.kind === "ai" || c.kind === "search");
+		const scan = scanning && c.kind === "human";
 		const ts = num(h?.ts);
 		prepped.push({
 			ts: ts && ts > 1_600_000_000_000 && ts < now + 300_000 ? ts : now,
 			site, path, status, ms: num(h?.ms) ?? num(h?.latency_ms),
-			kind: scan ? "bot" : c.kind, bot: scan ? "스캐너" : c.bot,
+			kind: scan || fake ? "bot" : c.kind,
+			bot: fake ? "위장 크롤러" : scan ? "스캐너" : c.bot,
 			refGroup: r.group, refSource: r.source, refHost: r.host,
 			country: trim(h?.country, 8), region: trim(h?.region, 60), city: trim(h?.city, 60),
 			ua: ua.slice(0, 300), ipHash: await hashIP(trim(h?.ip, 60) || "", salt),
