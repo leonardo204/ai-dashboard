@@ -362,6 +362,19 @@ export function classifyThreat(
 const SCAN_THREATS = new Set(["wordpress", "secret", "admin", "probe", "exploit"]);
 /** 스캔 이력을 얼마나 거슬러 볼지. 스캐너는 몇 분 안에 몰아치지만 하루 뒤 또 오기도 한다. */
 const SCAN_MEMORY_MS = 24 * 60 * 60 * 1000;
+/**
+ * 한 방문자가 하루에 이만큼 넘게 없는 주소를 부르면 스캐너로 본다.
+ *
+ * 경로 패턴만으로는 잡히지 않는 훑기가 있다. 한 IP 가 9분 동안 /chi-siamo · /contacto ·
+ * /impressum · /kontakt · /o-mne 처럼 여러 나라 말로 흔한 페이지 이름을 72가지 두드리고
+ * 갔는데, .env 도 wp-login.php 도 부르지 않아 어느 규칙에도 걸리지 않았다.
+ * 사이트 구조를 넘겨짚어 보는 쪽이다.
+ *
+ * 스무 번은 사람이 넘기 어려운 수다. 깨진 링크를 눌러도 하루에 스무 번을 넘기지는 않는다.
+ * 이 문턱은 사람인 척하는 요청에만 걸린다 — 크롤러 이름을 단 것은 2차 판정에 들어오지
+ * 않으므로, 링크가 많이 깨진 사이트를 훑는 Googlebot 이 스캐너로 바뀌는 일은 없다.
+ */
+const NOTFOUND_BURST = 20;
 export function looksScanner(threat: string | null): boolean {
 	return !!threat && SCAN_THREATS.has(threat);
 }
@@ -482,9 +495,10 @@ export async function handleHit(request: Request, env: TrafficEnv, ctx: Executio
 	// ── 2차. 사람처럼 보이는 404 만 한 번 더 본다.
 	//
 	// 스캐너는 UA 를 브라우저로 위장하고 referer 에 우리 도메인을 넣는다. 경로 패턴을 아무리
-	// 늘려도 새 이름이 계속 나오므로 뒤쫓기만 해서는 끝이 없다. 대신 방문자를 본다 —
-	// 같은 IP 가 이미 /.env 나 /wp-login.php 를 두드린 적이 있으면, 그 사람의 나머지 404 도
-	// 사람이 낸 것이 아니다.
+	// 늘려도 새 이름이 계속 나오므로 뒤쫓기만 해서는 끝이 없다. 대신 방문자를 본다.
+	// 두 가지를 묻는다.
+	//   ① 이 IP 가 이미 /.env 나 /wp-login.php 를 두드린 적이 있나 — 있으면 나머지 404 도 같은 손이다.
+	//   ② 이 IP 가 하루에 없는 주소를 스무 번 넘게 불렀나 — 패턴에 안 걸리는 훑기를 여기서 잡는다.
 	//
 	// 조회는 여기 해당하는 것이 있을 때만 돈다. 대부분의 방문은 404 가 아니라서 그냥 지나간다.
 	const askIps = Array.from(new Set(prepped.filter((x) => x.ask && x.ipHash).map((x) => x.ipHash as string)));
@@ -492,22 +506,52 @@ export async function handleHit(request: Request, env: TrafficEnv, ctx: Executio
 		try {
 			const ph = askIps.map((_, i) => `?${i + 2}`).join(",");
 			const rs = await env.DB.prepare(
-				`SELECT DISTINCT ip_hash FROM hits WHERE ts >= ?1 AND ip_hash IN (${ph})` +
-					` AND threat IS NOT NULL AND threat NOT IN ('broken','other')`,
+				"SELECT ip_hash," +
+					" SUM(CASE WHEN threat IS NOT NULL AND threat NOT IN ('broken','other') THEN 1 ELSE 0 END) AS scans," +
+					" SUM(CASE WHEN status = 404 THEN 1 ELSE 0 END) AS nf," +
+					" SUM(CASE WHEN status = 404 AND kind = 'human' THEN 1 ELSE 0 END) AS nfh" +
+					` FROM hits WHERE ts >= ?1 AND ip_hash IN (${ph}) GROUP BY ip_hash`,
 			)
 				.bind(now - SCAN_MEMORY_MS, ...askIps)
-				.all<{ ip_hash: string }>();
-			const scanned = new Set((rs.results ?? []).map((r) => r.ip_hash));
+				.all<{ ip_hash: string; scans: number; nf: number; nfh: number }>();
+			const seen = new Map((rs.results ?? []).map((r) => [r.ip_hash, r]));
+			// 이번에 함께 들어온 404 도 센다. 한 번에 몰아 보내는 쪽이면 이 묶음만으로 문턱을 넘는다.
+			const batchNf = new Map<string, number>();
+			for (const x of prepped) {
+				if (x.ipHash && x.status === 404) batchNf.set(x.ipHash, (batchNf.get(x.ipHash) ?? 0) + 1);
+			}
+			// 폭주로 새로 걸린 IP — 그전에 사람으로 적어 둔 404 도 같은 훑기라 함께 고친다.
+			const fixIps: string[] = [];
 			for (const x of prepped) {
 				if (!x.ask) continue;
-				if (scanned.has(x.ipHash as string)) {
+				const ip = x.ipHash as string;
+				const s = seen.get(ip);
+				const burst = (s?.nf ?? 0) + (batchNf.get(ip) ?? 0) > NOTFOUND_BURST;
+				if ((s?.scans ?? 0) > 0 || burst) {
 					x.kind = "bot";
 					x.bot = "스캐너";
 					// 종류를 모르는 스캔이라 이름을 붙이지 않는다. 화면에서는 '그 밖'으로 묶인다.
+					if (burst && (s?.nfh ?? 0) > 0 && !fixIps.includes(ip)) fixIps.push(ip);
 				} else {
 					// 스캔 이력이 없는 방문자다. 이제야 깨진 링크라고 말할 근거가 생긴다.
 					x.threat = classifyThreat(x.path, x.status, x.refGroup, false);
 				}
+			}
+			// 문턱을 넘기 전에 남긴 앞쪽 스무 건을 되돌린다. 한 번 고치면 다음부터는 대상이 없어
+			// 이 갱신이 다시 돌지 않는다(nfh 가 0 이 된다). broken 딱지도 함께 떼어 낸다 —
+			// 훑는 쪽이 referer 에 우리 도메인을 넣은 것일 뿐, 고칠 링크가 있다는 뜻이 아니다.
+			if (fixIps.length) {
+				ctx.waitUntil(
+					env.DB.batch(
+						fixIps.map((ip) =>
+							env.DB.prepare(
+								"UPDATE hits SET kind='bot', bot='스캐너'," +
+									" threat = CASE WHEN threat='broken' THEN 'other' ELSE threat END" +
+									" WHERE ts >= ?1 AND ip_hash = ?2 AND status = 404 AND kind = 'human'",
+							).bind(now - SCAN_MEMORY_MS, ip),
+						),
+					).catch(() => {}),
+				);
 			}
 		} catch {
 			/* 조회가 안 되면 1차 판정 그대로 둔다. 기록이 화면을 막으면 안 된다 */
