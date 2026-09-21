@@ -1217,8 +1217,12 @@ export interface BoardStatusInput {
 	heartbeatAge: number | null;
 	openCritical: number;
 	openWarn: number;
-	/** 열린 신호 가운데 가장 급한 것의 이름·앱 */
-	topSignal: { label: string; app: string } | null;
+	/**
+	 * 최근 하루에 잡힌 심각·주의 신호의 이름·앱. 문장이 세는 것과 같은 자리에서 온다.
+	 * 등급을 갈라 받는 이유는 아래 nameOf 주석에 적어 두었다.
+	 */
+	topCritical: { label: string; app: string } | null;
+	topWarn: { label: string; app: string } | null;
 	monthCost: number;
 	prevMonthCost: number;
 	monthProgress: number;
@@ -1239,13 +1243,16 @@ export function boardStatus(i: BoardStatusInput): BoardStatus {
 	const rate = i.total ? i.error / i.total : 0;
 	const prevRate = i.prevTotal ? i.prevError / i.prevTotal : 0;
 	const enough = i.total >= R.minCalls;
-	const who = i.topSignal ? `${i.topSignal.label}${i.topSignal.app && i.topSignal.app !== "*" ? ` · ${i.topSignal.app}` : ""}` : "";
+	// 문장에 이름을 붙일 때는 그 문장이 센 것과 같은 등급에서 골라야 한다.
+	// 하나로 뭉쳐 두었더니 "주의 3건"을 세어 놓고 심각 신호의 이름을 달았다.
+	const nameOf = (t: { label: string; app: string } | null) =>
+		t ? `${t.label}${t.app && t.app !== "*" ? ` · ${t.app}` : ""}` : "";
 
 	// ── 문제
 	if (i.openCritical > 0) {
 		return {
 			level: "bad",
-			reason: `최근 하루에 심각 신호 ${i.openCritical.toLocaleString()}건이 잡혔어요${who ? ` — ${who}` : ""}`,
+			reason: `최근 하루에 심각 신호 ${i.openCritical.toLocaleString()}건이 잡혔어요${nameOf(i.topCritical) ? ` — ${nameOf(i.topCritical)}` : ""}`,
 			href: `/admin/anomaly${i.q}`,
 		};
 	}
@@ -1277,7 +1284,7 @@ export function boardStatus(i: BoardStatusInput): BoardStatus {
 	if (i.openWarn > 0) {
 		return {
 			level: "warn",
-			reason: `최근 하루에 주의 신호 ${i.openWarn.toLocaleString()}건이 잡혔어요${who ? ` — ${who}` : ""}`,
+			reason: `최근 하루에 주의 신호 ${i.openWarn.toLocaleString()}건이 잡혔어요${nameOf(i.topWarn) ? ` — ${nameOf(i.topWarn)}` : ""}`,
 			href: `/admin/anomaly${i.q}`,
 		};
 	}
@@ -1935,6 +1942,11 @@ async function collectBoardInner(
 						WIN +
 						" FROM anomalies WHERE bucket >= ?1 AND scope='ai' AND app = ?3" +
 						" ORDER BY CASE WHEN verdict IN ('rule_fp','model_fp','both_fp') THEN 1 ELSE 0 END," +
+						// 최근 하루에 잡힌 것을 먼저 세운다. 상태 한 줄이 최근 하루치를 세므로
+						// 그 줄과 이 목록이 같은 것을 가리켜야 한다. 등급만으로 세우던 동안에는
+						// 기간 안에 오래된 심각이 하나라도 있으면 그것이 늘 위에 서서,
+						// 어제오늘 난 신호가 세 줄 밖으로 밀려나 있었다.
+						" CASE WHEN bucket >= ?2 THEN 0 ELSE 1 END," +
 						" CASE severity WHEN 'critical' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END, bucket DESC" +
 						` LIMIT ${BOARD_SIGNALS}`,
 				).bind(since, dayAgo, appFilter)
@@ -1943,6 +1955,11 @@ async function collectBoardInner(
 						WIN +
 						" FROM anomalies WHERE bucket >= ?1 AND scope='ai'" +
 						" ORDER BY CASE WHEN verdict IN ('rule_fp','model_fp','both_fp') THEN 1 ELSE 0 END," +
+						// 최근 하루에 잡힌 것을 먼저 세운다. 상태 한 줄이 최근 하루치를 세므로
+						// 그 줄과 이 목록이 같은 것을 가리켜야 한다. 등급만으로 세우던 동안에는
+						// 기간 안에 오래된 심각이 하나라도 있으면 그것이 늘 위에 서서,
+						// 어제오늘 난 신호가 세 줄 밖으로 밀려나 있었다.
+						" CASE WHEN bucket >= ?2 THEN 0 ELSE 1 END," +
 						" CASE severity WHEN 'critical' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END, bucket DESC" +
 						` LIMIT ${BOARD_SIGNALS}`,
 				).bind(since, dayAgo)
@@ -2124,8 +2141,16 @@ async function collectBoardInner(
 	const lastMonth = monthly.filter((m) => m.m !== nowKey).slice(-1)[0];
 	const q = `?period=${period}${appFilter ? `&app=${encodeURIComponent(appFilter)}` : ""}`;
 
-	// 열린 신호 가운데 가장 급한 것 — 상태 한 줄에 이름을 붙인다.
-	const top = openRows.find((r) => r.severity === "critical") ?? openRows.find((r) => r.severity === "warn") ?? null;
+	// 상태 한 줄에 붙일 이름 — 문장이 세는 것과 같은 자리에서 뽑는다.
+	//
+	// 예전에는 기간 전체에서 가장 급한 신호 하나를 골라 붙였다. 그런데 문장이 세는 것은
+	// 최근 하루치(critical24·warn24)라 둘이 어긋났다. 실제로 "최근 하루에 주의 신호 3건이
+	// 잡혔어요 — 오류율 급증 · portfoliolive"가 떴는데, 그 신호는 열흘 전 심각 신호였고
+	// 판정도 끝나 있었다. 그 앱은 하루 동안 호출이 한 건도 없었다.
+	const nameOf24 = (severity: string) => {
+		const r = openRows.find((x) => x.severity === severity && x.bucket >= dayAgo);
+		return r ? { label: r.label || r.signal, app: r.app } : null;
+	};
 
 	// ── 브리핑
 	const appNameMap: Record<string, string> = {};
@@ -2201,7 +2226,8 @@ async function collectBoardInner(
 			heartbeatAge: anomaly.heartbeatAge,
 			openCritical: anomaly.critical24,
 			openWarn: anomaly.warn24,
-			topSignal: top ? { label: top.label || top.signal, app: top.app } : null,
+			topCritical: nameOf24("critical"),
+			topWarn: nameOf24("warn"),
 			monthCost: curMonth?.cost ?? 0,
 			prevMonthCost: lastMonth?.cost ?? 0,
 			monthProgress: monthProgress(),
