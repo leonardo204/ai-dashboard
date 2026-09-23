@@ -10,6 +10,7 @@
  *  POST /v1/ai            채팅·비전·웹검색
  *  POST /v1/embeddings    임베딩
  *  POST /v1/hit           다른 서비스가 보내는 방문 기록 (TRAFFIC_TOKEN)
+ *  GET  /                  소개 (로그인 상태면 /admin 으로) · /privacy 개인정보처리방침
  *  GET  /admin            요약 대시보드 (세션 로그인)
  *  GET  /admin/calls           AI 호출 — 흐름(기본)
  *  GET  /admin/calls/usage     앱·모델·용도별 사용량
@@ -43,6 +44,7 @@ import type { BriefKey } from "./brief";
 import { handlePasskey, type PasskeyEnv } from "./passkey";
 import { handleHit, exportHits, SITES, type TrafficEnv } from "./traffic";
 import { renderLogin } from "./ui";
+import { renderPublicHome, renderPrivacyPage } from "./public";
 import {
 	renderBoard, renderUsage, renderTrend, renderGeo, renderSignals, renderDetector, renderAnomalyDetail, renderMails, renderTraffic, renderLogs, renderApps,
 } from "./views";
@@ -868,16 +870,29 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 			});
 		}
 
-		// 공개 페이지가 없는 서버라 색인을 전부 막는다.
+		// 검색에 올릴 것이 없는 서버라 색인을 전부 막는다.
+		// 소개·방침 두 장은 주소가 있어야 해서 둔 것일 뿐이고, 그 쪽도 noindex 를 달고 있다.
 		if (path === "/robots.txt") {
 			return new Response("User-agent: *\nDisallow: /\n", {
 				headers: { "Content-Type": "text/plain;charset=UTF-8" },
 			});
 		}
 
-		// 루트로 들어오면 대시보드로 보낸다.
+		// ── 공개 페이지 두 장 (소개 · 개인정보처리방침)
+		//    구글 OAuth 동의 화면을 프로덕션으로 올리려면 같은 도메인의 홈페이지 주소와
+		//    개인정보처리방침 주소가 있어야 한다. 테스트 상태로 두면 AdMob 수익을 읽어 오는
+		//    refresh token 이 이레마다 죽어 수치가 조용히 멈춘다.
+		if (path === "/privacy" || path === "/privacy/") {
+			return html(renderPrivacyPage());
+		}
+
+		// 루트 — 로그인한 사람은 예전처럼 대시보드로 바로 보낸다.
+		// 로그인하지 않은 사람에게만 소개 화면을 보여 준다(구글이 볼 홈페이지 주소가 이것이다).
 		if (path === "/" || path === "/index.html") {
-			return new Response(null, { status: 302, headers: { Location: "/admin" } });
+			if (await validSession(env, request)) {
+				return new Response(null, { status: 302, headers: { Location: "/admin" } });
+			}
+			return html(renderPublicHome());
 		}
 
 		return apiErr(404, "없는 경로예요.");
