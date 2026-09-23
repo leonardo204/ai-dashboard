@@ -8,3 +8,6 @@ admin_api_key.txt
 
 # App Store Connect · AdMob 자격 증명(.p8 개인키 · info.txt). 저장소에 올리지 않는다.
 appstore-admob/
+
+# 파이썬 도우미 실행 찌꺼기
+__pycache__/
