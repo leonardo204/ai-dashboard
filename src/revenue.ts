@@ -252,6 +252,8 @@ async function admobToken(env: RevenueEnv): Promise<string> {
 export interface AdmobRow {
 	d: string; appId: string; country: string;
 	earnings: number; impressions: number; clicks: number; requests: number;
+	/** 요청 가운데 광고가 실제로 내려온 수. 이 값과 요청 수의 비가 '채움 비율'이다. */
+	matched: number;
 }
 
 const ymd = (s: string) => ({ year: Number(s.slice(0, 4)), month: Number(s.slice(5, 7)), day: Number(s.slice(8, 10)) });
@@ -268,7 +270,7 @@ export async function fetchAdmob(env: RevenueEnv, from: string, to: string): Pro
 				reportSpec: {
 					dateRange: { startDate: ymd(from), endDate: ymd(to) },
 					dimensions: ["DATE", "APP", "COUNTRY"],
-					metrics: ["ESTIMATED_EARNINGS", "IMPRESSIONS", "CLICKS", "AD_REQUESTS"],
+					metrics: ["ESTIMATED_EARNINGS", "IMPRESSIONS", "CLICKS", "AD_REQUESTS", "MATCHED_REQUESTS"],
 				},
 			}),
 			signal: AbortSignal.timeout(60_000),
@@ -297,6 +299,7 @@ export async function fetchAdmob(env: RevenueEnv, from: string, to: string): Pro
 			impressions: Number(m.IMPRESSIONS?.integerValue ?? 0),
 			clicks: Number(m.CLICKS?.integerValue ?? 0),
 			requests: Number(m.AD_REQUESTS?.integerValue ?? 0),
+			matched: Number(m.MATCHED_REQUESTS?.integerValue ?? 0),
 		});
 	}
 	return out;
@@ -317,7 +320,17 @@ export async function ensureRevenueTables(env: RevenueEnv): Promise<void> {
 		"CREATE TABLE IF NOT EXISTS admob_daily (d TEXT NOT NULL, app_id TEXT NOT NULL, country TEXT NOT NULL," +
 			" earnings REAL NOT NULL DEFAULT 0, impressions INTEGER NOT NULL DEFAULT 0," +
 			" clicks INTEGER NOT NULL DEFAULT 0, requests INTEGER NOT NULL DEFAULT 0," +
+			" matched INTEGER NOT NULL DEFAULT 0," +
 			" PRIMARY KEY (d, app_id, country))",
+		// 광고를 달라고 한 요청 가운데 실제로 광고가 내려온 수.
+		// 이미 표가 있는 환경에는 칼럼만 더한다(D1 에는 ADD COLUMN IF NOT EXISTS 가 없어 조용히 실패한다).
+		//
+		// 왜 따로 담나. 요청 수와 노출 수만 있으면 "수익이 적다"까지만 보이고 어디가 막혔는지 모른다.
+		// 이 값이 있으면 셋으로 갈린다 —
+		//   요청 → 채움(matched/requests): 낮으면 광고가 안 내려온다(단위 설정·크기·재시도 폭주)
+		//   채움 → 노출(impressions/matched): 낮으면 받아 놓고 안 보여준다(도달 경로가 막힘)
+		// 실제로 한 앱은 채움 9.5%, 다른 앱은 받아 놓고 노출 0 이었는데 화면으로는 둘 다 그냥 '수익 적음'이었다.
+		"ALTER TABLE admob_daily ADD COLUMN matched INTEGER NOT NULL DEFAULT 0",
 		// 언제 무엇을 어디까지 받았나. 화면 아래에 그대로 적어 준다.
 		"CREATE TABLE IF NOT EXISTS revenue_state (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)",
 		"CREATE INDEX IF NOT EXISTS idx_store_sales_d ON store_sales(d)",
@@ -416,9 +429,9 @@ export async function syncRevenue(env: RevenueEnv, days = 5, skip = 0): Promise<
 			for (const r of rows) {
 				stmts.push(
 					env.DB.prepare(
-						"INSERT OR REPLACE INTO admob_daily (d, app_id, country, earnings, impressions, clicks, requests)" +
-							" VALUES (?1,?2,?3,?4,?5,?6,?7)",
-					).bind(r.d, r.appId, r.country, r.earnings, r.impressions, r.clicks, r.requests),
+						"INSERT OR REPLACE INTO admob_daily (d, app_id, country, earnings, impressions, clicks, requests, matched)" +
+							" VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+					).bind(r.d, r.appId, r.country, r.earnings, r.impressions, r.clicks, r.requests, r.matched),
 				);
 				rep.admob.rows++;
 			}
@@ -471,6 +484,8 @@ export interface RevenueAppRow {
 	impressions: number;
 	clicks: number;
 	requests: number;
+	/** 요청 가운데 광고가 내려온 수. requests 와 견주면 '채움 비율'이 나온다. */
+	matched: number;
 	/** 앱 판매·인앱 수익. 나라 통화 그대로라 여러 줄이 될 수 있다. */
 	sales: RevenueMoney[];
 	countries: number;
@@ -507,7 +522,7 @@ export interface RevenueData {
 		redownloads: number; prevRedownloads: number;
 		updates: number;
 		ad: number; prevAd: number;
-		impressions: number; clicks: number; requests: number;
+		impressions: number; clicks: number; requests: number; matched: number;
 		sales: RevenueMoney[];
 		countries: number;
 	};
@@ -605,12 +620,12 @@ async function collectRevenueInner(env: RevenueEnv, period: string, appFilter: s
 					since,
 				).all<{ app_id: string; i: number; r: number }>(),
 		// ④ 앱별 광고
-		admobMiss ? none<{ app_id: string; e: number; im: number; c: number; q: number }>()
+		admobMiss ? none<{ app_id: string; e: number; im: number; c: number; q: number; mq: number }>()
 			: aBind(
 					"SELECT app_id, SUM(earnings) AS e, SUM(impressions) AS im, SUM(clicks) AS c," +
-						" SUM(requests) AS q FROM admob_daily WHERE d >= ?1" + admobWhere + " GROUP BY app_id",
+						" SUM(requests) AS q, SUM(matched) AS mq FROM admob_daily WHERE d >= ?1" + admobWhere + " GROUP BY app_id",
 					since,
-				).all<{ app_id: string; e: number; im: number; c: number; q: number }>(),
+				).all<{ app_id: string; e: number; im: number; c: number; q: number; mq: number }>(),
 		admobMiss || !days ? none<{ app_id: string; e: number }>()
 			: aBind(
 					"SELECT app_id, SUM(earnings) AS e FROM admob_daily WHERE d >= ?1 AND d < " +
@@ -661,7 +676,7 @@ async function collectRevenueInner(env: RevenueEnv, period: string, appFilter: s
 		const fresh: RevenueAppRow = {
 			key: a.key, name: a.name, platform: a.platform, site: a.site,
 			installs: 0, redownloads: 0, updates: 0, prevInstalls: 0,
-			ad: 0, prevAd: 0, impressions: 0, clicks: 0, requests: 0,
+			ad: 0, prevAd: 0, impressions: 0, clicks: 0, requests: 0, matched: 0,
 			sales: [], countries: 0,
 		};
 		rows.set(a.key, fresh);
@@ -696,7 +711,8 @@ async function collectRevenueInner(env: RevenueEnv, period: string, appFilter: s
 		const a = byAdmob.get(r.app_id);
 		if (!a) { unmatched.push({ kind: "admob", id: r.app_id, installs: 0, ad: r.e ?? 0 }); continue; }
 		const row = rowOf(a);
-		row.ad += r.e ?? 0; row.impressions += r.im ?? 0; row.clicks += r.c ?? 0; row.requests += r.q ?? 0;
+		row.ad += r.e ?? 0; row.impressions += r.im ?? 0; row.clicks += r.c ?? 0;
+		row.requests += r.q ?? 0; row.matched += r.mq ?? 0;
 	}
 	for (const r of aPrev.results ?? []) {
 		const a = byAdmob.get(r.app_id);
@@ -768,7 +784,8 @@ async function collectRevenueInner(env: RevenueEnv, period: string, appFilter: s
 			redownloads: sum((r) => r.redownloads), prevRedownloads: prevRedown,
 			updates: sum((r) => r.updates),
 			ad: sum((r) => r.ad), prevAd: sum((r) => r.prevAd),
-			impressions: sum((r) => r.impressions), clicks: sum((r) => r.clicks), requests: sum((r) => r.requests),
+			impressions: sum((r) => r.impressions), clicks: sum((r) => r.clicks),
+			requests: sum((r) => r.requests), matched: sum((r) => r.matched),
 			sales: sortMoney(Array.from(money.entries()).map(([currency, amount]) => ({ currency, amount }))),
 			countries: countries.filter((c) => c.code !== "(미상)").length,
 		},

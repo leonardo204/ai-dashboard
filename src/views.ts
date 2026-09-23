@@ -2624,6 +2624,59 @@ function adAllCard(r: RevenueData): KpiSpec {
 	};
 }
 
+/**
+ * 광고가 어디서 막혔나 — 요청 → 채움 → 노출 세 칸.
+ *
+ * 수익·노출만 보면 고장이 "수익이 적다"로만 보인다. 실제로 두 가지가 그렇게 묻혀 있었다.
+ *   · 한 앱은 1,353번 요청해 129번만 광고를 받았다(채움 9.5%). 광고가 안 내려오는 쪽이다.
+ *   · 다른 앱은 138번 받아 놓고 한 번도 보여주지 않았다(노출 0). 도달 경로가 막힌 쪽이다.
+ * 둘은 고치는 곳이 달라서, 한 숫자로 뭉치면 어디를 봐야 할지 알 수 없다.
+ *
+ * 비율은 더해서 만들지 않고 날짜별 원값을 합한 뒤 나눈다 — 하루치 비율을 평균하면
+ * 요청이 한 건뿐인 날이 수백 건인 날과 같은 무게를 갖는다.
+ */
+function adFunnel(r: RevenueData): string {
+	const rows = r.apps.filter((a) => a.requests > 0);
+	if (!rows.length) return "";
+	const pct = (a: number, b: number) => (b > 0 ? `${((a / b) * 100).toFixed(1)}%` : "-");
+	// 문턱은 넉넉히 둔다. 표본이 적을 때 빨갛게 칠하면 멀쩡한 앱을 고장으로 읽는다.
+	const fillBad = (a: { requests: number; matched: number }) => a.requests >= 20 && a.matched / a.requests < 0.5;
+	// 받아 놓고 한 번도 보여주지 않은 것만 문제로 본다. 앱 오픈·보상형은 미리 받아 두고
+	// 조건이 맞을 때만 보여주는 것이 정상이라, 낮다는 것만으로는 고장이 아니다.
+	const showBad = (a: { matched: number; impressions: number }) => a.matched >= 20 && a.impressions === 0;
+
+	const body = rows
+		.map((a) => {
+			const rpm = a.impressions > 0 ? (a.ad / a.impressions) * 1000 : 0;
+			return `<tr><td>${escapeHtml(a.name)}</td>` +
+				`<td class="n">${a.requests.toLocaleString()}</td>` +
+				`<td class="n${fillBad(a) ? " r" : ""}">${pct(a.matched, a.requests)}` +
+				`<span class="sm"> ${a.matched.toLocaleString()}</span></td>` +
+				`<td class="n${showBad(a) ? " r" : ""}">${pct(a.impressions, a.matched)}` +
+				`<span class="sm"> ${a.impressions.toLocaleString()}</span></td>` +
+				`<td class="n o1">${a.clicks.toLocaleString()}</td>` +
+				`<td class="n">${a.ad > 0 ? usd(a.ad) : "-"}</td>` +
+				`<td class="n o2">${rpm > 0 ? usd(rpm) : "-"}</td></tr>`;
+		})
+		.join("");
+
+	const broken = rows.filter((a) => fillBad(a) || showBad(a));
+	const warn = broken.length
+		? `<p class="sm" style="margin:8px 2px 0"><b>${broken
+				.map((a) => escapeHtml(a.name))
+				.join(" · ")}</b>${broken.length > 1 ? " 에" : " 에"} 손볼 것이 있어요. ` +
+			`채움이 낮으면 광고가 안 내려오는 쪽(단위 설정·배너 크기·재시도), 보여줌이 0이면 받아 놓고 안 쓰는 쪽(버튼·화면 경로)이에요.</p>`
+		: "";
+
+	return `${sectionHead("광고가 어디서 막혔나", {
+		tip: "요청은 앱이 광고를 달라고 한 수, 채움은 그중 실제로 광고가 내려온 수, 보여줌은 받은 광고를 화면에 띄운 수예요.\n" +
+			"채움은 보통 80~95%예요. 절반 아래로 떨어지면 광고 단위 설정이나 배너 크기를 봐야 해요.\n" +
+			"보여줌은 광고 종류에 따라 낮을 수 있어요(앱 오픈·보상형은 미리 받아 두니까요). 다만 0%면 받아 놓고 한 번도 안 쓴 거예요.\n" +
+			"RPM 은 노출 1,000건당 수익이에요. 이 값이 정상인데 수익이 적으면 단가가 아니라 노출 수가 적은 거예요.",
+	})}
+<div class="scroll cap"><table class="fx" id="tb-adfunnel">${cols("", "84", "112", "112", "72:o1", "92", "84:o2")}<thead><tr><th>앱</th><th class="n">요청</th><th class="n">채움</th><th class="n">보여줌</th><th class="n o1">클릭</th><th class="n">수익</th><th class="n o2">RPM</th></tr></thead><tbody>${body}</tbody></table></div>${warn}`;
+}
+
 export function renderRevenue(r: RevenueData, view: "sum" | "geo" = "sum", opts: AdminOpts = {}): string {
 	const q = revQuery(r.period, r.appFilter);
 	const base = view === "geo" ? "/admin/revenue/geo" : "/admin/revenue";
@@ -2718,6 +2771,15 @@ ${kpiRow([
 		value: usd(t.ad),
 		delta: { cur: t.ad, prev: t.prevAd },
 		sub: t.impressions ? `노출 ${t.impressions.toLocaleString()} · 클릭 ${t.clicks.toLocaleString()}` : "노출 없음",
+		// 요청이 노출까지 얼마나 살아남았나. 이 줄이 없으면 광고가 안 내려오는 것과
+		// 받아 놓고 안 보여주는 것이 똑같이 '수익 적음'으로만 보인다.
+		sub2: t.requests
+			? `요청 ${t.requests.toLocaleString()} → 채움 ${t.requests ? Math.round((t.matched / t.requests) * 100) : 0}%` +
+				` → 보여줌 ${t.matched ? Math.round((t.impressions / t.matched) * 100) : 0}%`
+			: "",
+		tip: t.requests
+			? "요청 가운데 광고가 내려온 비율이 '채움', 받은 광고를 화면에 띄운 비율이 '보여줌'이에요.\n아래 '광고가 어디서 막혔나' 칸에서 앱별로 볼 수 있어요."
+			: undefined,
 	},
 	{
 		// 통화가 여럿일 때 한 줄에 다 적으면 28px 숫자가 카드를 넘친다.
@@ -2743,6 +2805,8 @@ ${svgRevenue(r.buckets)}
 
 ${sectionHead("앱별", { count: `${r.apps.length}개` })}
 <div class="scroll cap"><table class="fx" id="tb-revapp">${cols("", "96", "84:o1", "84:o2", "92", "84:o1", "168", "74:o2", "72")}<thead><tr><th>앱</th><th class="n">처음 받음</th><th class="n o1">다시 받음</th><th class="n o2">업데이트</th><th class="n">광고 수익</th><th class="n o1">노출</th><th class="n">판매 수익</th><th class="n o2">나라</th><th></th></tr></thead><tbody>${appRows}</tbody></table></div>
+
+${adFunnel(r)}
 
 ${unmatched}
 `}
