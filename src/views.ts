@@ -26,7 +26,7 @@ import {
 	escapeHtml, usd, kst, shortNum, shellAdmin, pageHead, filterTabs, periodTabs, sectionHead, delta, kpiRow,
 	callsSub, trafficSub, anomalySub, settingsSub,
 	svgTrend, svgMap, hbars, svgHeat, svgLevels, svgF1, svgTraffic, svgRevenue, svgInstallMap,
-	revenueSub, type AdminOpts,
+	revenueSub, type AdminOpts, type KpiSpec,
 } from "./ui";
 import { REVENUE_APPS, type RevenueData, type RevenueMoney } from "./revenue";
 import { SITES, siteName, siteUrl, THREAT_LABEL } from "./traffic";
@@ -2591,6 +2591,39 @@ const revenueAppTabs = () => REVENUE_APPS.map((a) => ({ id: a.key, name: a.name,
 const revQuery = (period: string, app: string) =>
 	`?period=${period}${app ? `&app=${encodeURIComponent(app)}` : ""}`;
 
+/** AdMob 지급선. 이 금액을 넘겨야 돈이 나온다(주소·세금 정보도 함께 확인돼야 한다). */
+const ADMOB_PAYOUT = 100;
+
+/**
+ * AdMob 평생 누적 카드 — 이 카드만 기간 탭을 따르지 않는다.
+ *
+ * 지급선까지 얼마 남았나가 궁금한 값이라 "지난 30일"로 자르면 답이 되지 않는다.
+ * 옆 카드들과 잣대가 다르므로 이름에 '누적'을 박고 ⓘ 로 한 번 더 밝힌다.
+ */
+function adAllCard(r: RevenueData): KpiSpec {
+	const a = r.adAll;
+	const left = Math.max(0, ADMOB_PAYOUT - a.total);
+	// 광고를 안 붙인 앱(LnHud 같은 맥 앱)에 "$100까지 $100 남음"이라고 적으면
+	// 오지 않을 수익을 기다리는 것처럼 읽힌다. 기록이 아예 없으면 그렇다고 말한다.
+	const none = !a.firstDay;
+	return {
+		label: "광고 누적",
+		value: none ? "-" : usd(a.total),
+		sub: none
+			? "이 앱에는 광고가 없어요"
+			: a.total >= ADMOB_PAYOUT
+				? `지급선 $${ADMOB_PAYOUT} 넘었어요`
+				: `$${ADMOB_PAYOUT}까지 ${usd(left)} 남음`,
+		sub2: none ? "" : `${a.firstDay.slice(2).replace(/-/g, ".")}부터`,
+		tip:
+			"이 카드만 기간 탭과 상관없이 전체 기록을 더한 값이에요.\n" +
+			`AdMob 은 $${ADMOB_PAYOUT} 을 넘겨야 돈을 보내 줘요(주소·세금 정보 확인도 함께 끝나야 해요).\n` +
+			"AdMob 에는 잔액을 알려주는 API 가 없어서 날짜별 수익을 처음부터 더해 만든 값이에요. " +
+			"한 번 지급을 받으면 AdMob 쪽 잔액은 0 으로 돌아가지만 이 숫자는 계속 쌓여요.\n" +
+			"추정치라 달이 끝나고 확정될 때 조금 달라질 수 있어요.",
+	};
+}
+
 export function renderRevenue(r: RevenueData, view: "sum" | "geo" = "sum", opts: AdminOpts = {}): string {
 	const q = revQuery(r.period, r.appFilter);
 	const base = view === "geo" ? "/admin/revenue/geo" : "/admin/revenue";
@@ -2697,7 +2730,8 @@ ${kpiRow([
 				? "앱 판매·인앱 결제 몫"
 				: "이 기간에 판매 없음",
 	},
-])}
+	adAllCard(r),
+], 5)}
 
 ${view !== "sum" ? "" : `
 ${sectionHead("날짜별 내려받기", {

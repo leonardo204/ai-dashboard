@@ -511,6 +511,15 @@ export interface RevenueData {
 		sales: RevenueMoney[];
 		countries: number;
 	};
+	/**
+	 * AdMob 평생 누적 — 기간 탭을 따르지 않는다.
+	 *
+	 * AdMob 은 잔액을 알려주는 API 가 없다(계정·앱·보고서뿐이다). 지급선 $100 을
+	 * 언제 넘기는지 보려면 날짜별 수익을 우리가 처음부터 더하는 수밖에 없다.
+	 * 한 번이라도 지급을 받으면 AdMob 쪽 잔액은 0 으로 돌아가는데 이 값은 계속 늘어난다.
+	 * 그때부터는 '평생 번 돈'이지 '받을 돈'이 아니다 — 화면 설명에 그렇게 적어 둔다.
+	 */
+	adAll: { total: number; firstDay: string; lastDay: string };
 	lastSync: SyncReport | null;
 	lastSyncAt: number;
 }
@@ -572,7 +581,7 @@ async function collectRevenueInner(env: RevenueEnv, period: string, appFilter: s
 	};
 	const none = <T>() => Promise.resolve({ results: [] as T[] });
 
-	const [sApp, sMoney, sPrev, aApp, aPrev, sDay, aDay, sCty, aCty, state] = await Promise.all([
+	const [sApp, sMoney, sPrev, aApp, aPrev, sDay, aDay, sCty, aCty, aAll, state] = await Promise.all([
 		// ① 앱별 다운로드
 		storeMiss ? none<{ app_id: string; i: number; r: number; u: number; c: number }>()
 			: sBind(
@@ -634,6 +643,13 @@ async function collectRevenueInner(env: RevenueEnv, period: string, appFilter: s
 						" WHERE d >= ?1" + admobWhere + " GROUP BY country",
 					since,
 				).all<{ country: string; e: number; im: number }>(),
+		// ⑦ 평생 누적 광고 수익 — 날짜를 걸지 않는다. 앱을 골랐으면 그 앱만.
+		admobMiss
+			? Promise.resolve(null)
+			: (picked?.admob
+					? env.DB.prepare("SELECT SUM(earnings) AS e, MIN(d) AS f, MAX(d) AS t FROM admob_daily WHERE app_id = ?1").bind(picked.admob)
+					: env.DB.prepare("SELECT SUM(earnings) AS e, MIN(d) AS f, MAX(d) AS t FROM admob_daily")
+				).first<{ e: number | null; f: string | null; t: string | null }>(),
 		env.DB.prepare("SELECT value, updated_at FROM revenue_state WHERE key = 'last_sync'").first<{ value: string; updated_at: number }>(),
 	]);
 
@@ -756,6 +772,7 @@ async function collectRevenueInner(env: RevenueEnv, period: string, appFilter: s
 			sales: sortMoney(Array.from(money.entries()).map(([currency, amount]) => ({ currency, amount }))),
 			countries: countries.filter((c) => c.code !== "(미상)").length,
 		},
+		adAll: { total: aAll?.e ?? 0, firstDay: aAll?.f ?? "", lastDay: aAll?.t ?? "" },
 		lastSync,
 		lastSyncAt: state?.updated_at ?? 0,
 	};
