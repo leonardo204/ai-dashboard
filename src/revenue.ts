@@ -486,6 +486,16 @@ export interface RevenueAppRow {
 	requests: number;
 	/** 요청 가운데 광고가 내려온 수. requests 와 견주면 '채움 비율'이 나온다. */
 	matched: number;
+	/**
+	 * 최근 이레치만 따로 — "지금도 그런가"를 가리는 데 쓴다.
+	 *
+	 * 고른 기간 전체로 판단하면 지난 일이 언제까지나 빨갛게 남는다. 실제로 한 앱은
+	 * 8월 사흘 동안 1,212번 요청해 한 번도 광고를 못 받았는데, 9월 6일부터는 줄곧 100%다.
+	 * 그 사흘이 30일 평균을 9%로 끌어내려, 이미 끝난 일이 지금 고장으로 읽혔다.
+	 */
+	recentRequests: number;
+	recentMatched: number;
+	recentImpressions: number;
 	/** 앱 판매·인앱 수익. 나라 통화 그대로라 여러 줄이 될 수 있다. */
 	sales: RevenueMoney[];
 	countries: number;
@@ -596,7 +606,7 @@ async function collectRevenueInner(env: RevenueEnv, period: string, appFilter: s
 	};
 	const none = <T>() => Promise.resolve({ results: [] as T[] });
 
-	const [sApp, sMoney, sPrev, aApp, aPrev, sDay, aDay, sCty, aCty, aAll, state] = await Promise.all([
+	const [sApp, sMoney, sPrev, aApp, aPrev, sDay, aDay, sCty, aCty, aAll, aRecent, state] = await Promise.all([
 		// ① 앱별 다운로드
 		storeMiss ? none<{ app_id: string; i: number; r: number; u: number; c: number }>()
 			: sBind(
@@ -665,6 +675,13 @@ async function collectRevenueInner(env: RevenueEnv, period: string, appFilter: s
 					? env.DB.prepare("SELECT SUM(earnings) AS e, MIN(d) AS f, MAX(d) AS t FROM admob_daily WHERE app_id = ?1").bind(picked.admob)
 					: env.DB.prepare("SELECT SUM(earnings) AS e, MIN(d) AS f, MAX(d) AS t FROM admob_daily")
 				).first<{ e: number | null; f: string | null; t: string | null }>(),
+		// ⑦ 최근 이레치 광고 — 고장이 아직 진행 중인지 가른다(기간 탭과 무관하다).
+		admobMiss ? none<{ app_id: string; q: number; mq: number; im: number }>()
+			: aBind(
+					"SELECT app_id, SUM(requests) AS q, SUM(matched) AS mq, SUM(impressions) AS im" +
+						" FROM admob_daily WHERE d >= ?1" + admobWhere + " GROUP BY app_id",
+					dayStr(Date.now() - 7 * 86_400_000),
+				).all<{ app_id: string; q: number; mq: number; im: number }>(),
 		env.DB.prepare("SELECT value, updated_at FROM revenue_state WHERE key = 'last_sync'").first<{ value: string; updated_at: number }>(),
 	]);
 
@@ -677,6 +694,7 @@ async function collectRevenueInner(env: RevenueEnv, period: string, appFilter: s
 			key: a.key, name: a.name, platform: a.platform, site: a.site,
 			installs: 0, redownloads: 0, updates: 0, prevInstalls: 0,
 			ad: 0, prevAd: 0, impressions: 0, clicks: 0, requests: 0, matched: 0,
+			recentRequests: 0, recentMatched: 0, recentImpressions: 0,
 			sales: [], countries: 0,
 		};
 		rows.set(a.key, fresh);
@@ -717,6 +735,12 @@ async function collectRevenueInner(env: RevenueEnv, period: string, appFilter: s
 	for (const r of aPrev.results ?? []) {
 		const a = byAdmob.get(r.app_id);
 		if (a) rowOf(a).prevAd += r.e ?? 0;
+	}
+	for (const r of aRecent.results ?? []) {
+		const a = byAdmob.get(r.app_id);
+		if (!a) continue;
+		const row = rowOf(a);
+		row.recentRequests += r.q ?? 0; row.recentMatched += r.mq ?? 0; row.recentImpressions += r.im ?? 0;
 	}
 
 	// 기록이 하나도 없는 앱도 줄은 남긴다 — "이 앱은 이 기간에 0건"과 "그런 앱이 없다"는 다르다.

@@ -2639,42 +2639,55 @@ function adFunnel(r: RevenueData): string {
 	const rows = r.apps.filter((a) => a.requests > 0);
 	if (!rows.length) return "";
 	const pct = (a: number, b: number) => (b > 0 ? `${((a / b) * 100).toFixed(1)}%` : "-");
-	// 문턱은 넉넉히 둔다. 표본이 적을 때 빨갛게 칠하면 멀쩡한 앱을 고장으로 읽는다.
-	const fillBad = (a: { requests: number; matched: number }) => a.requests >= 20 && a.matched / a.requests < 0.5;
+
+	// 고장이라고 부르는 기준은 '최근 이레'다. 고른 기간 전체로 재면 지난 일이 언제까지나
+	// 빨갛게 남는다. 실제로 한 앱은 8월 사흘 동안 1,212번 요청해 한 번도 광고를 못 받았고
+	// 9월 6일부터는 줄곧 100%인데, 그 사흘이 30일 평균을 9%로 끌어내렸다.
+	//
+	// 문턱은 넉넉히 둔다 — 표본이 적을 때 빨갛게 칠하면 멀쩡한 앱을 고장으로 읽는다.
+	const fillBad = (a: RevenueData["apps"][number]) =>
+		a.recentRequests >= 20 && a.recentMatched / a.recentRequests < 0.5;
 	// 받아 놓고 한 번도 보여주지 않은 것만 문제로 본다. 앱 오픈·보상형은 미리 받아 두고
-	// 조건이 맞을 때만 보여주는 것이 정상이라, 낮다는 것만으로는 고장이 아니다.
-	const showBad = (a: { matched: number; impressions: number }) => a.matched >= 20 && a.impressions === 0;
+	// 조건이 맞을 때만 보여주는 것이 정상이라, 비율이 낮다는 것만으로는 고장이 아니다.
+	const showBad = (a: RevenueData["apps"][number]) => a.recentMatched >= 20 && a.recentImpressions === 0;
+	// 고른 기간에는 낮은데 최근에는 멀쩡한 경우 — 이미 끝난 일이다. 그렇다고 말해 준다.
+	const healed = (a: RevenueData["apps"][number]) =>
+		a.requests >= 20 && a.matched / a.requests < 0.5 && a.recentRequests > 0 && !fillBad(a);
 
 	const body = rows
 		.map((a) => {
 			const rpm = a.impressions > 0 ? (a.ad / a.impressions) * 1000 : 0;
-			return `<tr><td>${escapeHtml(a.name)}</td>` +
+			return `<tr><td>${escapeHtml(a.name)}${healed(a) ? `<span class="sm"> 지금은 정상</span>` : ""}</td>` +
 				`<td class="n">${a.requests.toLocaleString()}</td>` +
 				`<td class="n${fillBad(a) ? " r" : ""}">${pct(a.matched, a.requests)}` +
 				`<span class="sm"> ${a.matched.toLocaleString()}</span></td>` +
 				`<td class="n${showBad(a) ? " r" : ""}">${pct(a.impressions, a.matched)}` +
 				`<span class="sm"> ${a.impressions.toLocaleString()}</span></td>` +
-				`<td class="n o1">${a.clicks.toLocaleString()}</td>` +
+				`<td class="n o1">${a.recentRequests ? pct(a.recentMatched, a.recentRequests) : "-"}</td>` +
 				`<td class="n">${a.ad > 0 ? usd(a.ad) : "-"}</td>` +
 				`<td class="n o2">${rpm > 0 ? usd(rpm) : "-"}</td></tr>`;
 		})
 		.join("");
 
 	const broken = rows.filter((a) => fillBad(a) || showBad(a));
-	const warn = broken.length
-		? `<p class="sm" style="margin:8px 2px 0"><b>${broken
-				.map((a) => escapeHtml(a.name))
-				.join(" · ")}</b>${broken.length > 1 ? " 에" : " 에"} 손볼 것이 있어요. ` +
-			`채움이 낮으면 광고가 안 내려오는 쪽(단위 설정·배너 크기·재시도), 보여줌이 0이면 받아 놓고 안 쓰는 쪽(버튼·화면 경로)이에요.</p>`
-		: "";
+	const fixed = rows.filter(healed);
+	const note = broken.length
+		? `<p class="sm" style="margin:8px 2px 0"><b>${broken.map((a) => escapeHtml(a.name)).join(" · ")}</b>` +
+			` — 최근 이레에도 그래요. 채움이 낮으면 광고가 안 내려오는 쪽(광고 단위 설정·배너 크기·재시도),` +
+			` 보여줌이 0이면 받아 놓고 안 쓰는 쪽(버튼·화면 경로)이에요.</p>`
+		: fixed.length
+			? `<p class="sm" style="margin:8px 2px 0"><b>${fixed.map((a) => escapeHtml(a.name)).join(" · ")}</b>` +
+				` — 고른 기간에는 채움이 낮지만 최근 이레는 정상이에요. 이미 지난 일이라 손볼 것이 없어요.</p>`
+			: "";
 
 	return `${sectionHead("광고가 어디서 막혔나", {
 		tip: "요청은 앱이 광고를 달라고 한 수, 채움은 그중 실제로 광고가 내려온 수, 보여줌은 받은 광고를 화면에 띄운 수예요.\n" +
 			"채움은 보통 80~95%예요. 절반 아래로 떨어지면 광고 단위 설정이나 배너 크기를 봐야 해요.\n" +
 			"보여줌은 광고 종류에 따라 낮을 수 있어요(앱 오픈·보상형은 미리 받아 두니까요). 다만 0%면 받아 놓고 한 번도 안 쓴 거예요.\n" +
+			"빨간 표시는 '최근 이레에도 그렇다'는 뜻이에요. 지난 일로 평균만 낮아진 것은 칠하지 않아요.\n" +
 			"RPM 은 노출 1,000건당 수익이에요. 이 값이 정상인데 수익이 적으면 단가가 아니라 노출 수가 적은 거예요.",
 	})}
-<div class="scroll cap"><table class="fx" id="tb-adfunnel">${cols("", "84", "112", "112", "72:o1", "92", "84:o2")}<thead><tr><th>앱</th><th class="n">요청</th><th class="n">채움</th><th class="n">보여줌</th><th class="n o1">클릭</th><th class="n">수익</th><th class="n o2">RPM</th></tr></thead><tbody>${body}</tbody></table></div>${warn}`;
+<div class="scroll cap"><table class="fx" id="tb-adfunnel">${cols("", "84", "112", "112", "92:o1", "92", "84:o2")}<thead><tr><th>앱</th><th class="n">요청</th><th class="n">채움</th><th class="n">보여줌</th><th class="n o1">최근 이레 채움</th><th class="n">수익</th><th class="n o2">RPM</th></tr></thead><tbody>${body}</tbody></table></div>${note}`;
 }
 
 export function renderRevenue(r: RevenueData, view: "sum" | "geo" = "sum", opts: AdminOpts = {}): string {
