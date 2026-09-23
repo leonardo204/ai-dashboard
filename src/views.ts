@@ -7,6 +7,7 @@
  *   지역   /admin/calls/geo    지도 + 국가·도시별 표
  *   이상   /admin/anomaly 이상 신호 현황 · 모델 정보 · 탐지 서버 상태
  *   로그   /admin/calls/logs   호출 1건씩 검색
+ *   수익   /admin/revenue      App Store 내려받기·판매 + AdMob 광고 수익 (· /geo 지역)
  *   앱관리 /admin/settings/apps   토큰·모델 맵·상한
  *
  * 데이터 조회는 stats.ts, 공통 틀·차트는 ui.ts에 있다.
@@ -24,8 +25,10 @@ import {
 import {
 	escapeHtml, usd, kst, shortNum, shellAdmin, pageHead, filterTabs, periodTabs, sectionHead, delta, kpiRow,
 	callsSub, trafficSub, anomalySub, settingsSub,
-	svgTrend, svgMap, hbars, svgHeat, svgLevels, svgF1, svgTraffic, type AdminOpts,
+	svgTrend, svgMap, hbars, svgHeat, svgLevels, svgF1, svgTraffic, svgRevenue, svgInstallMap,
+	revenueSub, type AdminOpts,
 } from "./ui";
+import { REVENUE_APPS, type RevenueData, type RevenueMoney } from "./revenue";
 import { SITES, siteName, siteUrl, THREAT_LABEL } from "./traffic";
 import { BRIEF_TABS, type BriefKey, type BriefWindow, type Brief } from "./brief";
 
@@ -2551,5 +2554,176 @@ ${notFoundPanel(t)}
 <p class="foot">각 서비스가 응답을 보낸 뒤 방문 한 건씩을 이 대시보드로 보내요.</p>
 </div>`,
 		{ ...opts, tab: "traffic", sub: trafficSub(view, q) },
+	);
+}
+
+// ═════════════════════════════════════════════════════════════
+// 앱 수익 (/admin/revenue · /geo)
+// ═════════════════════════════════════════════════════════════
+
+/**
+ * 금액 표기 — 통화를 섞지 않는다.
+ *
+ * App Store 는 판매액을 산 사람의 나라 통화로 준다(원화·즈워티·달러가 함께 들어온다).
+ * 환율을 지어내 한 줄로 합치면 어느 보고서와도 맞지 않는 값이 되므로 나란히 적는다.
+ */
+function moneyLabel(list: RevenueMoney[]): string {
+	if (!list.length) return "-";
+	return list
+		.map((m) => {
+			// 판매액은 사람이 실제로 낸 돈이라 센트 단위가 자연스럽다(usd()는 네 자리까지 쓴다).
+			// 1센트도 안 되는 금액만 예외로 자릿수를 늘려 0으로 사라지지 않게 한다.
+			if (m.currency === "USD" || !m.currency) {
+				return Math.abs(m.amount) < 0.01 ? usd(m.amount) : `$${m.amount.toFixed(2)}`;
+			}
+			if (m.currency === "KRW") return `₩${Math.round(m.amount).toLocaleString()}`;
+			if (m.currency === "JPY") return `¥${Math.round(m.amount).toLocaleString()}`;
+			if (m.currency === "EUR") return `€${m.amount.toFixed(2)}`;
+			if (m.currency === "GBP") return `£${m.amount.toFixed(2)}`;
+			return `${m.amount.toFixed(2)} ${escapeHtml(m.currency)}`;
+		})
+		.join(" · ");
+}
+
+/** 기간·앱 탭이 쓰는 앱 목록. 수익 화면은 앱 레지스트리가 아니라 스토어 앱을 고른다. */
+const revenueAppTabs = () => REVENUE_APPS.map((a) => ({ id: a.key, name: a.name, active: true }));
+
+const revQuery = (period: string, app: string) =>
+	`?period=${period}${app ? `&app=${encodeURIComponent(app)}` : ""}`;
+
+export function renderRevenue(r: RevenueData, view: "sum" | "geo" = "sum", opts: AdminOpts = {}): string {
+	const q = revQuery(r.period, r.appFilter);
+	const base = view === "geo" ? "/admin/revenue/geo" : "/admin/revenue";
+	const t = r.totals;
+
+	const appRows = r.apps.length
+		? r.apps
+				.map(
+					(a) =>
+						`<tr><td>${escapeHtml(a.name)}<span class="sm"> ${escapeHtml(a.platform)}</span></td>` +
+						`<td class="n">${a.installs.toLocaleString()}${delta(a.installs, a.prevInstalls)}</td>` +
+						`<td class="n o1">${a.redownloads.toLocaleString()}</td>` +
+						`<td class="n o2">${a.updates.toLocaleString()}</td>` +
+						`<td class="n">${a.ad > 0 ? usd(a.ad) : "-"}${a.prevAd ? delta(a.ad, a.prevAd) : ""}</td>` +
+						`<td class="n o1">${a.impressions ? a.impressions.toLocaleString() : "-"}</td>` +
+						`<td class="n">${moneyLabel(a.sales)}</td>` +
+						`<td class="n o2">${a.countries ? `${a.countries}개국` : "-"}</td>` +
+						`<td class="lk">${a.site ? `<a href="/admin/traffic?period=${r.period}&site=${encodeURIComponent(a.site)}">트래픽 →</a>` : ""}</td></tr>`,
+				)
+				.join("")
+		: `<tr><td colspan="9">아직 받아 둔 기록이 없어요.</td></tr>`;
+
+	const maxC = Math.max(1, ...r.countries.map((c) => c.installs + c.redownloads));
+	const countryRows = r.countries.length
+		? r.countries
+				.map(
+					(c) =>
+						`<tr><td>${escapeHtml(countryName(c.code))}</td>` +
+						`<td class="n">${c.installs.toLocaleString()}</td>` +
+						`<td class="n o1">${c.redownloads.toLocaleString()}</td>` +
+						`<td class="n o1">${c.impressions ? c.impressions.toLocaleString() : "-"}</td>` +
+						`<td class="n">${c.ad > 0 ? usd(c.ad) : "-"}</td>` +
+						`<td class="bar o2"><span style="width:${Math.round(((c.installs + c.redownloads) / maxC) * 100)}%"></span></td></tr>`,
+				)
+				.join("")
+		: `<tr><td colspan="6">아직 받아 둔 기록이 없어요.</td></tr>`;
+
+	// 목록에 없는 앱 — 새 앱을 냈는데 src/revenue.ts 의 REVENUE_APPS 에 줄을 안 더한 경우다.
+	// 숫자를 조용히 버리지 않고 여기 드러낸다.
+	const unmatched = r.unmatched.length
+		? `${sectionHead("아직 묶지 않은 앱", {
+				tip: "src/revenue.ts 의 REVENUE_APPS 에 줄을 더하면 위 표에 이름으로 나와요.\n묶기 전에도 숫자는 버리지 않고 여기 그대로 보여줘요.",
+			})}
+<div class="cap"><table><thead><tr><th>어디</th><th>식별자</th><th class="n">처음 받음</th><th class="n">광고 수익</th></tr></thead><tbody>${r.unmatched
+				.map(
+					(u) =>
+						`<tr><td>${u.kind === "admob" ? "AdMob" : "App Store"}</td><td class="mono">${escapeHtml(u.id)}</td>` +
+						`<td class="n">${u.installs.toLocaleString()}</td><td class="n">${u.ad > 0 ? usd(u.ad) : "-"}</td></tr>`,
+				)
+				.join("")}</tbody></table></div>`
+		: "";
+
+	const syncNote = r.lastSyncAt
+		? `마지막으로 받은 때 ${kst(r.lastSyncAt)} (${ago(Date.now() - r.lastSyncAt)})` +
+			(r.lastSync && !r.lastSync.ok
+				? ` · <b class="r">받다가 걸렸어요</b> — ${escapeHtml(r.lastSync.store.error || r.lastSync.admob.error || "")}`
+				: "")
+		: "아직 한 번도 받지 않았어요.";
+
+	const topCountry = r.countries.filter((c) => c.code !== "(미상)")[0];
+
+	return shellAdmin(
+		"앱 수익",
+		pageHead(
+			"앱 수익",
+			`App Store 내려받기 · AdMob 광고 · ${r.since ? `${r.since} ~ ${r.until}` : `전체 ~ ${r.until}`}`,
+			periodTabs(r.period, PERIODS, (k) => `${base}${revQuery(k, r.appFilter)}`),
+		) +
+			`<div id="hz-body">
+${filterTabs(base, r.period, r.appFilter, revenueAppTabs(), { allLabel: "전체 앱" })}
+${briefOf(opts, base, `period=${r.period}${r.appFilter ? `&app=${encodeURIComponent(r.appFilter)}` : ""}`)}
+
+${kpiRow([
+	{
+		label: "처음 받음",
+		value: t.installs.toLocaleString(),
+		unit: "건",
+		delta: { cur: t.installs, prev: t.prevInstalls },
+		// 카드 숫자가 '처음 받음'이므로 보조줄도 같은 잣대로 적는다.
+		// 여기에 다시 받은 것까지 더한 수를 적으면 위아래 숫자가 서로 다른 것을 세게 된다.
+		sub: topCountry ? `가장 많은 곳 ${countryName(topCountry.code)} ${topCountry.installs.toLocaleString()}건` : "",
+	},
+	{
+		label: "다시 받음",
+		value: t.redownloads.toLocaleString(),
+		unit: "건",
+		delta: { cur: t.redownloads, prev: t.prevRedownloads },
+		sub: `업데이트 ${t.updates.toLocaleString()}건`,
+	},
+	{
+		label: "광고 수익",
+		value: usd(t.ad),
+		delta: { cur: t.ad, prev: t.prevAd },
+		sub: t.impressions ? `노출 ${t.impressions.toLocaleString()} · 클릭 ${t.clicks.toLocaleString()}` : "노출 없음",
+	},
+	{
+		// 통화가 여럿일 때 한 줄에 다 적으면 28px 숫자가 카드를 넘친다.
+		// 큰 자리에는 하나만 두고 나머지는 아래 작은 줄로 내린다(합치지는 않는다).
+		label: "판매 수익",
+		value: t.sales.length ? moneyLabel(t.sales.slice(0, 1)) : "-",
+		sub: t.sales.length > 1
+			? `그 밖에 ${moneyLabel(t.sales.slice(1))}`
+			: t.sales.length
+				? "앱 판매·인앱 결제 몫"
+				: "이 기간에 판매 없음",
+	},
+])}
+
+${view !== "sum" ? "" : `
+${sectionHead("날짜별 내려받기", {
+	tip: "막대 아래(진한 쪽)가 처음 받은 사람, 위(흐린 쪽)가 다시 받은 사람이에요.\n" +
+		"업데이트는 이미 쓰던 사람이라 막대에 넣지 않고 툴팁에만 적어요.\n" +
+		"꺾은선은 AdMob 광고 수익이에요(오른쪽 눈금).",
+})}
+${svgRevenue(r.buckets)}
+
+${sectionHead("앱별", { count: `${r.apps.length}개` })}
+<div class="scroll cap"><table class="fx" id="tb-revapp">${cols("", "96", "84:o1", "84:o2", "92", "84:o1", "168", "74:o2", "72")}<thead><tr><th>앱</th><th class="n">처음 받음</th><th class="n o1">다시 받음</th><th class="n o2">업데이트</th><th class="n">광고 수익</th><th class="n o1">노출</th><th class="n">판매 수익</th><th class="n o2">나라</th><th></th></tr></thead><tbody>${appRows}</tbody></table></div>
+
+${unmatched}
+`}
+${view !== "geo" ? "" : `
+${sectionHead("어디서 받았나", {
+	tip: "App Store 보고서는 나라만 알려주고 도시는 알려주지 않아요. 그래서 나라 가운데에 모아 찍어요.\n원 크기는 처음 받은 것과 다시 받은 것을 더한 수예요.",
+	count: `${t.countries}개국`,
+})}
+${svgInstallMap(r.countries)}
+
+${sectionHead("나라별", { right: tableFilter("tb-revcty", "나라 이름으로 걸러보기") })}
+<div class="scroll cap"><table class="fx" id="tb-revcty">${cols("", "96", "88:o1", "92:o1", "92", ":o2")}<thead><tr><th>나라</th><th class="n">처음 받음</th><th class="n o1">다시 받음</th><th class="n o1">광고 노출</th><th class="n">광고 수익</th><th class="o2">비중</th></tr></thead><tbody>${countryRows}</tbody></table></div>
+`}
+<p class="foot">${syncNote} · 하루 한 번 받아 둬요. Apple 의 하루는 미국 태평양시, AdMob 은 서울 기준이라 경계가 조금 어긋나요.</p>
+</div>`,
+		{ ...opts, tab: "revenue", sub: revenueSub(view, q), appFilter: r.appFilter },
 	);
 }

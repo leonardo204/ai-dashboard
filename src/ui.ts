@@ -7,7 +7,7 @@
 
 import type { Brief, BriefWindow } from "./brief";
 import { WORLD_PATH, MAP_W, MAP_H, projectLonLat } from "./worldmap";
-import { countryName, type StatsSummary } from "./stats";
+import { countryName, countryPoint, type StatsSummary } from "./stats";
 
 export function escapeHtml(s: string): string {
 	return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] as string);
@@ -1637,7 +1637,7 @@ document.addEventListener('click', function(e){
 // ─────────────────────────────────────────────────────────────
 
 /** 상단바 메뉴 키. */
-export type TabKey = "calls" | "traffic" | "anomaly" | "settings";
+export type TabKey = "calls" | "traffic" | "revenue" | "anomaly" | "settings";
 
 export interface AdminOpts {
 	/** 세션 로그인으로 들어온 화면인지(= 로그아웃 버튼 노출). */
@@ -1682,6 +1682,7 @@ export interface AdminOpts {
 const NAV: { key: TabKey; href: string; label: string }[] = [
 	{ key: "calls", href: "/admin/calls", label: "AI 호출" },
 	{ key: "traffic", href: "/admin/traffic", label: "트래픽" },
+	{ key: "revenue", href: "/admin/revenue", label: "앱 수익" },
 	{ key: "anomaly", href: "/admin/anomaly", label: "이상탐지" },
 	{ key: "settings", href: "/admin/settings", label: "설정" },
 ];
@@ -1702,6 +1703,13 @@ export const trafficSub = (key: string, q = "") => ({
 		{ key: "visits", href: `/admin/traffic${q}`, label: "방문" },
 		{ key: "bots", href: `/admin/traffic/bots${q}`, label: "크롤러" },
 		{ key: "paths", href: `/admin/traffic/paths${q}`, label: "경로" },
+	],
+});
+export const revenueSub = (key: string, q = "") => ({
+	key,
+	items: [
+		{ key: "sum", href: `/admin/revenue${q}`, label: "요약" },
+		{ key: "geo", href: `/admin/revenue/geo${q}`, label: "지역" },
 	],
 });
 export const anomalySub = (key: string, period = "month") => ({
@@ -2373,6 +2381,128 @@ ${hitBubbles}${bubbles}
 </svg>
 ${points.length || hits.length ? "" : `<div class="mapempty">아직 좌표가 있는 기록이 없어요.</div>`}
 ${legend}
+</div>
+<p class="sm" style="margin:8px 2px 0">${notes.join(" ")}</p>`;
+}
+
+/**
+ * 날짜별 내려받기 — 막대는 설치, 꺾은선은 광고 수익.
+ *
+ * 처음 받은 것과 다시 받은 것을 쌓아 한 막대로 둔다. 둘을 나란히 세우면 막대가
+ * 배로 늘어 흐름이 안 보이고, 합쳐 버리면 "새 사용자가 는 것"과 "쓰던 사람이 기기를
+ * 바꾼 것"이 섞인다. 쌓되 아래(진한 쪽)가 새 사용자다.
+ */
+export function svgRevenue(
+	buckets: { d: string; installs: number; redownloads: number; updates: number; ad: number }[],
+): string {
+	const data = buckets.slice(-60);
+	if (!data.length) return `<div class="empty">이 기간에 받아 둔 기록이 없어요.</div>`;
+
+	const W = 1000, H = 220, L = 46, R = 56, T = 14, B = 30;
+	const iw = W - L - R, ih = H - T - B;
+	const maxUnit = niceMax(Math.max(...data.map((d) => d.installs + d.redownloads), 1));
+	const maxAd = niceMax(Math.max(...data.map((d) => d.ad), 0.0001));
+	const bw = Math.max(3, Math.min(46, (iw / data.length) * 0.62));
+	const cx = (i: number) => L + (iw / data.length) * (i + 0.5);
+	const yUnit = (v: number) => T + ih - (v / maxUnit) * ih;
+	const yAd = (v: number) => T + ih - (v / maxAd) * ih;
+
+	const grid = [0, 0.25, 0.5, 0.75, 1]
+		.map((f) => {
+			const y = T + ih - f * ih;
+			return `<line x1="${L}" y1="${y.toFixed(1)}" x2="${L + iw}" y2="${y.toFixed(1)}" class="gl"/>` +
+				`<text x="${L - 8}" y="${(y + 4).toFixed(1)}" class="ax end">${shortNum(Math.round(maxUnit * f))}</text>` +
+				`<text x="${L + iw + 8}" y="${(y + 4).toFixed(1)}" class="ax cst">${usd(maxAd * f)}</text>`;
+		})
+		.join("");
+
+	const bars = data
+		.map((d, i) => {
+			const x = cx(i) - bw / 2;
+			let y = T + ih;
+			const seg = (n: number, cls: string) => {
+				if (!n) return "";
+				const h = Math.max((n / maxUnit) * ih, 1.5);
+				y -= h;
+				return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="2" class="${cls}"/>`;
+			};
+			const body = seg(d.redownloads, "b-in") + seg(d.installs, "b-ok");
+			const tip = `${d.d}\n처음 받음 ${d.installs.toLocaleString()} · 다시 받음 ${d.redownloads.toLocaleString()}` +
+				`\n업데이트 ${d.updates.toLocaleString()}\n광고 수익 ${usd(d.ad)}`;
+			return `<g class="bg" data-tip="${escapeHtml(tip)}">` +
+				`<rect x="${x.toFixed(1)}" y="${T}" width="${bw.toFixed(1)}" height="${ih}" class="hit"/>${body}</g>`;
+		})
+		.join("");
+
+	// 수익이 한 푼도 없으면 바닥에 붙은 직선만 남아 눈만 어지럽다. 그때는 그리지 않는다.
+	const hasAd = data.some((d) => d.ad > 0);
+	const line = hasAd
+		? `<path d="${data.map((d, i) => `${i ? "L" : "M"}${cx(i).toFixed(1)},${yAd(d.ad).toFixed(1)}`).join("")}" class="cl"/>` +
+			data.map((d, i) => `<circle cx="${cx(i).toFixed(1)}" cy="${yAd(d.ad).toFixed(1)}" r="2.6" class="cd"/>`).join("")
+		: "";
+
+	const step = Math.max(1, Math.ceil(data.length / 9));
+	const xlab = data
+		.map((d, i) => (i % step === 0 || i === data.length - 1
+			? `<text x="${cx(i).toFixed(1)}" y="${H - 9}" class="ax mid">${escapeHtml(d.d.slice(5))}</text>`
+			: ""))
+		.join("");
+
+	return `<div class="chart">
+<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="날짜별 내려받기와 광고 수익">
+${grid}${bars}${line}${xlab}
+</svg>
+<div class="lg"><span class="k"><i class="s-ok"></i>처음 받음</span><span class="k"><i class="s-in"></i>다시 받음</span>${
+		hasAd ? `<span class="k"><i class="s-ct"></i>광고 수익</span>` : ""
+	}</div>
+</div>`;
+}
+
+/**
+ * 어디서 내려받았나 — 나라별 설치 수를 지도에 얹는다.
+ *
+ * 나라 가운데에 하나로 모아 찍는다. App Store 보고서는 도시를 알려주지 않고
+ * 나라 코드만 준다. 좌표를 모르는 나라는 지도에서 빠지고 아래 줄에 몇 건인지 적는다.
+ */
+export function svgInstallMap(
+	rows: { code: string; installs: number; redownloads: number; ad: number; impressions: number }[],
+): string {
+	const placed = rows
+		.map((r) => ({ ...r, ll: countryPoint(r.code) }))
+		.filter((r) => r.ll && r.installs + r.redownloads > 0);
+	const lostRows = rows.filter((r) => !countryPoint(r.code) && r.installs + r.redownloads > 0);
+	const lost = lostRows.reduce((n, r) => n + r.installs + r.redownloads, 0);
+
+	const max = Math.max(1, ...placed.map((p) => p.installs + p.redownloads));
+	const bubbles = placed
+		.map((p) => {
+			const [lon, lat] = p.ll as [number, number];
+			const { x, y } = projectLonLat(lon, lat);
+			const n = p.installs + p.redownloads;
+			const r = 5 + Math.sqrt(n / max) * 18;
+			const tip = `${countryName(p.code)}\n처음 받음 ${p.installs.toLocaleString()} · 다시 받음 ${p.redownloads.toLocaleString()}` +
+				(p.impressions ? `\n광고 노출 ${p.impressions.toLocaleString()} · 수익 ${usd(p.ad)}` : "") +
+				`\n(나라 가운데에 모아 찍은 자리예요)`;
+			return `<g class="bub" data-tip="${escapeHtml(tip)}">` +
+				`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r.toFixed(1)}" class="bo"/>` +
+				`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${Math.max(1.8, r * 0.26).toFixed(1)}" class="bi"/></g>`;
+		})
+		.join("");
+
+	const total = rows.reduce((n, r) => n + r.installs + r.redownloads, 0);
+	const notes = [
+		"원 크기는 내려받은 수예요. 마우스를 올리면 나라와 건수를 볼 수 있어요.",
+		lost ? `좌표를 모르는 나라 ${lostRows.length}곳 ${lost.toLocaleString()}건은 지도에 없어요(아래 표에는 있어요).` : "",
+	].filter(Boolean);
+
+	return `<div class="mapwrap">
+<svg viewBox="0 0 ${MAP_W} ${MAP_H}" role="img" aria-label="나라별 내려받기 지도">
+<rect width="${MAP_W}" height="${MAP_H}" class="sea"/>
+<path d="${WORLD_PATH}" class="land"/>
+${bubbles}
+</svg>
+${placed.length ? "" : `<div class="mapempty">아직 내려받은 기록이 없어요.</div>`}
+<div class="maplg"><span class="k"><i class="s-call"></i>내려받기 ${total.toLocaleString()}건 · ${placed.length}개국</span></div>
 </div>
 <p class="sm" style="margin:8px 2px 0">${notes.join(" ")}</p>`;
 }

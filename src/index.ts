@@ -17,6 +17,8 @@
  *  GET  /admin/calls/geo       국가·도시별 호출 분포
  *  GET  /admin/calls/logs      호출 로그 검색 (/admin/logs.csv 내려받기)
  *  GET  /admin/traffic         트래픽 — 방문(기본) · /bots · /paths
+ *  GET  /admin/revenue         앱 수익 — 요약(기본) · /geo (App Store 내려받기 · AdMob 광고)
+ *  POST /admin/api/revenue/sync 수익 기록 받아 오기(수동 · 평소엔 하루 한 번 cron)
  *  GET  /admin/anomaly         이상탐지 — 받은 신호(기본) · /mails
  *  GET  /admin/settings/apps   앱 관리 화면
  *  GET  /admin/guide      연결 가이드 (원문: /admin/guide.md)
@@ -37,9 +39,10 @@ import {
 	collectStats, collectBoard, heartbeatAge, briefCtx, briefForCalls, briefForTraffic, briefForAnomaly, collectUsage, collectTrend, collectGeo, queryLogs, logsCsv,
 	listApps, getApp, upsertApp, deleteApp, newToken, pulse, exportCalls, normPeriod, LOG_PAGE,
 	collectAnomaly, collectAnomalyBoard, pushAnomaly, pushBackup, collectMails, getMailHtml, listPasskeys, passkeyCount, deletePasskey,
-	collectTraffic,
+	collectTraffic, PERIODS,
 	type AppConfig, type LogFilter,
 } from "./stats";
+import { collectRevenue, syncRevenue, revenueApp, type RevenueEnv } from "./revenue";
 import type { BriefKey } from "./brief";
 import { handlePasskey, type PasskeyEnv } from "./passkey";
 import { handleHit, exportHits, SITES, type TrafficEnv } from "./traffic";
@@ -47,9 +50,10 @@ import { renderLogin } from "./ui";
 import { renderPublicHome, renderPrivacyPage } from "./public";
 import {
 	renderBoard, renderUsage, renderTrend, renderGeo, renderSignals, renderDetector, renderAnomalyDetail, renderMails, renderTraffic, renderLogs, renderApps,
+	renderRevenue,
 } from "./views";
 
-interface Env extends ProxyEnv, PasskeyEnv, TrafficEnv {
+interface Env extends ProxyEnv, PasskeyEnv, TrafficEnv, RevenueEnv {
 	// ProxyEnv: DB(D1) · OPENROUTER_API_KEY(secret)
 	// 통계 대시보드(/admin) 로그인 — HTTP Basic 인증(secret)
 	ADMIN_USER: string;
@@ -646,6 +650,20 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 			}
 		}
 
+		// ── 앱 수익 받아 오기 (/admin/api/revenue/sync) — 평소엔 하루 한 번 스케줄러가 부른다.
+		//    여기 손으로 부르는 길을 열어 두는 이유: 처음 채울 때(?days=60)와, 받다가 걸렸을 때
+		//    다음 날까지 기다리지 않고 다시 시도하기 위해서다.
+		if (path === "/admin/api/revenue/sync") {
+			if (!(await apiAuthorized(request, env, url))) {
+				return apiErr(401, "인증이 필요해요. Authorization: Bearer <ADMIN_API_KEY> 헤더를 넣어 주세요.");
+			}
+			if (request.method !== "POST") return apiErr(405, "POST로 보내주세요.");
+			const days = Number(url.searchParams.get("days") || 5) || 5;
+			const skip = Number(url.searchParams.get("skip") || 0) || 0;
+			const rep = await syncRevenue(env, days, skip);
+			return apiJson(rep, rep.ok ? 200 : 502);
+		}
+
 		// ── 패스키 (/admin/api/passkey/*) — 등록은 로그인 상태에서만, 로그인 확인은 누구나 부를 수 있다.
 		if (path.startsWith("/admin/api/passkey")) {
 			const res = await handlePasskey(request, env, url, {
@@ -823,6 +841,29 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 			);
 		}
 
+		// ── 앱 수익 (/admin/revenue) — App Store 내려받기·판매와 AdMob 광고.
+		//    바깥에 다시 묻지 않는다. 하루 한 번 받아 둔 우리 표만 읽는다.
+		const revenueView =
+			path === "/admin/revenue/geo" || path === "/admin/revenue/geo/"
+				? "geo"
+				: path === "/admin/revenue" || path === "/admin/revenue/"
+					? "sum"
+					: "";
+		if (revenueView) {
+			const unauth = await requireAdmin(request, env, url);
+			if (unauth) return unauth;
+			const { period } = statScope(url);
+			// 이 화면의 앱 목록은 앱 레지스트리가 아니라 스토어에 올린 앱이다.
+			// 모르는 값이 오면 전체로 떨어뜨린다(빈 화면 대신).
+			const rawApp = url.searchParams.get("app") || "";
+			const appFilter = revenueApp(rawApp) ? rawApp : "";
+			const days = (PERIODS[period] ?? PERIODS.month).days;
+			return html(
+				renderRevenue(await collectRevenue(env, period, appFilter, days), revenueView as "sum" | "geo", { session: true }),
+				{ cache: false },
+			);
+		}
+
 		// ── 호출 로그 (/admin/logs · /admin/logs.csv)
 		if (path === "/admin/calls/logs" || path === "/admin/calls/logs/" || path === "/admin/logs.csv") {
 			const unauth = await requireAdmin(request, env, url);
@@ -938,6 +979,19 @@ export default {
 		const out = new Response(resp.body, resp);
 		out.headers.set("Strict-Transport-Security", "max-age=31536000");
 		return out;
+	},
+
+	/**
+	 * 하루 한 번 — App Store·AdMob 에서 어제까지의 기록을 받아 둔다(wrangler.jsonc 의 crons).
+	 *
+	 * 최근 닷새를 겹쳐 받아 덮어쓴다. Apple 은 하루가 지난 뒤에도 환불·정산으로 숫자를 고치고
+	 * AdMob 은 추정치라 며칠 뒤 확정값으로 바뀐다. 한 번 받고 끝내면 그 보정이 영영 안 들어온다.
+	 *
+	 * 실패해도 던지지 않는다 — 다음 날 같은 자리에서 다시 받고, 걸린 사실은
+	 * revenue_state 에 남아 화면 맨 아래 줄에 드러난다.
+	 */
+	async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+		ctx.waitUntil(syncRevenue(env, 5).catch(() => {}));
 	},
 } satisfies ExportedHandler<Env>;
 
